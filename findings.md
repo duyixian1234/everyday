@@ -83,6 +83,9 @@
 - `uid_search(query) -> Result<HashSet<Uid>>`（Uid=u32），**不是 Stream**，直接 collect
 - `uid_fetch(uids, query) -> Result<impl Stream<Item=Result<Fetch>>>`，用 `try_collect`
 - `Client::login(user, pass) -> Result<Session<T>, (Error, T)>`，错误是元组
+- `Session::list(reference: Option<&str>, pattern: Option<&str>) -> Result<impl Stream<Item=Result<Name>>>`（**两个参数都是 Option**，不是 &str）
+- `Name::name() -> &str`（直接返回，非 Option）；`Name::attributes() -> &[NameAttribute]`，`NameAttribute::NoSelect` 标记不可 SELECT 的文件夹
+- 文件夹名可能是 IMAP UTF-7 编码（如 `&UXZO1mWHTvZZOQ-/Github&kBp35Q-`），中文文件夹需客户端解码（当前直接透传原始名）
 
 ### lettre 0.11
 - `ContentType::TEXT_PLAIN_UTF_8` **不存在**，用 `ContentType::TEXT_PLAIN`

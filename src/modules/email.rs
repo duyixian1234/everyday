@@ -37,14 +37,15 @@ impl Executor for EmailModule {
     }
 
     fn description(&self) -> &'static str {
-        "Email management (IMAP/SMTP): list, read, search, send, login."
+        "Email management (IMAP/SMTP): folders, list, read, search, send, login."
     }
 
     fn actions(&self) -> Vec<ActionDoc> {
         vec![
-            ActionDoc::new("list", "List messages", "everyday mail list [--unread] [--limit N] [--folder NAME] [--account NAME]"),
+            ActionDoc::new("folders", "List all mailbox folders", "everyday mail folders [--account NAME]"),
+            ActionDoc::new("list", "List messages (recursively across all folders by default)", "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--account NAME]"),
             ActionDoc::new("read", "Read a single message", "everyday mail read <uid> [--folder NAME] [--account NAME]"),
-            ActionDoc::new("search", "Search messages", "everyday mail search --query Q [--limit N] [--folder NAME] [--account NAME]"),
+            ActionDoc::new("search", "Search messages (recursively across all folders by default)", "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]"),
             ActionDoc::new("send", "Send a message", "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]"),
             ActionDoc::new("login", "Store password in system keyring", "everyday mail login [--account NAME]"),
         ]
@@ -62,6 +63,7 @@ impl Executor for EmailModule {
             _ => {
                 let password = get_password(account)?;
                 match action {
+                    "folders" => mail_folders(account, &password).await,
                     "list" => mail_list(account, &password, &flags).await,
                     "read" => mail_read(account, &password, &flags, &positional).await,
                     "search" => mail_search(account, &password, &flags).await,
@@ -156,7 +158,86 @@ async fn imap_connect(account: &MailAccount, password: &str) -> Result<ImapSessi
 
 // ============ 动作实现 ============
 
-/// 列出邮件摘要。
+/// 列出邮箱所有文件夹（IMAP LIST）。
+async fn mail_folders(account: &MailAccount, password: &str) -> Result<Output> {
+    let mut session = imap_connect(account, password).await?;
+    let folders = list_all_folders(&mut session).await?;
+    session.logout().await.ok();
+    let rows = folders.into_iter().map(|f| vec![f]).collect();
+    Ok(Output::records(vec!["folder".into()], rows))
+}
+
+/// 调用 IMAP LIST 列出所有文件夹名（过滤 \NoSelect）。
+async fn list_all_folders(session: &mut ImapSession) -> Result<Vec<String>> {
+    let names: Vec<async_imap::types::Name> = session
+        .list(None, Some("*"))
+        .await
+        .map_err(|e| AgentError::Network(format!("list folders: {e}")))?
+        .try_collect()
+        .await
+        .map_err(|e| AgentError::Network(format!("list collect: {e}")))?;
+    let folders = names
+        .iter()
+        .filter(|n| {
+            // 跳过标记为 \NoSelect 的文件夹（无法 SELECT）
+            !n.attributes()
+                .iter()
+                .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect))
+        })
+        .map(|n| n.name().to_string())
+        .collect();
+    Ok(folders)
+}
+
+/// 根据命令行 flags 解析要遍历的文件夹列表。
+/// - `--folder NAME`：仅该文件夹
+/// - 默认（递归）：所有文件夹
+/// - `--no-recursive`：仅 INBOX
+async fn resolve_folders(
+    session: &mut ImapSession,
+    flags: &HashMap<String, String>,
+) -> Result<Vec<String>> {
+    if let Some(f) = flags.get("folder") {
+        return Ok(vec![f.clone()]);
+    }
+    if flags.contains_key("no-recursive") {
+        return Ok(vec!["INBOX".to_string()]);
+    }
+    list_all_folders(session).await
+}
+
+/// 跨多个文件夹收集邮件摘要，合并、按 UID 降序、截断到 limit。
+/// 无法 SELECT 的文件夹（如 \NoSelect）会被跳过。
+async fn collect_across_folders(
+    session: &mut ImapSession,
+    folders: Vec<String>,
+    search_query: &str,
+    limit: usize,
+) -> Result<Vec<Vec<String>>> {
+    let mut all_rows: Vec<Vec<String>> = Vec::new();
+    for folder in &folders {
+        if session.select(folder).await.is_err() {
+            continue; // 跳过无法选中的文件夹
+        }
+        let uids = match search_uids(session, search_query).await {
+            Ok(u) => u,
+            Err(_) => continue, // 单个文件夹搜索失败不致命
+        };
+        let rows = fetch_summaries(session, uids, limit, folder).await?;
+        all_rows.extend(rows);
+        if all_rows.len() >= limit {
+            break;
+        }
+    }
+    // 全局按 UID 降序（不同文件夹 UID 可能重复，folder 列区分来源）
+    all_rows.sort_by_key(|r| {
+        Reverse(r.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0))
+    });
+    all_rows.truncate(limit);
+    Ok(all_rows)
+}
+
+/// 列出邮件摘要（默认递归所有文件夹）。
 async fn mail_list(
     account: &MailAccount,
     password: &str,
@@ -164,24 +245,15 @@ async fn mail_list(
 ) -> Result<Output> {
     let unread = flags.contains_key("unread");
     let limit: usize = flags.get("limit").and_then(|s| s.parse().ok()).unwrap_or(20);
-    let folder = flags
-        .get("folder")
-        .cloned()
-        .unwrap_or_else(|| "INBOX".to_string());
 
     let mut session = imap_connect(account, password).await?;
-    session
-        .select(&folder)
-        .await
-        .map_err(|e| AgentError::Network(format!("select {folder}: {e}")))?;
-
+    let folders = resolve_folders(&mut session, flags).await?;
     let query = if unread { "UNSEEN" } else { "ALL" };
-    let uids = search_uids(&mut session, query).await?;
-    let rows = fetch_summaries(&mut session, uids, limit).await?;
+    let rows = collect_across_folders(&mut session, folders, query, limit).await?;
     session.logout().await.ok();
 
     Ok(Output::records(
-        vec!["uid".into(), "date".into(), "from".into(), "subject".into()],
+        vec!["uid".into(), "folder".into(), "date".into(), "from".into(), "subject".into()],
         rows,
     ))
 }
@@ -246,7 +318,7 @@ async fn mail_read(
     })
 }
 
-/// 搜索邮件。
+/// 搜索邮件（默认递归所有文件夹）。
 async fn mail_search(
     account: &MailAccount,
     password: &str,
@@ -256,25 +328,17 @@ async fn mail_search(
         .get("query")
         .ok_or_else(|| AgentError::InvalidArgument("usage: everyday mail search --query Q".into()))?;
     let limit: usize = flags.get("limit").and_then(|s| s.parse().ok()).unwrap_or(20);
-    let folder = flags
-        .get("folder")
-        .cloned()
-        .unwrap_or_else(|| "INBOX".to_string());
 
     let mut session = imap_connect(account, password).await?;
-    session
-        .select(&folder)
-        .await
-        .map_err(|e| AgentError::Network(format!("select {folder}: {e}")))?;
-
+    let folders = resolve_folders(&mut session, flags).await?;
     // IMAP SEARCH TEXT "query" —— 转义双引号与反斜杠
     let escaped = query.replace('\\', "\\\\").replace('"', "\\\"");
-    let uids = search_uids(&mut session, &format!("TEXT \"{escaped}\"")).await?;
-    let rows = fetch_summaries(&mut session, uids, limit).await?;
+    let search = format!("TEXT \"{escaped}\"");
+    let rows = collect_across_folders(&mut session, folders, &search, limit).await?;
     session.logout().await.ok();
 
     Ok(Output::records(
-        vec!["uid".into(), "date".into(), "from".into(), "subject".into()],
+        vec!["uid".into(), "folder".into(), "date".into(), "from".into(), "subject".into()],
         rows,
     ))
 }
@@ -351,11 +415,12 @@ async fn search_uids(session: &mut ImapSession, query: &str) -> Result<Vec<u32>>
     Ok(uids)
 }
 
-/// 按 UID 批量 fetch 摘要，限制条数，返回表格行。
+/// 按 UID 批量 fetch 摘要，限制条数，返回表格行（含 folder 列）。
 async fn fetch_summaries(
     session: &mut ImapSession,
     mut uids: Vec<u32>,
     limit: usize,
+    folder: &str,
 ) -> Result<Vec<Vec<String>>> {
     uids.truncate(limit);
     if uids.is_empty() {
@@ -405,6 +470,7 @@ async fn fetch_summaries(
             uid,
             vec![
                 uid.to_string(),
+                folder.to_string(),
                 decode_mime_header(&date),
                 from,
                 decode_mime_header(&subject),

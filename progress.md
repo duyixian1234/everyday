@@ -96,3 +96,33 @@ _(暂无)_
 
 ### 下一步
 - `fs` 模块（ignore/walkdir）、`network` 模块（reqwest/scraper）、`system` 补全、`calendar`(CalDAV)、`rss`(feed-rs)
+
+---
+
+## Session 2026-07-08 (邮件模块增强：文件夹递归)
+
+### 需求
+用户用规则把不同来源邮件自动移动到不同文件夹，需要：
+1. 列出邮箱文件夹目录
+2. list/search 默认递归获取所有文件夹邮件
+3. `--folder` 指定单文件夹
+
+### 已完成
+- 新增 `mail folders`：IMAP LIST 列出所有文件夹（过滤 `\NoSelect`）
+- `mail list` / `mail search` 默认**递归所有文件夹**，输出加 `folder` 列标识来源
+- `--folder NAME`：仅指定文件夹；`--no-recursive`：仅 INBOX
+- 提取辅助函数：`list_all_folders` / `resolve_folders` / `collect_across_folders`
+- 无法 SELECT 的文件夹（\NoSelect）自动跳过，单文件夹失败不致命
+
+### 测试结果
+- `cargo build`/`clippy`/`test`(33 passed) 全绿
+- **真实连接验证**（用户邮箱）：
+  - `everyday mail folders` → 列出 INBOX/Sent/Drafts/Junk + 25 个分类子文件夹（Github/12306/Cloudflare/Vercel/Google/Steam 等）
+  - `everyday mail list --limit 5` → 递归输出，folder 列正确，中文 subject 解码正确
+  - JSON 模式输出文件夹数组
+
+### 错误记录（已解决）
+- `Session::list` 两个参数都是 `Option<&str>`（不是 &str）→ `list(None, Some("*"))`
+
+### 下一步
+- `fs`/`network`/`system` 补全、`calendar`/`rss` 模块
