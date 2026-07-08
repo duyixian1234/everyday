@@ -1,0 +1,43 @@
+# Everyday configuration example
+# Copy to ~/.config/everyday/config.toml and edit.
+# Passwords are NEVER stored here — use the system keyring instead.
+# keyring service convention: everyday/<module>/<account>
+
+[default_account]
+mail = "work"
+calendar = "personal"
+
+# ---- 邮件账户（可多个）----
+[[mail.accounts]]
+name = "work"
+imap_host = "imap.example.com"
+imap_port = 993
+smtp_host = "smtp.example.com"
+smtp_port = 465
+username = "me@example.com"
+tls = true
+
+[[mail.accounts]]
+name = "personal"
+imap_host = "imap.gmail.com"
+imap_port = 993
+smtp_host = "smtp.gmail.com"
+smtp_port = 465
+username = "me@gmail.com"
+tls = true
+
+# ---- 日历账户（CalDAV）----
+[[calendar.accounts]]
+name = "personal"
+caldav_url = "https://caldav.example.com/me"
+username = "me"
+
+# ---- RSS 订阅源 ----
+[[rss.feeds]]
+name = "hackernews"
+url = "https://hnrss.org/frontpage"
+category = "tech"
+
+[[rss.feeds]]
+name = "rust-blog"
+url = "https://blog.rust-lang.org/feed.xml"

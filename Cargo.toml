@@ -1,0 +1,70 @@
+[package]
+name = "everyday"
+version = "0.1.0"
+edition = "2024"
+description = "The Rust-powered hands for your AI Agent"
+license = "MIT"
+
+[[bin]]
+name = "everyday"
+path = "src/main.rs"
+
+[dependencies]
+# 异步运行时
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+
+# CLI 解析
+clap = { version = "4", features = ["derive"] }
+
+# 序列化
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+
+# 跨平台路径
+dirs = "5"
+
+# 错误处理
+thiserror = "1"
+anyhow = "1"
+
+# 凭证安全（系统密钥环）
+keyring = "2"
+
+# 系统信息
+sysinfo = "0.30"
+
+# 网页抓取
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+scraper = "0.19"
+
+# 文件搜索
+ignore = "0.4"
+walkdir = "2"
+
+# 邮件
+async-imap = "0.9"
+lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "pool", "builder"] }
+futures = "0.3"
+
+# 日历 (CalDAV) - 先用 reqwest 手写客户端，避免不稳定 crate
+# caldav = 待评估
+
+# RSS
+feed-rs = "2"
+
+# 剪贴板
+arboard = "3"
+
+# 文件监听
+notify = "6"
+
+# 时间
+chrono = { version = "0.4", features = ["serde"] }
+
+# 表格输出
+tabled = "0.15"
+
+[dev-dependencies]
+tokio-test = "0.4"
