@@ -126,3 +126,29 @@ _(暂无)_
 
 ### 下一步
 - `fs`/`network`/`system` 补全、`calendar`/`rss` 模块
+
+---
+
+## Session 2026-07-08 (邮件模块增强：IMAP UTF-7 中文解码)
+
+### 需求
+分类文件夹名（IMAP UTF-7 编码如 `&UXZO1mWHTvZZOQ-/Github&kBp35Q-`）需显示成可读中文。
+
+### 已完成
+- 新增 `decode_imap_utf7`：RFC 3501 §5.1.3 解码器（modified base64 + UTF-16BE），手写 base64 表（const fn，无依赖），用 `char` 迭代正确透传 UTF-8 中文
+- `mail folders` / `mail list` / `mail search` 显示文件夹名时解码为中文
+- `select_folder` 智能匹配：先直接 select（原始编码名/INBOX），失败再遍历所有文件夹匹配解码后的中文名 → `list/read/search --folder "其他文件夹/Github通知"` 可用中文
+- `collect_across_folders` 用 `select_folder`，select 用原始名、显示用解码名
+
+### 测试结果
+- `cargo build`/`clippy`/`test`(40 passed) 全绿
+- **真实邮箱验证**：
+  - `mail folders` → `其他文件夹/QQ邮件订阅`、`其他文件夹/Github通知`、`其他文件夹/腾讯云通知`、`其他文件夹/微众银行账单`、`其他文件夹/微软通知` 等 25 个中文名
+  - `mail list --folder "其他文件夹/Github通知" --limit 3` → 中文匹配成功，folder 列显示中文
+
+### 错误记录（已解决）
+- 首版 `decode_imap_utf7` 用 `bytes[i] as char` 破坏 UTF-8 中文输入 → 改 `char` 迭代透传
+- `list --folder 中文` 返回空（`session.select(中文)` 失败被跳过）→ `collect_across_folders` 改用 `select_folder` 智能匹配
+
+### 下一步
+- `fs`/`network`/`system` 补全、`calendar`/`rss` 模块

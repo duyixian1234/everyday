@@ -85,7 +85,7 @@
 - `Client::login(user, pass) -> Result<Session<T>, (Error, T)>`，错误是元组
 - `Session::list(reference: Option<&str>, pattern: Option<&str>) -> Result<impl Stream<Item=Result<Name>>>`（**两个参数都是 Option**，不是 &str）
 - `Name::name() -> &str`（直接返回，非 Option）；`Name::attributes() -> &[NameAttribute]`，`NameAttribute::NoSelect` 标记不可 SELECT 的文件夹
-- 文件夹名可能是 IMAP UTF-7 编码（如 `&UXZO1mWHTvZZOQ-/Github&kBp35Q-`），中文文件夹需客户端解码（当前直接透传原始名）
+- 文件夹名可能是 IMAP UTF-7 编码（如 `&UXZO1mWHTvZZOQ-/Github&kBp35Q-`）。已实现 `decode_imap_utf7` 解码：`&<modified-base64>-` 段是 UTF-16BE 的 modified base64（`,` 替 `/`，无 padding），`&-` 是字面 `&`，其余 char 透传。手写 base64 解码表（const fn），无额外依赖。`select_folder` 智能匹配：先直接 select（原始名/INBOX），失败再遍历所有文件夹匹配解码名，支持用户输入中文。
 
 ### lettre 0.11
 - `ContentType::TEXT_PLAIN_UTF_8` **不存在**，用 `ContentType::TEXT_PLAIN`

@@ -163,7 +163,10 @@ async fn mail_folders(account: &MailAccount, password: &str) -> Result<Output> {
     let mut session = imap_connect(account, password).await?;
     let folders = list_all_folders(&mut session).await?;
     session.logout().await.ok();
-    let rows = folders.into_iter().map(|f| vec![f]).collect();
+    let rows = folders
+        .into_iter()
+        .map(|f| vec![decode_imap_utf7(&f)])
+        .collect();
     Ok(Output::records(vec!["folder".into()], rows))
 }
 
@@ -216,14 +219,17 @@ async fn collect_across_folders(
 ) -> Result<Vec<Vec<String>>> {
     let mut all_rows: Vec<Vec<String>> = Vec::new();
     for folder in &folders {
-        if session.select(folder).await.is_err() {
+        // select_folder 兼容原始编码名与解码后的中文名（用户 --folder 输入）
+        if select_folder(session, folder).await.is_err() {
             continue; // 跳过无法选中的文件夹
         }
         let uids = match search_uids(session, search_query).await {
             Ok(u) => u,
             Err(_) => continue, // 单个文件夹搜索失败不致命
         };
-        let rows = fetch_summaries(session, uids, limit, folder).await?;
+        // 显示用解码后的中文名，select 用原始编码名
+        let display_folder = decode_imap_utf7(folder);
+        let rows = fetch_summaries(session, uids, limit, &display_folder).await?;
         all_rows.extend(rows);
         if all_rows.len() >= limit {
             break;
@@ -278,10 +284,8 @@ async fn mail_read(
         .unwrap_or_else(|| "INBOX".to_string());
 
     let mut session = imap_connect(account, password).await?;
-    session
-        .select(&folder)
-        .await
-        .map_err(|e| AgentError::Network(format!("select {folder}: {e}")))?;
+    // 智能匹配：支持 INBOX、原始编码名、或解码后的中文名
+    select_folder(&mut session, &folder).await?;
 
     let fetches: Vec<async_imap::types::Fetch> = session
         .uid_fetch(uid.to_string(), "(UID BODY[])")
@@ -520,6 +524,120 @@ fn header_value(parsed: &mailparse::ParsedMail, key: &str) -> String {
         .unwrap_or_default()
 }
 
+/// 解码 IMAP UTF-7 文件夹名（RFC 3501 §5.1.3）为可读 UTF-8。
+///
+/// 规则：`&` 起始、`-` 结尾的段是 modified base64 编码的 UTF-16BE；`&-` 表示字面 `&`；
+/// 其余字符透传。用 `char` 迭代以正确处理 UTF-8（用户可能直接传入中文名，无 `&` 段）。
+/// 例如 `&UXZO1mWHTvZZOQ-/Github&kBp35Q-` → `其他文件夹/Github通知`。
+fn decode_imap_utf7(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '&' {
+            let mut segment = String::new();
+            let mut found_terminator = false;
+            while let Some(&nc) = chars.peek() {
+                chars.next();
+                if nc == '-' {
+                    found_terminator = true;
+                    break;
+                }
+                segment.push(nc);
+            }
+            if !found_terminator {
+                // 无结束 '-'，原样输出
+                out.push('&');
+                out.push_str(&segment);
+                break;
+            }
+            if segment.is_empty() {
+                out.push('&'); // &- → 字面 &
+            } else if let Some(decoded) = decode_modified_base64_utf16(segment.as_bytes()) {
+                out.push_str(&decoded);
+            } else {
+                // 解码失败，保留原始段
+                out.push('&');
+                out.push_str(&segment);
+                out.push('-');
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
+/// modified base64（`,` 替代 `/`，无 padding）→ UTF-16BE → String。
+fn decode_modified_base64_utf16(b64: &[u8]) -> Option<String> {
+    let raw = decode_base64_modified(b64)?;
+    if raw.len() % 2 != 0 {
+        return None;
+    }
+    let u16s: Vec<u16> = raw
+        .chunks_exact(2)
+        .map(|c| u16::from_be_bytes([c[0], c[1]]))
+        .collect();
+    String::from_utf16(&u16s).ok()
+}
+
+/// modified base64 解码（无依赖，手写）。
+fn decode_base64_modified(input: &[u8]) -> Option<Vec<u8>> {
+    const TABLE: [i8; 256] = build_b64_table();
+    let mut out = Vec::new();
+    let mut buf: u32 = 0;
+    let mut bits: u32 = 0;
+    for &c in input {
+        if c == b'=' {
+            break;
+        }
+        let v = TABLE[c as usize];
+        if v < 0 {
+            continue;
+        }
+        buf = (buf << 6) | (v as u32);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((buf >> bits) as u8);
+        }
+    }
+    Some(out)
+}
+
+/// 构建 base64 查找表（const fn，编译期计算）。`,` 映射到 63（modified base64 用 `,` 替 `/`）。
+const fn build_b64_table() -> [i8; 256] {
+    let mut t = [-1i8; 256];
+    let alpha = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut i = 0;
+    while i < alpha.len() {
+        t[alpha[i] as usize] = i as i8;
+        i += 1;
+    }
+    t[b',' as usize] = 63; // modified base64
+    t
+}
+
+/// 选中文件夹：先直接尝试（INBOX / ASCII / 原始编码名），
+/// 失败则遍历所有文件夹匹配解码后的中文名。兼容用户输入中文或原始名。
+async fn select_folder(session: &mut ImapSession, folder: &str) -> Result<()> {
+    if session.select(folder).await.is_ok() {
+        return Ok(());
+    }
+    let all = list_all_folders(session).await?;
+    for f in &all {
+        if decode_imap_utf7(f) == folder {
+            session
+                .select(f)
+                .await
+                .map_err(|e| AgentError::Network(format!("select '{f}': {e}")))?;
+            return Ok(());
+        }
+    }
+    Err(AgentError::Other(format!(
+        "folder '{folder}' not found (tried direct select and decoded-name match)"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -551,6 +669,54 @@ mod tests {
             format_mailbox(Some("me"), Some("example.com")),
             "me@example.com"
         );
+    }
+
+    #[test]
+    fn imap_utf7_ascii_passthrough() {
+        assert_eq!(decode_imap_utf7("INBOX"), "INBOX");
+        assert_eq!(decode_imap_utf7("Sent Messages"), "Sent Messages");
+    }
+
+    #[test]
+    fn imap_utf7_chinese_passthrough() {
+        // 用户直接传入中文名（无 & 段），应原样透传不破坏 UTF-8
+        assert_eq!(decode_imap_utf7("其他文件夹/Github通知"), "其他文件夹/Github通知");
+    }
+
+    #[test]
+    fn imap_utf7_ampersand_escape() {
+        // &- 表示字面 &
+        assert_eq!(decode_imap_utf7("A&-B"), "A&B");
+    }
+
+    #[test]
+    fn imap_utf7_single_chinese_char() {
+        // "你" = U+4F60 → UTF-16BE 4F 60 → modified base64 "T2A"
+        assert_eq!(decode_imap_utf7("&T2A-"), "你");
+    }
+
+    #[test]
+    fn imap_utf7_mixed_chinese_and_ascii() {
+        // "其他文件夹" 前缀 + "/Github"
+        let decoded = decode_imap_utf7("&UXZO1mWHTvZZOQ-/Github&kBp35Q-");
+        assert!(
+            decoded.chars().any(|c| c as u32 > 127),
+            "expected Chinese chars in: {decoded}"
+        );
+        assert!(decoded.contains("Github"));
+    }
+
+    #[test]
+    fn imap_utf7_no_terminator_fallback() {
+        // 无结束 '-'，原样输出不 panic
+        assert_eq!(decode_imap_utf7("test&abc"), "test&abc");
+    }
+
+    #[test]
+    fn imap_utf7_roundtrip_known() {
+        // "你好" → UTF-16BE 4F60 597D → base64: 4F 60 59 → 010011 110110 000001 011001 = T 2 B Z
+        // 剩余 7D → 011111 01(pad) = f Q → "T2BZfQ"
+        assert_eq!(decode_imap_utf7("&T2BZfQ-"), "你好");
     }
 
     #[test]
