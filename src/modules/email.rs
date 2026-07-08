@@ -229,15 +229,20 @@ async fn collect_across_folders(
         };
         // 显示用解码后的中文名，select 用原始编码名
         let display_folder = decode_imap_utf7(folder);
+        // 每个文件夹取最近 limit 条作为全局候选，不提前 break —— 确保所有文件夹都参与
         let rows = fetch_summaries(session, uids, limit, &display_folder).await?;
         all_rows.extend(rows);
-        if all_rows.len() >= limit {
-            break;
-        }
     }
-    // 全局按 UID 降序（不同文件夹 UID 可能重复，folder 列区分来源）
-    all_rows.sort_by_key(|r| {
-        Reverse(r.first().and_then(|s| s.parse::<u32>().ok()).unwrap_or(0))
+    // 全局按邮件日期降序（跨文件夹 UID 不连续，日期更准确）
+    all_rows.sort_by(|a, b| {
+        let da = a.get(2).and_then(|s| parse_mail_date(s));
+        let db = b.get(2).and_then(|s| parse_mail_date(s));
+        match (da, db) {
+            (Some(da), Some(db)) => db.cmp(&da),
+            (Some(_), None) => std::cmp::Ordering::Less, // 有日期的排前
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
     });
     all_rows.truncate(limit);
     Ok(all_rows)
@@ -617,6 +622,14 @@ const fn build_b64_table() -> [i8; 256] {
     t
 }
 
+/// 解析 RFC 2822 邮件日期，用于跨文件夹按时间排序。容错：去掉括号注释如 "(UTC)"。
+fn parse_mail_date(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
+    let cleaned = s.split('(').next().unwrap_or("").trim_end();
+    chrono::DateTime::parse_from_rfc2822(cleaned)
+        .ok()
+        .or_else(|| chrono::DateTime::parse_from_rfc2822(s).ok())
+}
+
 /// 选中文件夹：先直接尝试（INBOX / ASCII / 原始编码名），
 /// 失败则遍历所有文件夹匹配解码后的中文名。兼容用户输入中文或原始名。
 async fn select_folder(session: &mut ImapSession, folder: &str) -> Result<()> {
@@ -717,6 +730,20 @@ mod tests {
         // "你好" → UTF-16BE 4F60 597D → base64: 4F 60 59 → 010011 110110 000001 011001 = T 2 B Z
         // 剩余 7D → 011111 01(pad) = f Q → "T2BZfQ"
         assert_eq!(decode_imap_utf7("&T2BZfQ-"), "你好");
+    }
+
+    #[test]
+    fn parse_mail_date_rfc2822() {
+        assert!(parse_mail_date("Wed, 08 Jul 2026 08:29:31 +0000 (UTC)").is_some());
+        assert!(parse_mail_date("Wed, 1 Jul 2026 16:55:11 +0800").is_some());
+        assert!(parse_mail_date("invalid date").is_none());
+    }
+
+    #[test]
+    fn parse_mail_date_orders_correctly() {
+        let earlier = parse_mail_date("Wed, 01 Jul 2026 00:55:26 -0700").unwrap();
+        let later = parse_mail_date("Wed, 08 Jul 2026 08:29:31 +0000").unwrap();
+        assert!(later > earlier);
     }
 
     #[test]

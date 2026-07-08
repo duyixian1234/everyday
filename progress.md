@@ -152,3 +152,19 @@ _(暂无)_
 
 ### 下一步
 - `fs`/`network`/`system` 补全、`calendar`/`rss` 模块
+
+---
+
+## Session 2026-07-08 (修复递归 list 未展示其他文件夹)
+
+### Bug
+不加参数的 `mail list` 只显示 INBOX：`collect_across_folders` 在 INBOX 取够 `limit` 条就 `break`，不遍历其他文件夹。
+
+### 修复
+- 去掉 `break`，遍历所有文件夹，每个文件夹取最近 `limit` 条作为全局候选
+- 排序改为按**邮件日期**降序（跨文件夹 UID 不连续）：`chrono::DateTime::parse_from_rfc2822` 解析 RFC 2822 日期，容错去掉括号注释如 "(UTC)"，有日期排前无日期排后
+- 最后 truncate 到 limit
+
+### 测试结果
+- 42 单测全绿，clippy 零警告
+- **真实邮箱验证**：`mail list --limit 15` 跨 7+ 文件夹按日期混合排序（Google通知/INBOX/Github通知/腾讯云通知/Cloudflare通知/Junk/Sent Messages/From Me），时区正确（13:45 GMT 排在 14:20 +0800 之前）
