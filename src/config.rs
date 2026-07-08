@@ -72,7 +72,7 @@ fn default_imap_port() -> u16 {
     993
 }
 fn default_smtp_port() -> u16 {
-    465
+    587
 }
 fn default_true() -> bool {
     true

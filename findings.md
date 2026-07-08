@@ -68,6 +68,42 @@
   而宽度需要 `&usize` → 类型错位。改用自由函数 `pad(s, w)` 手动 `s.chars().count()` + 补空格，
   避免内联格式化语法歧义。
 
+## async-imap / lettre 邮件实现踩坑（2026-07-08）
+
+### async-imap 0.9.7 与 tokio-rustls 的 AsyncRead 不兼容
+- async-imap 基于 `futures::AsyncRead/AsyncWrite`（`futures_io`）
+- tokio-rustls 的 `TlsStream` 实现的是 `tokio::io::AsyncRead/AsyncWrite`
+- **桥接**：`tokio-util = { features = ["compat"] }` 的 `.compat()`（`TokioAsyncReadCompatExt`）
+  把 tokio stream 转成 `Compat<T>`（impl futures AsyncRead+AsyncWrite）
+- 类型：`async_imap::Session<Compat<TlsStream<TcpStream>>>`
+
+### async-imap 0.9.7 API 细节
+- `Fetch::envelope()` 是**方法**返回 `Option<&Envelope<'_>>`，不是字段
+- `Envelope`/`Address` 来自 `imap_proto::types`（async-imap re-export），带生命周期，字段是 `Option<Cow<'a, [u8]>>`（字节非字符串！）→ 用 `String::from_utf8_lossy` 转
+- `uid_search(query) -> Result<HashSet<Uid>>`（Uid=u32），**不是 Stream**，直接 collect
+- `uid_fetch(uids, query) -> Result<impl Stream<Item=Result<Fetch>>>`，用 `try_collect`
+- `Client::login(user, pass) -> Result<Session<T>, (Error, T)>`，错误是元组
+
+### lettre 0.11
+- `ContentType::TEXT_PLAIN_UTF_8` **不存在**，用 `ContentType::TEXT_PLAIN`
+- 异步 SMTP：`AsyncSmtpTransport::<Tokio1Executor>::relay(host)` → `.port().credentials().build()` → `transport.send(email).await`
+- 需要 `tokio1-rustls-tls` feature（含 tokio1 + rustls）
+- `relay()` 是 STARTTLS（端口 587）；implicit TLS(465) 需 `builder().tls(Tls::Wrapper(...))`，本项目默认 587
+
+### keyring 凭证流程
+- `keyring::Entry::new(service, account)` → `set_password` / `get_password`
+- service 约定 `everyday/mail/<account_name>`，account 用 username
+- 密码交互输入用 `rpassword::prompt_password`（同步，放 `spawn_blocking`）
+
+### mailparse 解码技巧
+- MIME encoded-word（`=?UTF-8?B?...?=`）单 header 解码：构造伪邮件 `parse_mail("X-Decoded: <s>\r\n\r\n")` 取 headers[0].get_value()
+- `ParsedMail::headers` 是 `Vec<MailHeader>`，`MailHeader::get_key()`（小写）/ `get_value()`（已解码）
+- `MailHeaderMap` 是 trait 不能作函数参数类型，用 `&ParsedMail` + 访问 `.headers`
+
+### config get/set 数组索引
+- toml::Value 的 array 用 `as_array()`，数字 segment 解析为 `usize` 索引
+- set 时 `arr.resize(idx+1, ...)` 自动扩展数组（填充空 table）
+
 ## 多账户存储模式
 - 每个模块维护 `Vec<Account>`，账户有唯一 `name`
 - 顶层 `[default_account]` 表映射模块 → 默认账户名

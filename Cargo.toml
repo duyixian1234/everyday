@@ -47,6 +47,12 @@ walkdir = "2"
 async-imap = "0.9"
 lettre = { version = "0.11", default-features = false, features = ["tokio1-rustls-tls", "smtp-transport", "pool", "builder"] }
 futures = "0.3"
+tokio-rustls = "0.26"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "0.26"
+mailparse = "0.15"
+rpassword = "7"
+tokio-util = { version = "0.7", features = ["compat"] }
 
 # 日历 (CalDAV) - 先用 reqwest 手写客户端，避免不稳定 crate
 # caldav = 待评估

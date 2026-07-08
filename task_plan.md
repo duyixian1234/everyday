@@ -49,7 +49,7 @@
 - [ ] `system` 模块补全（`sys watch`：notify；`sys clip`：arboard）
 - [ ] `fs` 模块完整实现（`fs search --content`、`fs tree`、`fs read-json`）
 - [ ] `network` 模块完整实现（`net fetch <url>` → Markdown、`net request`）
-- [ ] `email` 模块（IMAP list/read/search + SMTP send）
+- [x] `email` 模块（IMAP list/read/search + SMTP send + keyring login）[2026-07-08 完成]
 - [ ] `calendar` 模块（CalDAV）
 - [ ] `rss` 模块（feed-rs）
 
@@ -113,6 +113,13 @@ username = "me"
 | sysinfo 0.30 `System::global_cpu_usage()` / `disks()` 不存在 | 1 | CPU 改用 `sys.cpus()` 平均；磁盘改用 `sysinfo::Disks::new_with_refreshed_list()` |
 | `toml::Value::is_boolean` 不存在 | 1 | 改为 `is_bool()` |
 | clippy `needless_range_loop` | 1 | 用 `cells.iter().zip(widths.iter()).enumerate()` 替换 range 索引 |
+| `mailparse` Envelope 字段是 `Cow<[u8]>` 非 `Cow<str>` | 1 | 用 `String::from_utf8_lossy` 转字符串 |
+| async-imap 基于 `futures` AsyncRead，tokio-rustls 是 tokio 的 | 1 | `tokio-util` compat 桥接：`tls_stream.compat()` |
+| `async_imap::types::Address` 路径不存在 | 1 | `Fetch::envelope()` 是方法（非字段），Address 来自 `imap_proto`，用类型推断避免命名 |
+| `uid_search` 返回 `HashSet<u32>` 非 Stream | 1 | 直接 collect，不 try_collect |
+| `mailparse::MailHeaderMap` 是 trait 不能作参数类型 | 1 | 改 `&mailparse::ParsedMail`，访问 `.headers` |
+| `lettre` `ContentType::TEXT_PLAIN_UTF_8` 不存在 | 1 | 改 `ContentType::TEXT_PLAIN` |
+| `config get/set` 不支持数组索引 | 1 | get_dotted/set_dotted 增加 array 分支，数字 seg 访问数组元素 |
 
 ---
 
@@ -122,5 +129,5 @@ username = "me"
 - Phase 3: complete
 - Phase 4: complete
 - Phase 5: complete
-- Phase 6: pending (参考模块实现 — 下一步)
+- Phase 6: 进行中（email 完成；system/fs/network/calendar/rss 待办）
 - Phase 7: pending

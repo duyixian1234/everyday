@@ -149,20 +149,33 @@ async fn run_config(action: Option<&str>, args: &[String], mode: RenderMode) -> 
     }
 }
 
-/// 沿点分路径读取 toml::Value。
+/// 沿点分路径读取 toml::Value，支持 table 字段与 array 索引（如 `mail.accounts.0.name`）。
 fn get_dotted(root: &toml::Value, path: &str) -> Result<toml::Value> {
     let mut cur = root.clone();
     for seg in path.split('.') {
-        cur = cur
-            .as_table()
-            .and_then(|t| t.get(seg))
-            .cloned()
-            .ok_or_else(|| AgentError::InvalidArgument(format!("path segment '{seg}' not found")))?;
+        cur = if let Some(table) = cur.as_table() {
+            table
+                .get(seg)
+                .cloned()
+                .ok_or_else(|| AgentError::InvalidArgument(format!("path segment '{seg}' not found")))?
+        } else if let Some(arr) = cur.as_array() {
+            let idx: usize = seg
+                .parse()
+                .map_err(|_| AgentError::InvalidArgument(format!("array index '{seg}' not a number")))?;
+            arr.get(idx)
+                .cloned()
+                .ok_or_else(|| AgentError::InvalidArgument(format!("array index {idx} out of bounds")))?
+        } else {
+            return Err(AgentError::InvalidArgument(format!(
+                "path segment '{seg}' not found"
+            )));
+        };
     }
     Ok(cur)
 }
 
 /// 设置点分路径的值并保存。自动推断值类型（bool / int / float / string）。
+/// 支持 table 字段与 array 索引（自动扩展数组）。
 fn set_config_path(path: &str, raw_value: &str) -> Result<()> {
     let cfg_path = Config::config_path()?;
     // 读现有文件为 toml::Value（不存在则空表）。
@@ -195,17 +208,34 @@ fn set_dotted(root: &mut toml::Value, segs: &[&str], value: toml::Value) -> Resu
     if segs.is_empty() {
         return Err(AgentError::InvalidArgument("empty path".into()));
     }
-    let table = root
-        .as_table_mut()
-        .ok_or_else(|| AgentError::InvalidArgument("config root must be a table".into()))?;
-    if segs.len() == 1 {
-        table.insert(segs[0].to_string(), value);
-        return Ok(());
+    match root {
+        toml::Value::Table(table) => {
+            if segs.len() == 1 {
+                table.insert(segs[0].to_string(), value);
+                return Ok(());
+            }
+            let entry = table
+                .entry(segs[0].to_string())
+                .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
+            set_dotted(entry, &segs[1..], value)
+        }
+        toml::Value::Array(arr) => {
+            let idx: usize = segs[0]
+                .parse()
+                .map_err(|_| AgentError::InvalidArgument(format!("array index '{}' not a number", segs[0])))?;
+            if arr.len() <= idx {
+                arr.resize(idx + 1, toml::Value::Table(toml::value::Table::new()));
+            }
+            if segs.len() == 1 {
+                arr[idx] = value;
+                return Ok(());
+            }
+            set_dotted(&mut arr[idx], &segs[1..], value)
+        }
+        _ => Err(AgentError::InvalidArgument(
+            "cannot index into non-table/non-array value".into(),
+        )),
     }
-    let entry = table
-        .entry(segs[0].to_string())
-        .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
-    set_dotted(entry, &segs[1..], value)
 }
 
 fn parse_value(s: &str) -> toml::Value {
@@ -278,5 +308,30 @@ mod tests {
         let t: toml::Value = toml::from_str("a = { b = { c = 1 } }").unwrap();
         let v = get_dotted(&t, "a.b.c").unwrap();
         assert_eq!(v.as_integer(), Some(1));
+    }
+
+    #[test]
+    fn dotted_get_array_index() {
+        let t: toml::Value =
+            toml::from_str("accounts = [{ name = 'work' }, { name = 'home' }]").unwrap();
+        assert_eq!(
+            get_dotted(&t, "accounts.0.name").unwrap().as_str(),
+            Some("work")
+        );
+        assert_eq!(
+            get_dotted(&t, "accounts.1.name").unwrap().as_str(),
+            Some("home")
+        );
+        assert!(get_dotted(&t, "accounts.5.name").is_err());
+    }
+
+    #[test]
+    fn set_dotted_into_array_index() {
+        let mut t: toml::Value = toml::from_str("accounts = [{ name = 'work' }]").unwrap();
+        set_dotted(&mut t, &["accounts", "0", "imap_host"], toml::Value::String("imap.x.com".into())).unwrap();
+        assert_eq!(
+            get_dotted(&t, "accounts.0.imap_host").unwrap().as_str(),
+            Some("imap.x.com")
+        );
     }
 }

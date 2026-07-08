@@ -60,3 +60,39 @@ _(暂无)_
 - 实现 `network` 模块（reqwest fetch→Markdown、通用 request）
 - 补全 `system`（watch/clip）
 - 邮件/日历/RSS 模块集成
+
+---
+
+## Session 2026-07-08 (Phase 6: 邮件模块完整实现)
+
+### 已完成
+- **`email` 模块完整实现**（IMAP 收件 + SMTP 发件 + keyring 凭证）：
+  - `mail list [--unread] [--limit N] [--folder]` —— IMAP UID SEARCH + FETCH ENVELOPE 摘要
+  - `mail read <uid>` —— FETCH BODY[] + mailparse 解析正文/headers
+  - `mail search --query Q` —— IMAP SEARCH TEXT（转义双引号）
+  - `mail send --to --subject --body [--cc]` —— lettre AsyncSmtpTransport（STARTTLS）
+  - `mail login` —— rpassword 交互输入密码存系统 keyring（service=`everyday/mail/<account>`）
+- **配置系统增强**：`config get/set` 支持数组索引（`mail.accounts.0.name`），set_dotted/get_dotted 增加 array 分支
+- **依赖新增**：tokio-rustls/rustls(ring)/webpki-roots（IMAPS TLS）、mailparse（邮件解析）、rpassword（密码交互）、tokio-util compat（tokio↔futures AsyncRead 桥接）
+- **默认 SMTP 端口** 465→587（STARTTLS 标准，lettre relay 兼容）
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets` ✅ 零警告、`cargo test` ✅ 33 passed（+8 邮件/数组测试）
+- 冒烟测试 ✅：
+  - `everyday mail` → 5 actions 帮助
+  - `everyday config init` → 创建配置文件
+  - `everyday config get mail.accounts.0.name` → `work`（数组索引读取）
+  - `everyday config set mail.accounts.0.imap_port 993` → 数组索引写入
+  - `everyday mail list --account work`（无密码）→ `AuthError` 提示 run `everyday mail login`
+  - JSON 错误格式正确，退出码 1
+
+### 错误记录（已解决）
+- async-imap 基于 `futures` AsyncRead，tokio-rustls 是 tokio 的 → tokio-util compat `.compat()` 桥接
+- `Fetch.envelope` 是方法非字段；`Envelope`/`Address` 来自 `imap_proto`，字段是 `Cow<[u8]>` → `from_utf8_lossy` 转
+- `uid_search` 返回 `HashSet<u32>` 非 Stream → 直接 collect
+- `mailparse::MailHeaderMap` 是 trait 不能作参数 → 改 `&ParsedMail`
+- `lettre` `ContentType::TEXT_PLAIN_UTF_8` 不存在 → `TEXT_PLAIN`
+- `config get/set` 不支持数组索引 → get_dotted/set_dotted 增加 array 分支
+
+### 下一步
+- `fs` 模块（ignore/walkdir）、`network` 模块（reqwest/scraper）、`system` 补全、`calendar`(CalDAV)、`rss`(feed-rs)
