@@ -7,7 +7,7 @@
 **Everyday** 是一个 Rust 编写的本地 CLI 工具集，作为 AI Agent 的"数字双手"。统一命令结构 `everyday <module> <action> [options]`，支持 Text / JSON 双输出。详见 `PRD.md`。
 
 - **语言：** Rust (edition 2024)
-- **二进制名：** `agent`（见 `Cargo.toml` 的 `[[bin]]` 段）
+- **二进制名：** `everyday`（见 `Cargo.toml` 的 `[[bin]]` 段）
 - **目标平台：** Windows / macOS / Linux
 - **异步运行时：** `tokio`
 - **规划文件：** `task_plan.md` / `findings.md` / `progress.md`（使用 planning-with-files 工作流）

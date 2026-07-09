@@ -168,3 +168,32 @@ _(暂无)_
 ### 测试结果
 - 42 单测全绿，clippy 零警告
 - **真实邮箱验证**：`mail list --limit 15` 跨 7+ 文件夹按日期混合排序（Google通知/INBOX/Github通知/腾讯云通知/Cloudflare通知/Junk/Sent Messages/From Me），时区正确（13:45 GMT 排在 14:20 +0800 之前）
+
+---
+
+## Session 2026-07-08 (创建 everyday-cli agent skill)
+
+### 需求
+将 everyday 命令行的使用封装为 agent skill，便于 AI Agent 加载后正确调用 CLI；同时编写 README.md 供人类参考。
+
+### 已完成
+- 创建 `skills/everyday-cli/` 目录
+- **SKILL.md**（agent skill 入口）：
+  - frontmatter（summary + read_when 触发场景：邮件操作、系统监控、everyday 命令、JSON 交互等）
+  - 命令结构 `everyday <module> <action> [options]`、全局 flag（--json/--account）、输出模式、错误格式
+  - 7 个模块完整命令清单，逐条标注实现状态（✅ 已实现 / ⚠️ 骨架）：config/mail 完整可用、sys 部分可用、fs/net/cal/rss 为骨架
+  - 配置说明、keyring 约定、典型工作流示例（首次配置邮件、AI 读取未读邮件、查看系统状态、发送邮件）、安全约定、实现状态总览
+- **README.md**（人类可读文档）：
+  - 项目简介、特性、安装步骤、快速开始
+  - 完整命令参考（含每个模块的选项表）
+  - Text/JSON 双输出模式示例（含真实输出样例）
+  - 配置文件示例、凭证安全说明、多账户机制
+  - 项目结构、技术栈、Executor trait 架构说明、实现状态表
+
+### 产物
+- `skills/everyday-cli/SKILL.md`
+- `skills/everyday-cli/README.md`
+
+### 下一步
+- Phase 6 待实现模块：fs（ignore/walkdir）、net（reqwest/scraper）、sys 补全（watch/clip）、cal（CalDAV）、rss（feed-rs）
+- 考虑将 skill 同步到 `~/.workbuddy/skills/` 以便跨项目使用
