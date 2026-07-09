@@ -239,3 +239,38 @@ _(暂无)_
 
 ### 下一步
 - `fs`/`net`/`sys` 补全、`rss` 模块
+
+---
+
+## Session 2026-07-09 (CLI 子命令帮助修复)
+
+### Bug
+`everyday cal add --help` 显示顶层 clap 帮助而非 `cal add` 的 action 帮助。
+原因：clap 内置 `--help` flag 在顶层拦截，`trailing_var_arg + allow_hyphen_values` 无法阻止 clap 把 `--help` 当作自身帮助 flag。
+
+### 修复方案
+在 `Cli::parse()` 前预扫描 `std::env::args()`，检测出现在 module 之后的 `--help`/`-h`：
+- `--help` 在 module 之前 → 返回 None，交给 clap 处理顶层帮助
+- `--help` 在 module 之后、action 之前 → 输出 module 帮助
+- `--help` 在 action 之后 → 输出 action 帮助（从 ActionDoc.usage 渲染）
+
+新增函数：
+- `detect_subcommand_help`：预扫描 raw args，正确跳过 `--json`、`--account <value>`、`--account=value`、`--key=value`
+- `action_help`：从 ModuleRegistry 查找 ActionDoc，渲染单 action 详细帮助
+- `config_help`：config 模块不在 registry 中，单独处理（module + action 两级）
+- `render_help_target`：统一渲染帮助目标为 (exit_code, text)
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 69 passed（+15 新测试）
+- 冒烟测试 ✅：
+  - `everyday cal add --help` → action 帮助（--title/--start/--end 用法）
+  - `everyday cal --help` / `everyday cal -h` → module 帮助（列出所有 actions）
+  - `everyday --help` → 顶层 clap 帮助（不变）
+  - `everyday mail send --help` / `everyday config set --help` / `everyday sys status --help` → 各 action 帮助
+  - `everyday cal add --help --title foo` → help 优先（忽略后续 args）
+  - `everyday --json cal add --help` → 全局 flag + 子命令帮助
+  - `everyday sys status` → 正常输出（无回归）
+  - `everyday cal bogus` → UnknownAction 错误（无回归）
+
+### 下一步
+- `fs`/`net`/`sys` 补全、`rss` 模块
