@@ -74,8 +74,16 @@ async fn run(cli: Cli, mode: RenderMode) -> (i32, String) {
     };
 
     // 执行。
+    // `--account` 是 clap 的 global flag，被 clap 消费到 `cli.account`，不放入 `cli.args`。
+    // 注入到 args 前部，让模块的 `parse_simple_args` 能解析 `--account <name>`。
     let action = cli.action.as_deref().unwrap_or("");
-    let result = module.execute(action, &cli.args).await;
+    let mut full_args: Vec<String> = Vec::new();
+    if let Some(acc) = &cli.account {
+        full_args.push("--account".to_string());
+        full_args.push(acc.clone());
+    }
+    full_args.extend(cli.args.iter().cloned());
+    let result = module.execute(action, &full_args).await;
     finalize(result, mode)
 }
 
