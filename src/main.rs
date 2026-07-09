@@ -26,6 +26,12 @@ use crate::output::{finalize, mode_from_json_flag, render_error, Output, RenderM
 
 #[tokio::main]
 async fn main() {
+    // 统一安装 rustls ring crypto provider。
+    // cargo feature unification 可能让 ring（email 的 tokio-rustls）与 aws-lc-rs（传递依赖）
+    // 同时启用，rustls 0.23+ 拒绝自动选择 → panic。入口处显式安装 ring 即可。
+    // 重复安装返回 Err，是 no-op，用 `let _` 吞掉。
+    let _ = rustls::crypto::ring::default_provider().install_default();
+
     let cli = Cli::parse();
     let mode = mode_from_json_flag(cli.json);
 

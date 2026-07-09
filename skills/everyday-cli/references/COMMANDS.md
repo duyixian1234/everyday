@@ -11,7 +11,7 @@ Loaded on demand by the `everyday-cli` skill. Every command below supports the g
 | `sys` | ✅ Partial | `status` works; `watch` / `clip` not implemented |
 | `fs` | ⚠️ Skeleton | search / tree / read-json return `NotImplemented` |
 | `net` | ⚠️ Skeleton | fetch / request return `NotImplemented` |
-| `cal` | ⚠️ Skeleton | CalDAV list / add / delete return `NotImplemented` |
+| `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
 | `rss` | ⚠️ Skeleton | follow / list / digest return `NotImplemented` |
 
 ---
@@ -108,13 +108,45 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 
 ---
 
-## cal — calendar management (CalDAV) ⚠️ (skeleton)
+## cal — calendar management (CalDAV) ✅
 
-| Command | Description | Status | Example |
-|---------|-------------|--------|---------|
-| `cal list` | List events | ⚠️ | `everyday cal list --today` |
-| `cal add` | Add an event | ⚠️ | `everyday cal add --title T --start ISO --end ISO` |
-| `cal delete` | Delete an event | ⚠️ | `everyday cal delete --id ID` |
+Credentials: config holds account metadata (`caldav_url`, `username`) → `everyday cal login` stores password in OS keyring → other commands read it automatically. Verified against QQ CalDAV (`dav.qq.com`).
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `cal login` | Interactively enter password into the OS keyring | `everyday cal login --account personal` |
+| `cal calendars` | List calendar collections (href/name/colour) | `everyday cal calendars --json` |
+| `cal list` | List events (default: today; `--date YYYY-MM-DD` for a specific day) | `everyday cal list --json` |
+| `cal add` | Add an event (icalendar VEVENT, PUT) | `everyday cal add --title T --start 2026-07-09T15:00:00Z --end 2026-07-09T16:00:00Z` |
+| `cal delete` | Delete an event by href | `everyday cal delete --id "/calendar/.../ev.ics"` |
+
+### cal options
+
+| Flag | Applies to | Description |
+|------|-----------|-------------|
+| `--account NAME` | all | Specify account (override default) |
+| `--today` | `list` | Today's events (default behaviour) |
+| `--date YYYY-MM-DD` | `list` | Events on a specific date |
+| `--limit N` | `list` | Max rows, default 50 |
+| `--title T` | `add` | Event title (required) |
+| `--start ISO` | `add` | Start time, RFC3339 or `YYYY-MM-DDTHH:MM:SS` (required) |
+| `--end ISO` | `add` | End time (required) |
+| `--location L` | `add` | Location (optional) |
+| `--description D` | `add` | Description (optional) |
+| `--calendar HREF` | `add` | Target calendar href/name (default: first calendar) |
+| `--id HREF` | `delete` | Event href from `cal list` (required) |
+
+### cal list — JSON output (array of objects)
+
+```json
+[{"href":"/calendar/.../ev.ics","start":"2026-07-09 15:00","end":"2026-07-09 16:00","summary":"meeting","location":"Room A"}]
+```
+
+### cal calendars — JSON output
+
+```json
+[{"href":"/calendar/.../","name":"duyixian1234's QQMail Calendars","colour":""}]
+```
 
 ---
 

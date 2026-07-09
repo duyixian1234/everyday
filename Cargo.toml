@@ -54,8 +54,15 @@ mailparse = "0.15"
 rpassword = "7"
 tokio-util = { version = "0.7", features = ["compat"] }
 
-# 日历 (CalDAV) - 先用 reqwest 手写客户端，避免不稳定 crate
-# caldav = 待评估
+# 日历 (CalDAV) — libdav + icalendar，HTTP 走 hyper 1.x + hyper-rustls(ring) + tower-http 鉴权
+libdav = "0.10"
+icalendar = { version = "0.17", features = ["parser"] }
+hyper = { version = "1", features = ["client", "http1"] }
+hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["ring", "http1", "webpki-tokio"] }
+tower-http = { version = "0.6", features = ["auth"] }
+http = "1"
+http-body-util = "0.1"
 
 # RSS
 feed-rs = "2"

@@ -197,3 +197,45 @@ _(暂无)_
 ### 下一步
 - Phase 6 待实现模块：fs（ignore/walkdir）、net（reqwest/scraper）、sys 补全（watch/clip）、cal（CalDAV）、rss（feed-rs）
 - 考虑将 skill 同步到 `~/.workbuddy/skills/` 以便跨项目使用
+
+---
+
+## Session 2026-07-09 (Phase 6: 日历模块完整实现)
+
+### 需求
+参考交接文档经验，重新实现被 reset 的 calendar 模块（CalDAV）。
+
+### 已完成
+- **`calendar` 模块完整实现**（CalDAV via libdav 0.10 + icalendar 0.17）：
+  - `cal login` —— rpassword 交互输入密码存 keyring（校验空密码）
+  - `cal calendars` —— principal→home-set→calendars 发现，列出日历集合（含 name/colour）
+  - `cal list [--today|--date YYYY-MM-DD] [--limit N]` —— GetCalendarResources 全量拉取 + icalendar 解析 + 本地日期过滤
+  - `cal add --title --start --end [--location --description --calendar]` —— icalendar 构造 VEVENT + PUT
+  - `cal delete --id HREF` —— DELETE force
+- **依赖新增**：libdav 0.10、icalendar 0.17(parser)、hyper 1、hyper-util 0.1、hyper-rustls 0.27(ring,webpki-tokio)、tower-http 0.6(auth)、http 1、http-body-util 0.1
+- **main.rs** 入口统一 `rustls::crypto::ring::default_provider().install_default()`（解决 ring+aws-lc-rs feature unification panic）
+- **build_client**：hyper+rustls(ring,webpki)+AddAuthorization Basic Auth + `find_context_path` well-known 探测（跳过 DNS SRV bootstrap）
+
+### 关键决策
+- 跳过 `bootstrap_via_service_discovery`（DNS SRV 国内不可用），用 `find_context_path` 只做 well-known 重定向
+- QQ `/.well-known/caldav` 301 → `/calendar/`，`base_url` 是 pub 字段直接覆盖
+- QQ 不支持 current-user-principal（404）→ 降级用 base_url 作 home set
+- cal list 用 GetCalendarResources 全量+本地过滤（比服务端 time-range REPORT 可靠）
+- 亲自读 libdav/icalendar 源码验证 API，修正交接文档二手信息（icalendar 输出已是 CRLF、DatePerhapsTime::date_naive 内置）
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 54 passed（+12 calendar 测试）
+- **真实端到端验证**（QQ dav.qq.com）：
+  - `cal calendars` → 4 个日历集合（含 "duyixian1234's QQMail Calendars"）
+  - `cal add` → 事件创建成功（href + etag）
+  - `cal list` → 正确拉取并解析（start/end/summary）
+  - `cal delete` → 删除成功，list 恢复空
+  - `cal bogus` → UnknownAction，错误 JSON 格式正确
+
+### 错误记录（已解决）
+- `http::Uri` 是 `host()` 非 `host_str()` → 改 `base.host()`
+- `base` 被 `host` 借用后 move → `host` 转 owned String
+- QQ current-user-principal 404 → 降级 base_url 作 home set
+
+### 下一步
+- `fs`/`net`/`sys` 补全、`rss` 模块

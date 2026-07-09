@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), system status (CPU/memory/disk), and config management. Use when the user asks to check, read, or send email, monitor system resources, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), system status (CPU/memory/disk), and config management. Use when the user asks to check/read/send email, manage calendar events, monitor system resources, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -24,7 +24,7 @@ Modules: `mail` · `sys` · `config` · `fs` · `net` · `cal` · `rss`
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Skeleton modules return `NotImplemented`.** `fs`, `net`, `cal`, and `rss` are not yet implemented — do not promise them. Only `mail`, `sys status`, and `config` work today.
+4. **Skeleton modules return `NotImplemented`.** `fs`, `net`, and `rss` are not yet implemented — do not promise them. `mail`, `cal`, `sys status`, and `config` work today.
 
 ## First-time setup (only if config is missing)
 
@@ -67,6 +67,23 @@ everyday mail send --to a@b.com --subject "Hi" --body "内容"
 ```bash
 everyday sys status --json
 # → [{"resource":"cpu","used":"12.3%","total":"100.0%","pct":"12.3%"}, ...]
+```
+
+**List today's calendar events:**
+```bash
+everyday cal list --json
+# → [{"href":"/cal/ev.ics","start":"2026-07-09 15:00","end":"2026-07-09 16:00","summary":"meeting","location":""}]
+```
+
+**Add a calendar event:**
+```bash
+everyday cal add --title "会议" --start "2026-07-09T15:00:00Z" --end "2026-07-09T16:00:00Z"
+```
+
+**List calendars / delete event:**
+```bash
+everyday cal calendars --json           # list calendar collections (get hrefs)
+everyday cal delete --id "/cal/ev.ics"  # delete by href from `cal list`
 ```
 
 ## Error format

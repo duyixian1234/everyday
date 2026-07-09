@@ -125,4 +125,43 @@
 - `RenderMode::Text | Json`
 - 错误也走 Output 通道或独立 `AgentError::render_json()`，保持退出码语义
 
+## CalDAV 日历模块实现（2026-07-09，源码验证）
+
+### 技术选型（最终方案）
+- **libdav 0.10.6**：CalDAV 协议，NLnet 资助、维护活跃。采用 **request API 模式**（`caldav.request(FindCalendars::new(path))`），非旧版 `find_calendars()` 方法
+- **icalendar 0.17.12**：iCalendar 解析/生成，`parser` feature（default 开启）
+- **HTTP 栈**：hyper 1.x legacy `Client` + hyper-rustls 0.27（`ring` + `webpki-tokio`，与 email 模块 webpki-roots 一致）+ tower-http 0.6 `AddAuthorization`（Basic Auth 中间件）
+- **关键**：libdav 自身不含 HTTP 客户端，定义 `HttpClient` trait（blanket impl for `Service<Request<String>, Response=Response<Incoming>>`），由使用者提供 hyper client。body 类型必须为 `String`（`http-body 1.0` 实现了 `impl Body for String`）
+
+### 关键 API（亲自读 libdav/icalendar 源码确认，修正交接文档二手信息）
+- `CalDavClient::new(webdav)` —— 跳过 bootstrap（坑5），`CalDavClient` 实现 `Deref<Target=WebDavClient>`
+- `libdav::caldav_service_for_url(&Uri) -> Result<DiscoverableService, _>` —— 从 URL scheme 推断 CalDavs/CalDav
+- `WebDavClient::find_context_path(service, host, port) -> Result<Option<Uri>, _>` —— RFC 6764 §5 well-known 探测，最多 5 跳重定向，**不碰 DNS SRV/TXT**
+- `WebDavClient.base_url` 是 **pub 字段**，重定向后可直接 `webdav.base_url = url` 覆盖（坑6）
+- request 模式：`caldav.request(R)` where `R: DavRequest`，返回 `R::Response`
+  - `caldav::FindCalendarHomeSet::new(principal_path)` → `{ home_sets: Vec<Uri> }`
+  - `caldav::FindCalendars::new(home_set_path)` → `{ calendars: Vec<FoundCollection> }`（`{ href, etag, supports_sync }`）
+  - `caldav::GetCalendarResources::new(collection_href).with_hrefs(hrefs)` → `{ resources: Vec<FetchedResource> }`（含 `calendar-data`！）
+  - `dav::GetProperty::new(href, &PropertyName)` → `{ value: Option<String> }`（取 DISPLAY_NAME/CALENDAR_COLOUR）
+  - `dav::PutResource::new(href).create(data, content_type)` → `{ etag: Option<String> }`（`If-None-Match: *`）
+  - `dav::Delete::new(href).force()` → `DeleteResponse`（无条件）/ `.with_etag(etag)`（`If-Match`）
+  - `caldav::ListCalendarResources` time-range REPORT **只返元数据不含 calendar-data** → `cal list` 改用 `GetCalendarResources` 全量 + 本地过滤
+- `WebDavClient::find_current_user_principal()` → `Option<Uri>`（RFC 5397）
+- icalendar 构造：`Calendar::new().push(Event::new().summary().starts(Utc).ends(Utc).done()).done()`，builder 方法返 `&mut Self`，需 `.done()` 拿 owned
+- icalendar 解析：`str::parse::<Calendar>()`（FromStr），`cal.events()` → `impl Iterator<Item=&Event>`，`event.get_start()` → `Option<DatePerhapsTime>`
+- `DatePerhapsTime::date_naive()` 内置方法直接拿 `NaiveDate`（坑3 简化：不必手写三变体 match）
+
+### 踩坑（已解决）
+1. **hyper Body 类型**：`HttpClient` trait 的 `call(&mut self, req: Request<String>)` 要求 body=String。`Client<C, B>` 实现 `Service<Request<B>>`，故 `Client::builder().build::<_, String>(connector)` 显式指定 B=String（`Builder::build<C, B>` 的 B 是泛型，可 turbofish）
+2. **rustls crypto provider panic**（坑4）：cargo feature unification 让 ring（email 的 tokio-rustls）与 aws-lc-rs（hyper-rustls 传递依赖）同时启用 → rustls 0.23 panic。**正解**：`main.rs` 入口 `let _ = rustls::crypto::ring::default_provider().install_default();`（重复 install 返 Err 是 no-op，用 `let _` 吞掉）
+3. **`bootstrap_via_service_discovery` 触发 DNS SRV**（坑5）：内部先 CheckSupport base_url，失败 fallback `resolve_srv_record`（`_caldavs._tcp.<host>`）。国内服务商（QQ/网易/飞书）不实现 SRV，远程 DNS 关闭连接 → os error 10054。**正解**：`CalDavClient::new(webdav)` 跳过 bootstrap，手动 `find_context_path`（只做 well-known 重定向）
+4. **QQ CalDAV `/.well-known/caldav` 301 重定向**（坑6）：用户 `caldav_url = https://dav.qq.com`，根 PROPFIND 404；well-known 301 → `https://dav.qq.com:443/calendar/`（带显式端口）。**正解**：`find_context_path` 返回 `Some(url)` 后 `webdav.base_url = url`
+5. **icalendar 输出已是 CRLF**（修正交接文档坑2）：`fmt_write` 用 `write_crlf!` 宏。但 property 值内部可能混入裸 `\n`，仍用归一化 `.replace("\r\n","\n").replace('\r',"\n").replace('\n',"\r\n")` 保险
+6. **`NaiveDateTime::and_utc()` 返 `DateTime<Utc>` 非 Option**（坑8）：`and_utc_opt` 不存在，用 `and_utc()`
+7. **keyring 空密码**（坑9）：`set_password("")` 成功但 base64 成 `Basic Og==` 后服务端 401。`cal login` 校验空密码报错
+8. **未知 action 报错顺序**（坑10）：`match action` 提前到 `get_password` 之前，避免空密码优先报 AuthError
+
+### cal list 策略
+用 `GetCalendarResources`（calendar-query REPORT，全量含 calendar-data）拉取每个日历事件，本地 icalendar 解析 VEVENT + `date_naive()` 按目标日期过滤 + `NaiveDateTime` 排序。比服务端 time-range REPORT 可靠（国内服务端实现质量参差可能返空），不启用 `chrono-tz` feature（用 NaiveDateTime 本地时间序对单日事件更直观）
+
 _(持续更新)_

@@ -50,7 +50,7 @@
 - [ ] `fs` 模块完整实现（`fs search --content`、`fs tree`、`fs read-json`）
 - [ ] `network` 模块完整实现（`net fetch <url>` → Markdown、`net request`）
 - [x] `email` 模块（IMAP list/read/search + SMTP send + keyring login）[2026-07-08 完成]
-- [ ] `calendar` 模块（CalDAV）
+- [x] `calendar` 模块（CalDAV：login/calendars/list/add/delete，libdav+icalendar）[2026-07-09 完成]
 - [ ] `rss` 模块（feed-rs）
 
 ### Phase 7: 构建、测试、文档 [pending]
@@ -120,6 +120,10 @@ username = "me"
 | `mailparse::MailHeaderMap` 是 trait 不能作参数类型 | 1 | 改 `&mailparse::ParsedMail`，访问 `.headers` |
 | `lettre` `ContentType::TEXT_PLAIN_UTF_8` 不存在 | 1 | 改 `ContentType::TEXT_PLAIN` |
 | `config get/set` 不支持数组索引 | 1 | get_dotted/set_dotted 增加 array 分支，数字 seg 访问数组元素 |
+| `http::Uri` 方法是 `host()` 非 `host_str()`（与 url::Url 混淆） | 1 | 改用 `base.host()` |
+| `base` 被 `host` 借用后 move 到 `WebDavClient::new` | 1 | `host` 转 owned `String`（`.to_string()`）解除借用 |
+| QQ CalDAV 不支持 current-user-principal（PROPFIND 404） | 1 | `find_current_user_principal` 失败时降级用 `base_url` 作 calendar home set |
+| libdav `bootstrap_via_service_discovery` fallback DNS SRV（QQ 无 SRV，os error 10054） | 1 | `CalDavClient::new(webdav)` 跳过 bootstrap，手动 `find_context_path` 只做 well-known 重定向 |
 
 ---
 
@@ -129,5 +133,5 @@ username = "me"
 - Phase 3: complete
 - Phase 4: complete
 - Phase 5: complete
-- Phase 6: 进行中（email 完成；system/fs/network/calendar/rss 待办）
+- Phase 6: 进行中（email + calendar 完成；system/fs/network/rss 待办）
 - Phase 7: pending
