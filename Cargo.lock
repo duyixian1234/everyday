@@ -1085,6 +1085,7 @@ dependencies = [
  "mailparse",
  "notify",
  "reqwest",
+ "roxmltree",
  "rpassword",
  "rustls",
  "scraper",

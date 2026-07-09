@@ -69,10 +69,10 @@ everyday sys status --json
 # → [{"resource":"cpu","used":"12.3%","total":"100.0%","pct":"12.3%"}, ...]
 ```
 
-**List today's calendar events:**
+**List calendar events (today & future by default; `--all` for all):**
 ```bash
 everyday cal list --json
-# → [{"href":"/cal/ev.ics","start":"2026-07-09 15:00","end":"2026-07-09 16:00","summary":"meeting","location":""}]
+# → [{"路径":"/cal/ev.ics","开始":"2026-07-09 15:00","结束":"2026-07-09 16:00","主题":"meeting","地点":""}]
 ```
 
 **Add a calendar event:**

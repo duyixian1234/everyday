@@ -17,10 +17,10 @@ use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::Client as HyperClient;
 use hyper_util::rt::TokioExecutor;
 use icalendar::{Calendar, CalendarDateTime, Component, DatePerhapsTime, Event, EventLike};
-use libdav::caldav::{FindCalendarHomeSet, FindCalendars, GetCalendarResources};
-use libdav::dav::{Delete, GetProperty, PutResource, WebDavClient};
+use libdav::caldav::{FindCalendarHomeSet, GetCalendarResources};
+use libdav::dav::{Delete, Propfind, PutResource, WebDavClient};
 use libdav::names;
-use libdav::{CalDavClient, caldav_service_for_url};
+use libdav::{CalDavClient, Depth, caldav_service_for_url};
 use tower_http::auth::AddAuthorization;
 
 use crate::config::{CalendarAccount, Config};
@@ -62,7 +62,7 @@ impl Executor for CalendarModule {
         vec![
             ActionDoc::new("login", "Store CalDAV password in system keyring", "everyday cal login [--account NAME]"),
             ActionDoc::new("calendars", "List calendar collections", "everyday cal calendars [--account NAME]"),
-            ActionDoc::new("list", "List events (default: today)", "everyday cal list [--today|--date YYYY-MM-DD] [--limit N] [--account NAME]"),
+            ActionDoc::new("list", "List events (default: today & future)", "everyday cal list [--today|--date YYYY-MM-DD|--all] [--limit N] [--account NAME]"),
             ActionDoc::new("add", "Add an event", "everyday cal add --title T --start ISO --end ISO [--location L] [--description D] [--calendar HREF] [--account NAME]"),
             ActionDoc::new("delete", "Delete an event by href", "everyday cal delete --id HREF [--account NAME]"),
         ]
@@ -205,28 +205,57 @@ async fn list_all_calendars(caldav: &CalDav) -> Result<Vec<CalendarInfo>> {
     };
 
     let mut out = Vec::new();
+    // 一次 PROPFIND Depth:1 查 displayname + color + resourcetype。
+    // QQ quirk: 对单日历 Depth:0 查 displayname 返 404，但从 home set Depth:1 批量查返 200。
+    // 参照 Python caldav 库 get_calendars() 的实现。
+    let props = [&names::DISPLAY_NAME, &names::CALENDAR_COLOUR, &names::RESOURCETYPE];
     for url in &home_sets {
-        let resp = caldav
-            .request(FindCalendars::new(url.path()))
+        let resp = match caldav
+            .request(
+                Propfind::new(url.path())
+                    .with_properties(&props)
+                    .with_depth(Depth::One),
+            )
             .await
-            .map_err(|e| AgentError::Network(format!("find calendars: {e}")))?;
-        for cal in resp.calendars {
-            // DISPLAY_NAME / CALENDAR_COLOUR 取不到时降级为 None，不致命。
-            let name = caldav
-                .request(GetProperty::new(&cal.href, &names::DISPLAY_NAME))
-                .await
-                .ok()
-                .and_then(|r| r.value);
-            let colour = caldav
-                .request(GetProperty::new(&cal.href, &names::CALENDAR_COLOUR))
-                .await
-                .ok()
-                .and_then(|r| r.value);
-            out.push(CalendarInfo {
-                href: cal.href,
-                name,
-                colour,
-            });
+        {
+            Ok(r) => r,
+            Err(_) => continue, // 单个 home set 查询失败不致命
+        };
+        let doc = match resp.xml_tree() {
+            Ok(d) => d,
+            Err(_) => continue,
+        };
+        for response in doc
+            .root_element()
+            .descendants()
+            .filter(|n| n.tag_name() == names::RESPONSE)
+        {
+            let href = response
+                .descendants()
+                .find(|n| n.tag_name() == names::HREF)
+                .and_then(|n| n.text())
+                .unwrap_or("")
+                .to_string();
+            // 只保留 calendar 集合（resourcetype 含 C:calendar）。
+            let is_calendar = response
+                .descendants()
+                .find(|n| n.tag_name() == names::RESOURCETYPE)
+                .map(|rt| rt.descendants().any(|n| n.tag_name() == names::CALENDAR))
+                .unwrap_or(false);
+            if !is_calendar {
+                continue;
+            }
+            let name = response
+                .descendants()
+                .find(|n| n.tag_name() == names::DISPLAY_NAME)
+                .and_then(|n| n.text())
+                .map(|s| s.to_string());
+            let colour = response
+                .descendants()
+                .find(|n| n.tag_name() == names::CALENDAR_COLOUR)
+                .and_then(|n| n.text())
+                .map(|s| s.to_string());
+            out.push(CalendarInfo { href, name, colour });
         }
     }
     Ok(out)
@@ -234,24 +263,30 @@ async fn list_all_calendars(caldav: &CalDav) -> Result<Vec<CalendarInfo>> {
 
 // ============ 动作实现 ============
 
-/// `cal calendars`：列出当前用户的所有日历集合。
+/// `cal calendars`：列出当前用户的所有日历集合（中文列名 + href 解码 + 无名占位）。
 async fn cal_calendars(account: &CalendarAccount, password: &str) -> Result<Output> {
     let caldav = build_client(account, password).await?;
     let calendars = list_all_calendars(&caldav).await?;
     let rows = calendars
         .into_iter()
-        .map(|c| vec![c.href, c.name.unwrap_or_default(), c.colour.unwrap_or_default()])
+        .map(|c| {
+            vec![
+                percent_decode(&c.href),
+                c.name.unwrap_or_else(|| "未命名".into()),
+                c.colour.unwrap_or_default(),
+            ]
+        })
         .collect();
     Ok(Output::records(
-        vec!["href".into(), "name".into(), "colour".into()],
+        vec!["路径".into(), "名称".into(), "颜色".into()],
         rows,
     ))
 }
 
-/// `cal list`：列出事件，默认今日；`--date YYYY-MM-DD` 指定日期。
+/// `cal list`：列出事件，默认返回所有日历的所有日程；`--today` 限今日，`--date YYYY-MM-DD` 限指定日期。
 ///
 /// 策略：用 `GetCalendarResources`（calendar-query REPORT）全量拉取每个日历的事件
-/// （含 calendar-data），本地用 icalendar 解析 VEVENT，再按目标日期过滤。比服务端
+/// （含 calendar-data），本地用 icalendar 解析 VEVENT，再按可选日期过滤。比服务端
 /// time-range REPORT 更可靠（国内服务端 time-range 实现质量参差，可能返空）。
 async fn cal_list(
     account: &CalendarAccount,
@@ -261,10 +296,18 @@ async fn cal_list(
     let caldav = build_client(account, password).await?;
     let calendars = list_all_calendars(&caldav).await?;
     let limit: usize = flags.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
-    let target_date = match flags.get("date") {
-        Some(d) => parse_date(d)?,
-        None => chrono::Local::now().date_naive(), // 默认今日（--today 即默认行为）
-    };
+    // 默认返回今天及未来；--all 返回所有；--today 限今天；--date YYYY-MM-DD 限指定日期。
+    let today = chrono::Local::now().date_naive();
+    let (exact_date, min_date): (Option<chrono::NaiveDate>, Option<chrono::NaiveDate>) =
+        if flags.contains_key("all") {
+            (None, None)
+        } else if flags.contains_key("today") {
+            (Some(today), None)
+        } else if let Some(d) = flags.get("date") {
+            (Some(parse_date(d)?), None)
+        } else {
+            (None, Some(today)) // 默认：今天及未来
+        };
 
     let mut events: Vec<EventRow> = Vec::new();
     for cal in &calendars {
@@ -280,16 +323,31 @@ async fn cal_list(
             // 解析 iCalendar，提取 VEVENT 并按日期过滤。
             if let Ok(parsed) = content.data.parse::<Calendar>() {
                 for event in parsed.events() {
-                    if let Some(row) = build_event_row(&res.href, event, &target_date) {
-                        events.push(row);
+                    if let Some(row) = build_event_row(&res.href, event) {
+                        let d = row.sort_key.date();
+                        let keep = exact_date.is_none_or(|e| d == e)
+                            && min_date.is_none_or(|m| d >= m);
+                        if keep {
+                            events.push(row);
+                        }
                     }
                 }
             }
         }
     }
 
-    // 按开始时间（本地时间序）升序排列。
-    events.sort_by_key(|e| e.sort_key);
+    // 排序：未来事件优先（开始时间升序，最近未来在前），过去事件在后（降序，最近过去在前）。
+    // 避免大量历史事件（如联系人生日）占满 limit 导致看不到未来日程。
+    let now = chrono::Local::now().naive_local();
+    events.sort_by(|a, b| {
+        let (af, bf) = (a.sort_key >= now, b.sort_key >= now);
+        match (af, bf) {
+            (true, true) => a.sort_key.cmp(&b.sort_key),
+            (false, false) => b.sort_key.cmp(&a.sort_key),
+            (true, false) => std::cmp::Ordering::Less,
+            (false, true) => std::cmp::Ordering::Greater,
+        }
+    });
     events.truncate(limit);
 
     let rows = events
@@ -297,7 +355,7 @@ async fn cal_list(
         .map(|e| vec![e.href, e.start, e.end, e.summary, e.location])
         .collect();
     Ok(Output::records(
-        vec!["href".into(), "start".into(), "end".into(), "summary".into(), "location".into()],
+        vec!["路径".into(), "开始".into(), "结束".into(), "主题".into(), "地点".into()],
         rows,
     ))
 }
@@ -394,18 +452,10 @@ struct EventRow {
     sort_key: chrono::NaiveDateTime,
 }
 
-/// 从解析出的 VEVENT 构造展示行；事件开始日期 != 目标日期时返回 None（过滤）。
-fn build_event_row(
-    href: &str,
-    event: &Event,
-    target_date: &chrono::NaiveDate,
-) -> Option<EventRow> {
+/// 从解析出的 VEVENT 构造展示行（不做日期过滤，过滤由调用方 `cal_list` 处理）。
+fn build_event_row(href: &str, event: &Event) -> Option<EventRow> {
     let start_dpt = event.get_start()?;
     let start_ndt = date_perhaps_time_to_naive(&start_dpt)?;
-    // 过滤：事件开始日期 == 目标日期。
-    if start_ndt.date() != *target_date {
-        return None;
-    }
     let end_str = event
         .get_end()
         .as_ref()
@@ -499,6 +549,38 @@ fn ensure_trailing_slash(s: &str) -> String {
     }
 }
 
+/// 对 percent-encoded 字符串做解码（如 `%40` → `@`、`%20` → 空格），用于展示日历 href。
+///
+/// 非法 `%XX` 序列原样保留。无额外依赖，手写最小实现。
+fn percent_decode(s: &str) -> String {
+    let bytes = s.as_bytes();
+    let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%'
+            && i + 2 < bytes.len()
+            && let (Some(h), Some(l)) = (hex_digit(bytes[i + 1]), hex_digit(bytes[i + 2]))
+        {
+            out.push(h * 16 + l);
+            i += 3;
+            continue;
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// 单个十六进制字符转数值。
+fn hex_digit(b: u8) -> Option<u8> {
+    match b {
+        b'0'..=b'9' => Some(b - b'0'),
+        b'a'..=b'f' => Some(b - b'a' + 10),
+        b'A'..=b'F' => Some(b - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// 生成事件文件名（纳秒时间戳，单用户场景足够唯一）。
 fn event_filename() -> String {
     let now = chrono::Utc::now();
@@ -565,6 +647,16 @@ mod tests {
     }
 
     #[test]
+    fn percent_decode_common_sequences() {
+        assert_eq!(percent_decode("/calendar/duyixian1234%40qq.com"), "/calendar/duyixian1234@qq.com");
+        assert_eq!(percent_decode("a%20b"), "a b");
+        assert_eq!(percent_decode("no-encoding"), "no-encoding");
+        // 非法 %XX 原样保留。
+        assert_eq!(percent_decode("a%ZZb"), "a%ZZb");
+        assert_eq!(percent_decode("a%4"), "a%4");
+    }
+
+    #[test]
     fn date_perhaps_time_variants_to_naive() {
         let nd = chrono::NaiveDate::from_ymd_opt(2026, 7, 9).unwrap();
         let ndt = nd.and_hms_opt(14, 0, 0).unwrap();
@@ -592,7 +684,7 @@ mod tests {
     }
 
     #[test]
-    fn build_event_row_filters_by_date() {
+    fn build_event_row_constructs_row() {
         let dt = Utc.with_ymd_and_hms(2026, 7, 9, 14, 0, 0).unwrap();
         let event = Event::new()
             .summary("meeting")
@@ -600,14 +692,11 @@ mod tests {
             .ends(dt + chrono::Duration::hours(1))
             .done();
 
-        let target = chrono::NaiveDate::from_ymd_opt(2026, 7, 9).unwrap();
-        let row = build_event_row("/cal/ev.ics", &event, &target).expect("should match today");
+        let row = build_event_row("/cal/ev.ics", &event).expect("should build row");
         assert_eq!(row.summary, "meeting");
         assert_eq!(row.href, "/cal/ev.ics");
         assert!(row.start.contains("2026-07-09"));
-
-        let other = chrono::NaiveDate::from_ymd_opt(2026, 7, 10).unwrap();
-        assert!(build_event_row("/cal/ev.ics", &event, &other).is_none());
+        assert_eq!(row.sort_key, dt.naive_utc());
     }
 
     #[test]

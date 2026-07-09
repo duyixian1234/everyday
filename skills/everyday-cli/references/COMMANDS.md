@@ -115,8 +115,8 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → `every
 | Command | Description | Example |
 |---------|-------------|---------|
 | `cal login` | Interactively enter password into the OS keyring | `everyday cal login --account personal` |
-| `cal calendars` | List calendar collections (href/name/colour) | `everyday cal calendars --json` |
-| `cal list` | List events (default: today; `--date YYYY-MM-DD` for a specific day) | `everyday cal list --json` |
+| `cal calendars` | List calendar collections (中文列名: 路径/名称/颜色) | `everyday cal calendars --json` |
+| `cal list` | List events (default: today & future; `--all` for all, `--today`/`--date` to filter) | `everyday cal list --json` |
 | `cal add` | Add an event (icalendar VEVENT, PUT) | `everyday cal add --title T --start 2026-07-09T15:00:00Z --end 2026-07-09T16:00:00Z` |
 | `cal delete` | Delete an event by href | `everyday cal delete --id "/calendar/.../ev.ics"` |
 
@@ -125,8 +125,9 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → `every
 | Flag | Applies to | Description |
 |------|-----------|-------------|
 | `--account NAME` | all | Specify account (override default) |
-| `--today` | `list` | Today's events (default behaviour) |
+| `--today` | `list` | Filter to today's events |
 | `--date YYYY-MM-DD` | `list` | Events on a specific date |
+| `--all` | `list` | Include past events too (no date filter) |
 | `--limit N` | `list` | Max rows, default 50 |
 | `--title T` | `add` | Event title (required) |
 | `--start ISO` | `add` | Start time, RFC3339 or `YYYY-MM-DDTHH:MM:SS` (required) |
@@ -139,7 +140,7 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → `every
 ### cal list — JSON output (array of objects)
 
 ```json
-[{"href":"/calendar/.../ev.ics","start":"2026-07-09 15:00","end":"2026-07-09 16:00","summary":"meeting","location":"Room A"}]
+[{"路径":"/calendar/.../ev.ics","开始":"2026-07-09 15:00","结束":"2026-07-09 16:00","主题":"meeting","地点":"Room A"}]
 ```
 
 ### cal calendars — JSON output

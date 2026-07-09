@@ -63,6 +63,7 @@ hyper-rustls = { version = "0.27", default-features = false, features = ["ring",
 tower-http = { version = "0.6", features = ["auth"] }
 http = "1"
 http-body-util = "0.1"
+roxmltree = "0.21"
 
 # RSS
 feed-rs = "2"
