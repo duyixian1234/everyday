@@ -75,14 +75,15 @@ impl Executor for CalendarModule {
             .calendar_account(flags.get("account").map(|s| s.as_str()))?;
 
         // 未知 action 提前识别（坑10：避免空密码时优先报 AuthError 而非 UnknownAction）。
+        let ignored = &self.config.calendar.ignored_names;
         match action {
             "login" => cal_login(account).await,
             "calendars" | "list" | "add" | "delete" => {
                 let password = get_password(account)?;
                 match action {
-                    "calendars" => cal_calendars(account, &password).await,
-                    "list" => cal_list(account, &password, &flags).await,
-                    "add" => cal_add(account, &password, &flags).await,
+                    "calendars" => cal_calendars(account, &password, ignored).await,
+                    "list" => cal_list(account, &password, &flags, ignored).await,
+                    "add" => cal_add(account, &password, &flags, ignored).await,
                     "delete" => cal_delete(account, &password, &flags).await,
                     _ => unreachable!(),
                 }
@@ -187,12 +188,12 @@ struct CalendarInfo {
     colour: Option<String>,
 }
 
-/// 发现并返回所有日历集合。
+/// 发现并返回所有日历集合（过滤掉 `ignored` 中按 displayname 匹配的日历）。
 ///
 /// 流程（RFC 5397 + RFC 4791）：current-user-principal → calendar-home-set → calendars。
 /// 参照 libdav examples/find_calendars.rs。principal 或 home-set 发现失败（如 QQ 不支持
 /// current-user-principal，PROPFIND 返 404）时降级用 base_url 作为 home set。
-async fn list_all_calendars(caldav: &CalDav) -> Result<Vec<CalendarInfo>> {
+async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<CalendarInfo>> {
     let home_sets: Vec<Uri> = match caldav.find_current_user_principal().await {
         Ok(Some(p)) => {
             // principal 找到 → 查 calendar-home-set；查询失败或为空则降级 base_url。
@@ -255,6 +256,12 @@ async fn list_all_calendars(caldav: &CalDav) -> Result<Vec<CalendarInfo>> {
                 .find(|n| n.tag_name() == names::CALENDAR_COLOUR)
                 .and_then(|n| n.text())
                 .map(|s| s.to_string());
+            // 过滤忽略的日历（按 displayname 不区分大小写匹配）。
+            if let Some(ref n) = name
+                && ignored.iter().any(|ig| ig.eq_ignore_ascii_case(n))
+            {
+                continue;
+            }
             out.push(CalendarInfo { href, name, colour });
         }
     }
@@ -264,9 +271,9 @@ async fn list_all_calendars(caldav: &CalDav) -> Result<Vec<CalendarInfo>> {
 // ============ 动作实现 ============
 
 /// `cal calendars`：列出当前用户的所有日历集合（中文列名 + href 解码 + 无名占位）。
-async fn cal_calendars(account: &CalendarAccount, password: &str) -> Result<Output> {
+async fn cal_calendars(account: &CalendarAccount, password: &str, ignored: &[String]) -> Result<Output> {
     let caldav = build_client(account, password).await?;
-    let calendars = list_all_calendars(&caldav).await?;
+    let calendars = list_all_calendars(&caldav, ignored).await?;
     let rows = calendars
         .into_iter()
         .map(|c| {
@@ -292,9 +299,10 @@ async fn cal_list(
     account: &CalendarAccount,
     password: &str,
     flags: &HashMap<String, String>,
+    ignored: &[String],
 ) -> Result<Output> {
     let caldav = build_client(account, password).await?;
-    let calendars = list_all_calendars(&caldav).await?;
+    let calendars = list_all_calendars(&caldav, ignored).await?;
     let limit: usize = flags.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
     // 默认返回今天及未来；--all 返回所有；--today 限今天；--date YYYY-MM-DD 限指定日期。
     let today = chrono::Local::now().date_naive();
@@ -365,6 +373,7 @@ async fn cal_add(
     account: &CalendarAccount,
     password: &str,
     flags: &HashMap<String, String>,
+    ignored: &[String],
 ) -> Result<Output> {
     let title = flags
         .get("title")
@@ -395,7 +404,7 @@ async fn cal_add(
     let ics = normalize_crlf(&calendar.to_string());
 
     let caldav = build_client(account, password).await?;
-    let calendars = list_all_calendars(&caldav).await?;
+    let calendars = list_all_calendars(&caldav, ignored).await?;
 
     // 选目标日历：--calendar HREF 或 name 匹配，默认第一个。
     let target = if let Some(h) = flags.get("calendar") {
