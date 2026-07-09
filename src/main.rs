@@ -44,7 +44,12 @@ async fn main() {
     }
 
     let cli = Cli::parse();
-    let mode = mode_from_json_flag(cli.json);
+    // `--json` 若出现在模块动作之后的 trailing args 中（如 `rss digest --limit 5 --json`），
+    // clap 的 `trailing_var_arg` 会把它吞进模块 args 而非识别为全局 flag。
+    // 这里在 clap 解析前已拿到 raw_args，额外扫描一次，确保 `--json` 任何位置都生效
+    // （这是 AI Agent 交互的主模式，丢失会静默退回文本）。
+    let json_flag = cli.json || raw_args.iter().any(|a| a == "--json");
+    let mode = mode_from_json_flag(json_flag);
 
     let (code, output) = run(cli, mode).await;
     println!("{output}");

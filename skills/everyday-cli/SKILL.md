@@ -24,7 +24,7 @@ Modules: `mail` · `sys` · `config` · `fs` · `net` · `cal` · `rss`
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Skeleton modules return `NotImplemented`.** `fs`, `net`, and `rss` are not yet implemented — do not promise them. `mail`, `cal`, `sys status`, and `config` work today.
+4. **Skeleton modules return `NotImplemented`.** `fs` and `net` are not yet implemented — do not promise them. `mail`, `cal`, `rss`, `sys status`, and `config` work today.
 
 ## First-time setup (only if config is missing)
 
@@ -43,12 +43,14 @@ After this, `mail` commands work without re-entering credentials.
 ## Common tasks
 
 **Read unread mail (JSON):**
+
 ```bash
 everyday mail list --unread --limit 10 --json
 # → [{"uid":"12345","folder":"INBOX","date":"...","from":"...","subject":"..."}]
 ```
 
 **Read a single message:**
+
 ```bash
 # read 默认递归所有文件夹查找该 UID（与 list 一致），无需手动指定 folder
 everyday mail read 12345 --json
@@ -57,33 +59,39 @@ everyday mail read 12345 --folder INBOX --json
 ```
 
 **Search mail:**
+
 ```bash
 everyday mail search --query "invoice" --json
 ```
 
 **Send mail:**
+
 ```bash
 everyday mail send --to a@b.com --subject "Hi" --body "内容"
 ```
 
 **System status:**
+
 ```bash
 everyday sys status --json
 # → [{"resource":"cpu","used":"12.3%","total":"100.0%","pct":"12.3%"}, ...]
 ```
 
 **List calendar events (today & future by default; `--all` for all):**
+
 ```bash
 everyday cal list --json
 # → [{"路径":"/cal/ev.ics","开始":"2026-07-09 15:00","结束":"2026-07-09 16:00","主题":"meeting","地点":""}]
 ```
 
 **Add a calendar event:**
+
 ```bash
 everyday cal add --title "会议" --start "2026-07-09T15:00:00Z" --end "2026-07-09T16:00:00Z"
 ```
 
 **List calendars / delete event:**
+
 ```bash
 everyday cal calendars --json           # list calendar collections (get hrefs)
 everyday cal delete --id "/cal/ev.ics"  # delete by href from `cal list`
@@ -92,9 +100,11 @@ everyday cal delete --id "/cal/ev.ics"  # delete by href from `cal list`
 ## Error format
 
 JSON mode errors:
+
 ```json
-{"error": "AccountNotFound", "message": "mail account 'work'"}
+{ "error": "AccountNotFound", "message": "mail account 'work'" }
 ```
+
 Exit code is `1` on failure. Handle `NotImplemented` by telling the user the feature is pending; suggest an alternative if one exists.
 
 ## Full command reference

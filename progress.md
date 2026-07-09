@@ -274,3 +274,40 @@ _(暂无)_
 
 ### 下一步
 - `fs`/`net`/`sys` 补全、`rss` 模块
+
+---
+## Session 2026-07-09 (Phase 6: RSS 模块完整实现)
+
+### 需求
+补全被留作骨架的 `rss` 模块（feed-rs 2.4 解析）。
+
+### 已完成
+- **`rss` 模块完整实现**（reqwest 抓取 + feed-rs 解析）：
+  - `rss follow --name N --url URL [--category C]` —— 写入 `[[rss.feeds]]`，toml::Value 局部编辑（只动 `rss.feeds`，保留 mail/cal 账户、不重排）
+  - `rss list` —— 列出订阅源（name/url/category）
+  - `rss unfollow --name N` —— 删除订阅源
+  - `rss digest [--limit N] [--name FEED] [--category C]` —— 并发抓取、feed-rs 解析、按发布时间降序聚合
+  - `rss fetch --name N [--limit N]` —— 抓取单个源列条目
+- **网络**：`reqwest` 带 20s 超时 + UA（`everyday/<version>`），复用 main.rs 安装的 ring provider
+- **最佳努力**：单源抓取/解析失败不致命，全部失败才报错（与 cal list 单日历降级一致）
+- **附带修复（CLI 框架）**：`--json` 出现在模块动作之后的 trailing args 中时，clap 的 `trailing_var_arg` 会把它吞进模块 args 而非识别为全局 flag。在 `main.rs` 预扫描 raw args 补一道 OR 检测，确保 `--json` 任何位置都生效（AI Agent 交互主模式，丢失会静默退回文本）
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 86 passed（+6 rss 单测，含真实 Atom 样例解析）
+- **真实端到端验证**（Hacker News RSS）：
+  - `rss follow` / `list` / `unfollow` 循环正确，重复 follow 报错、非法 URL 报错
+  - `rss fetch --name hn` → 解析出标题/链接/作者/时间
+  - `rss digest` → 跨源聚合、按时间降序、limit 截断正确
+  - `rss digest --name bogus` → InvalidArgument；`rss bogus` → UnknownAction
+  - `--json` 在 `--flag value` 之后仍正确输出 JSON 数组（修复验证）
+- 验证后已用备份还原用户原始 `config.toml`（仅保留原 `hackernews` 源）
+
+### 错误记录（已解决）
+- `toml::Value` 索引 `root["mail"] = ...` 不自动插入、缺失键直接 panic "index not found" → 改用 `.as_table_mut().unwrap().insert(...)`
+- RSS2.0 `<author>` 语义是 email，feed-rs 不会把纯文本作者名解析进 `entry.authors` → 测试夹具改用 Atom（`<author><name>Bob</name>` 语义清晰）
+- `Utc::with_ymd_and_hms` 需 `chrono::TimeZone` trait 在作用域 → 测试模块加 `use chrono::TimeZone;`
+- clippy `collapsible_if` → `if let ... && cond` 折叠
+- `--json` 位置被吞 → main.rs 预扫描 raw args OR 检测
+
+### 下一步
+- `fs`/`net`/`sys` 补全；Phase 7 全量构建/测试/文档

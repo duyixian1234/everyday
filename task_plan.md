@@ -51,7 +51,7 @@
 - [ ] `network` 模块完整实现（`net fetch <url>` → Markdown、`net request`）
 - [x] `email` 模块（IMAP list/read/search + SMTP send + keyring login）[2026-07-08 完成]
 - [x] `calendar` 模块（CalDAV：login/calendars/list/add/delete，libdav+icalendar）[2026-07-09 完成]
-- [ ] `rss` 模块（feed-rs）
+- [x] `rss` 模块（feed-rs）[2026-07-09 完成]
 
 ### Phase 7: 构建、测试、文档 [pending]
 - [ ] 全模块 `cargo build` 全绿，`cargo clippy -- -D warnings` 无警告
@@ -133,5 +133,5 @@ username = "me"
 - Phase 3: complete
 - Phase 4: complete
 - Phase 5: complete
-- Phase 6: 进行中（email + calendar 完成；system/fs/network/rss 待办）
+- Phase 6: 进行中（email + calendar + rss 完成；system/fs/network 待办）
 - Phase 7: pending
