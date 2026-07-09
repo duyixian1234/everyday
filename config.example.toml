@@ -31,15 +31,13 @@ tls = true
 # 密码用授权码（非登录密码），通过 `everyday cal login --account NAME` 存入 keyring
 # service 名约定：everyday/cal/<account>
 #
-# 可选：忽略指定日历（按 displayname 匹配，不区分大小写），被忽略的日历不会出现在
-# `cal calendars` / `cal list` / `cal add` 中。零到多个。
-[calendar]
-ignored_names = ["好友生日"]
-
+# 可选：在该账户下配置 ignore_calendars（按 displayname 匹配，不区分大小写），
+# 被忽略的日历不会出现在 `cal calendars` / `cal list` / `cal add` 中。零到多个。
 [[calendar.accounts]]
 name = "personal"
 caldav_url = "https://caldav.example.com/me"
 username = "me"
+ignore_calendars = ["好友生日"]
 
 # ---- RSS 订阅源 ----
 [[rss.feeds]]

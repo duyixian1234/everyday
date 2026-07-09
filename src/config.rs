@@ -85,12 +85,6 @@ fn default_true() -> bool {
 pub struct CalendarConfig {
     #[serde(default)]
     pub accounts: Vec<CalendarAccount>,
-    /// 需要忽略的日历名称（按 displayname 匹配，不区分大小写）。
-    ///
-    /// 配置示例：`ignored_names = ["好友生日", "Tasks"]`
-    /// 被忽略的日历不会出现在 `cal calendars` / `cal list` / `cal add` 中。
-    #[serde(default)]
-    pub ignored_names: Vec<String>,
 }
 
 /// 单个日历账户（CalDAV）。
@@ -99,6 +93,13 @@ pub struct CalendarAccount {
     pub name: String,
     pub caldav_url: String,
     pub username: String,
+    /// 该账户需要忽略的日历名称（按 displayname 匹配，不区分大小写）。
+    ///
+    /// 配置示例（写在 `[[calendar.accounts]]` 下）：
+    /// `ignore_calendars = ["好友生日", "Tasks"]`
+    /// 被忽略的日历不会出现在 `cal calendars` / `cal list` / `cal add` 中。
+    #[serde(default)]
+    pub ignore_calendars: Vec<String>,
 }
 
 // ---- RSS ----
@@ -224,13 +225,11 @@ imap_host = "imap.gmail.com"
 smtp_host = "smtp.gmail.com"
 username = "me@gmail.com"
 
-[calendar]
-ignored_names = ["好友生日", "Tasks"]
-
 [[calendar.accounts]]
 name = "personal"
 caldav_url = "https://caldav.example.com/me"
 username = "me"
+ignore_calendars = ["好友生日", "Tasks"]
 
 [[rss.feeds]]
 name = "hackernews"
@@ -244,17 +243,20 @@ url = "https://hnrss.org/frontpage"
         assert_eq!(cfg.mail.accounts[0].name, "work");
         assert_eq!(cfg.mail.accounts[0].imap_port, 993); // default
         assert_eq!(cfg.calendar.accounts.len(), 1);
-        assert_eq!(cfg.calendar.ignored_names, vec!["好友生日", "Tasks"]);
+        assert_eq!(
+            cfg.calendar.accounts[0].ignore_calendars,
+            vec!["好友生日", "Tasks"]
+        );
         assert_eq!(cfg.rss.feeds.len(), 1);
     }
 
     #[test]
-    fn ignored_names_default_empty() {
+    fn ignore_calendars_default_empty() {
         let cfg: Config = toml::from_str(
             "[[calendar.accounts]]\nname = \"x\"\ncaldav_url = \"u\"\nusername = \"u\"\n",
         )
         .unwrap();
-        assert!(cfg.calendar.ignored_names.is_empty());
+        assert!(cfg.calendar.accounts[0].ignore_calendars.is_empty());
     }
 
     #[test]

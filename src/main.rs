@@ -293,14 +293,12 @@ smtp_port = 465
 username = "me@example.com"
 tls = true
 
-[calendar]
-# 可选：忽略指定日历（按 displayname 匹配，不区分大小写）
-ignored_names = ["好友生日"]
-
 [[calendar.accounts]]
 name = "personal"
 caldav_url = "https://caldav.example.com/me"
 username = "me"
+# 可选：忽略指定日历（按 displayname 匹配，不区分大小写）
+ignore_calendars = ["好友生日"]
 
 [[rss.feeds]]
 name = "hackernews"

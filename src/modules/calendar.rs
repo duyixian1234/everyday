@@ -75,7 +75,8 @@ impl Executor for CalendarModule {
             .calendar_account(flags.get("account").map(|s| s.as_str()))?;
 
         // 未知 action 提前识别（坑10：避免空密码时优先报 AuthError 而非 UnknownAction）。
-        let ignored = &self.config.calendar.ignored_names;
+        // 忽略日历列表归属于账户（[[calendar.accounts]] 的 ignore_calendars）。
+        let ignored = &account.ignore_calendars;
         match action {
             "login" => cal_login(account).await,
             "calendars" | "list" | "add" | "delete" => {

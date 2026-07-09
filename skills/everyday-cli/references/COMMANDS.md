@@ -112,7 +112,7 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 
 Credentials: config holds account metadata (`caldav_url`, `username`) → `everyday cal login` stores password in OS keyring → other commands read it automatically. Verified against QQ CalDAV (`dav.qq.com`).
 
-**Ignoring calendars:** add a `[calendar]` table with `ignored_names = ["好友生日", "Tasks"]` in `config.toml`. Matched by displayname (case-insensitive); ignored calendars are hidden from `cal calendars` / `cal list` / `cal add`.
+**Ignoring calendars:** add `ignore_calendars = ["好友生日", "Tasks"]` under a `[[calendar.accounts]]` entry in `config.toml`. Matched by displayname (case-insensitive); ignored calendars are hidden from `cal calendars` / `cal list` / `cal add` for that account.
 
 | Command | Description | Example |
 |---------|-------------|---------|
