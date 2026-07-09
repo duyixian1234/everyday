@@ -39,7 +39,7 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 | `mail login` | Interactively enter password into the OS keyring | `everyday mail login --account work` |
 | `mail folders` | List all mailbox folders | `everyday mail folders --json` |
 | `mail list` | List message summaries (recurses all folders by default, sorted by date desc) | `everyday mail list --unread --limit 10 --json` |
-| `mail read <uid>` | Read a single message in full | `everyday mail read 12345 --folder INBOX --json` |
+| `mail read <uid>` | Read a single message in full (searches all folders by default) | `everyday mail read 12345 --json` |
 | `mail search` | Full-text search (recurses all folders by default) | `everyday mail search --query "invoice" --json` |
 | `mail send` | Send a message (SMTP STARTTLS) | `everyday mail send --to a@b.com --subject "Hi" --body "内容"` |
 
@@ -51,7 +51,7 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 | `--unread` | `list` | Unread only |
 | `--limit N` | `list` / `search` | Max rows, default 20 |
 | `--folder NAME` | `list` / `read` / `search` | Specific folder (Chinese names supported; default recurses all) |
-| `--no-recursive` | `list` / `search` | INBOX only (no recursion) |
+| `--no-recursive` | `list` / `read` / `search` | INBOX only (no recursion) |
 | `--to ADDR` | `send` | Recipient (required) |
 | `--subject S` | `send` | Subject (required) |
 | `--body TEXT` | `send` | Body (required) |
@@ -66,7 +66,7 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 ### mail read — JSON output (array of field/value pairs)
 
 ```json
-[{"field":"subject","value":"..."},{"field":"from","value":"..."},{"field":"date","value":"..."},{"field":"body","value":"..."}]
+[{"field":"subject","value":"..."},{"field":"from","value":"..."},{"field":"date","value":"..."},{"field":"folder","value":"Junk"},{"field":"body","value":"..."}]
 ```
 
 ---

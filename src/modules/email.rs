@@ -44,7 +44,7 @@ impl Executor for EmailModule {
         vec![
             ActionDoc::new("folders", "List all mailbox folders", "everyday mail folders [--account NAME]"),
             ActionDoc::new("list", "List messages (recursively across all folders by default)", "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--account NAME]"),
-            ActionDoc::new("read", "Read a single message", "everyday mail read <uid> [--folder NAME] [--account NAME]"),
+            ActionDoc::new("read", "Read a single message (searches all folders by default)", "everyday mail read <uid> [--folder NAME] [--no-recursive] [--account NAME]"),
             ActionDoc::new("search", "Search messages (recursively across all folders by default)", "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]"),
             ActionDoc::new("send", "Send a message", "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]"),
             ActionDoc::new("login", "Store password in system keyring", "everyday mail login [--account NAME]"),
@@ -270,6 +270,13 @@ async fn mail_list(
 }
 
 /// 读取单封邮件完整内容。
+/// - `--folder NAME`：仅在该文件夹查
+/// - 默认（递归）：遍历所有文件夹，返回首个命中该 UID 的邮件
+/// - `--no-recursive`：仅 INBOX
+///
+/// 注意：IMAP UID 仅在单个文件夹内唯一，跨文件夹不唯一。`mail list` 默认递归
+/// 所有文件夹，故 `mail read` 不带 `--folder` 时也递归查找，保证 list 给出的
+/// uid 总能被 read 读到。
 async fn mail_read(
     account: &MailAccount,
     password: &str,
@@ -283,28 +290,42 @@ async fn mail_read(
     let uid: u32 = uid_str
         .parse()
         .map_err(|_| AgentError::InvalidArgument("uid must be a number".into()))?;
-    let folder = flags
-        .get("folder")
-        .cloned()
-        .unwrap_or_else(|| "INBOX".to_string());
 
     let mut session = imap_connect(account, password).await?;
-    // 智能匹配：支持 INBOX、原始编码名、或解码后的中文名
-    select_folder(&mut session, &folder).await?;
+    // 与 list/search 一致：默认递归所有文件夹，--folder 指定单个，--no-recursive 仅 INBOX
+    let folders = resolve_folders(&mut session, flags).await?;
 
-    let fetches: Vec<async_imap::types::Fetch> = session
-        .uid_fetch(uid.to_string(), "(UID BODY[])")
-        .await
-        .map_err(|e| AgentError::Network(format!("fetch: {e}")))?
-        .try_collect()
-        .await
-        .map_err(|e| AgentError::Network(format!("fetch collect: {e}")))?;
+    // 遍历文件夹逐个尝试 uid_fetch，返回首个命中。UID 不存在的文件夹返回空集（不报错）。
+    let mut last_err: Option<AgentError> = None;
+    let mut found: Option<(async_imap::types::Fetch, String)> = None;
+    for folder in &folders {
+        if select_folder(&mut session, folder).await.is_err() {
+            continue; // 跳过无法 SELECT 的文件夹（如 \NoSelect）
+        }
+        match session.uid_fetch(uid.to_string(), "(UID BODY[])").await {
+            Ok(stream) => match stream.try_collect::<Vec<_>>().await {
+                Ok(fetches) => {
+                    if let Some(f) = fetches.into_iter().next() {
+                        found = Some((f, decode_imap_utf7(folder)));
+                        break;
+                    }
+                    // 该文件夹无此 UID，继续下一个
+                }
+                Err(e) => last_err = Some(AgentError::Network(format!("fetch collect: {e}"))),
+            },
+            Err(e) => last_err = Some(AgentError::Network(format!("fetch: {e}"))),
+        }
+    }
     session.logout().await.ok();
 
-    let fetch = fetches
-        .into_iter()
-        .next()
-        .ok_or_else(|| AgentError::Other(format!("no message with uid {uid}")))?;
+    let (fetch, folder_name) = found.ok_or_else(|| match last_err {
+        Some(e) => e,
+        None => AgentError::Other(format!(
+            "no message with uid {uid} (searched {} folder{})",
+            folders.len(),
+            if folders.len() == 1 { "" } else { "s" }
+        )),
+    })?;
     let body = fetch
         .body()
         .ok_or_else(|| AgentError::Other("message has no body".into()))?;
@@ -314,7 +335,7 @@ async fn mail_read(
     let subject = header_value(&parsed, "Subject");
     let from = header_value(&parsed, "From");
     let date = header_value(&parsed, "Date");
-    let text = parsed.get_body().unwrap_or_default();
+    let text = extract_body(&parsed);
 
     Ok(Output::Records {
         headers: vec!["field".into(), "value".into()],
@@ -322,6 +343,7 @@ async fn mail_read(
             vec!["subject".into(), subject],
             vec!["from".into(), from],
             vec!["date".into(), date],
+            vec!["folder".into(), folder_name],
             vec!["body".into(), text],
         ],
     })
@@ -527,6 +549,152 @@ fn header_value(parsed: &mailparse::ParsedMail, key: &str) -> String {
         .find(|h| h.get_key().eq_ignore_ascii_case(key))
         .map(|h| h.get_value())
         .unwrap_or_default()
+}
+
+/// 提取邮件正文：优先 text/plain；为空则回退到 text/html 并转纯文本。
+/// 解决营销/通知类邮件（HTML-only）正文为空的问题。
+fn extract_body(parsed: &mailparse::ParsedMail) -> String {
+    if let Some(plain) = find_body_by_type(parsed, "text/plain")
+        && !plain.trim().is_empty()
+    {
+        return plain;
+    }
+    if let Some(html) = find_body_by_type(parsed, "text/html") {
+        return html_to_text(&html);
+    }
+    parsed.get_body().unwrap_or_default()
+}
+
+/// 递归查找第一个指定 Content-Type 的叶子部分的正文。
+fn find_body_by_type(part: &mailparse::ParsedMail, mime: &str) -> Option<String> {
+    if part.ctype.mimetype == mime
+        && let Ok(body) = part.get_body()
+    {
+        return Some(body);
+    }
+    for sub in &part.subparts {
+        if let Some(body) = find_body_by_type(sub, mime) {
+            return Some(body);
+        }
+    }
+    None
+}
+
+/// HTML → 纯文本：去标签、跳过 script/style、块级元素转换行、
+/// 解码常见实体（&amp; &lt; &gt; &quot; &apos; &#39; &nbsp;）、折叠空白。
+fn html_to_text(html: &str) -> String {
+    let mut out = String::with_capacity(html.len());
+    let mut chars = html.chars().peekable();
+    let mut skip_content = false; // 处于 script/style 内，丢弃文本
+    while let Some(c) = chars.next() {
+        if c == '<' {
+            let mut name = String::new();
+            // '<' 之后若紧跟 '/' 则为闭合标签
+            let closing = matches!(chars.peek(), Some(&'/'));
+            if closing {
+                chars.next();
+            }
+            while let Some(&nc) = chars.peek() {
+                // 标签名在 '>', '/'（自闭合如 <br/>）, 或空白处结束
+                if nc == '>' || nc == '/' || nc.is_whitespace() {
+                    break;
+                }
+                name.push(nc);
+                chars.next();
+            }
+            // 跳到 '>' 结束标签
+            while let Some(&nc) = chars.peek() {
+                chars.next();
+                if nc == '>' {
+                    break;
+                }
+            }
+            match name.to_ascii_lowercase().as_str() {
+                "script" | "style" => skip_content = !closing,
+                "br" => out.push('\n'),
+                "p" | "div" | "tr" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
+                    if closing =>
+                {
+                    out.push('\n');
+                }
+                _ => {}
+            }
+        } else if !skip_content {
+            if c == '&' {
+                out.push_str(&decode_entity(&mut chars));
+            } else {
+                out.push(c);
+            }
+        }
+    }
+    collapse_whitespace(&out)
+}
+
+/// 从 chars 当前位置（紧跟在 '&' 之后）读取一个 HTML 实体到 ';' 或空白。
+/// 已知实体返回解码字符；未知原样返回（含前导 '&')。
+fn decode_entity(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
+    let mut ent = String::new();
+    let mut terminated = false;
+    while let Some(&c) = chars.peek() {
+        if c == ';' {
+            chars.next();
+            terminated = true;
+            break;
+        }
+        if c.is_whitespace() || c == '<' || c == '&' {
+            break;
+        }
+        ent.push(c);
+        chars.next();
+        if ent.len() > 10 {
+            break; // 安全上限，防畸形输入
+        }
+    }
+    let with_amp = format!("&{ent}{}", if terminated { ";" } else { "" });
+    match ent.as_str() {
+        "amp" => "&".into(),
+        "lt" => "<".into(),
+        "gt" => ">".into(),
+        "quot" => "\"".into(),
+        "apos" | "#39" => "'".into(),
+        "nbsp" => "\u{a0}".into(),
+        _ => with_amp,
+    }
+}
+
+/// 折叠空白：行内连续空白压成单空格，连续空行压成单空行，去首尾空白。
+fn collapse_whitespace(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut prev_blank = false;
+    for line in s.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            if !prev_blank && !out.is_empty() {
+                out.push('\n');
+                prev_blank = true;
+            }
+            continue;
+        }
+        let mut buf = String::with_capacity(trimmed.len());
+        let mut in_ws = false;
+        for c in trimmed.chars() {
+            if c.is_whitespace() {
+                in_ws = true;
+            } else {
+                if in_ws {
+                    buf.push(' ');
+                    in_ws = false;
+                }
+                buf.push(c);
+            }
+        }
+        if !out.is_empty() {
+            out.push('\n');
+        }
+        out.push_str(&buf);
+        prev_blank = false;
+    }
+    out.trim().to_string()
 }
 
 /// 解码 IMAP UTF-7 文件夹名（RFC 3501 §5.1.3）为可读 UTF-8。
@@ -757,5 +925,81 @@ mod tests {
         let q = "he said \"hi\"";
         let escaped = q.replace('\\', "\\\\").replace('"', "\\\"");
         assert_eq!(escaped, "he said \\\"hi\\\"");
+    }
+
+    #[test]
+    fn html_to_text_strips_tags() {
+        assert_eq!(html_to_text("<p>Hello <b>world</b></p>"), "Hello world");
+    }
+
+    #[test]
+    fn html_to_text_block_newlines() {
+        let html = "<p>One</p><p>Two</p><div>Three</div>";
+        assert_eq!(html_to_text(html), "One\nTwo\nThree");
+    }
+
+    #[test]
+    fn html_to_text_br_becomes_newline() {
+        assert_eq!(html_to_text("a<br>b<br/>c"), "a\nb\nc");
+    }
+
+    #[test]
+    fn html_to_text_skips_script_style() {
+        let html = "<style>body{}</style>x<script>alert(1)</script>y";
+        // script/style 内容被丢弃，但标签本身不引入换行
+        assert_eq!(html_to_text(html), "xy");
+    }
+
+    #[test]
+    fn html_to_text_decodes_entities() {
+        assert_eq!(html_to_text("a &amp; b &lt; c &gt; d"), "a & b < c > d");
+        assert_eq!(html_to_text("&quot;hi&quot; &#39;ok&#39;"), "\"hi\" 'ok'");
+    }
+
+    #[test]
+    fn html_to_text_unknown_entity_preserved() {
+        assert_eq!(html_to_text("Tom & Jerry"), "Tom & Jerry");
+        assert_eq!(html_to_text("&unknown;"), "&unknown;");
+    }
+
+    #[test]
+    fn html_to_text_collapses_whitespace() {
+        let html = "<p>  spaced   out  </p>\n\n\n<p>next</p>";
+        // 源中多个空行 → 压成单个空行做段落分隔；行内连续空白压成单空格
+        assert_eq!(html_to_text(html), "spaced out\n\nnext");
+    }
+
+    #[test]
+    fn html_to_text_utf8_preserved() {
+        assert_eq!(html_to_text("<p>你好 <b>世界</b></p>"), "你好 世界");
+    }
+
+    #[test]
+    fn extract_body_prefers_plain_text() {
+        let raw = b"Content-Type: multipart/alternative; boundary=\"b\"\r\n\r\n\
+--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\nplain body\r\n\
+--b\r\nContent-Type: text/html\r\n\r\n<p>html body</p>\r\n\
+--b--\r\n";
+        let parsed = mailparse::parse_mail(raw).unwrap();
+        assert_eq!(extract_body(&parsed).trim(), "plain body");
+    }
+
+    #[test]
+    fn extract_body_falls_back_to_html() {
+        // text/plain 为空 → 回退 html 并去标签
+        let raw = b"Content-Type: multipart/alternative; boundary=\"b\"\r\n\r\n\
+--b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n\r\n\
+--b\r\nContent-Type: text/html\r\n\r\n<p>html <b>only</b> body</p>\r\n\
+--b--\r\n";
+        let parsed = mailparse::parse_mail(raw).unwrap();
+        assert_eq!(extract_body(&parsed), "html only body");
+    }
+
+    #[test]
+    fn find_body_by_type_html_only_single_part() {
+        let raw = b"Content-Type: text/html\r\n\r\n<p>hi</p>";
+        let parsed = mailparse::parse_mail(raw).unwrap();
+        assert_eq!(find_body_by_type(&parsed, "text/html"), Some("<p>hi</p>".into()));
+        assert_eq!(find_body_by_type(&parsed, "text/plain"), None);
     }
 }

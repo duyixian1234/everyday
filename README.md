@@ -133,7 +133,7 @@ everyday config set default_account.mail personal
 | `login` | 交互式存储密码到密钥环 | `everyday mail login [--account NAME]` |
 | `folders` | 列出所有邮箱文件夹 | `everyday mail folders [--account NAME]` |
 | `list` | 列出邮件摘要 | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive]` |
-| `read` | 读取单封邮件 | `everyday mail read <uid> [--folder NAME]` |
+| `read` | 读取单封邮件（默认递归查找） | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
 | `search` | 搜索邮件 | `everyday mail search --query Q [--limit N] [--folder NAME]` |
 | `send` | 发送邮件 | `everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR]` |
 
@@ -145,13 +145,13 @@ everyday config set default_account.mail personal
 | `--unread` | `list` | 仅未读 |
 | `--limit N` | `list` / `search` | 限制条数，默认 20 |
 | `--folder NAME` | `list` / `read` / `search` | 指定文件夹（支持中文名），默认递归全部 |
-| `--no-recursive` | `list` / `search` | 仅查 INBOX |
+| `--no-recursive` | `list` / `read` / `search` | 仅查 INBOX |
 | `--to ADDR` | `send` | 收件人（必填） |
 | `--subject S` | `send` | 主题（必填） |
 | `--body TEXT` | `send` | 正文（必填） |
 | `--cc ADDR` | `send` | 抄送 |
 
-**递归搜索**：`list` 和 `search` 默认遍历所有文件夹，跨文件夹按邮件日期降序合并，确保最近的邮件排在前面。
+**递归搜索**：`list` / `search` / `read` 默认遍历所有文件夹。`list` / `search` 跨文件夹按邮件日期降序合并；`read` 找到首个命中 UID 的邮件即返回（IMAP UID 仅文件夹内唯一，跨文件夹不唯一，故需递归查找）。
 
 ### sys — 系统监控
 

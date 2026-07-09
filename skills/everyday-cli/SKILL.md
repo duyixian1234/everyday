@@ -50,6 +50,9 @@ everyday mail list --unread --limit 10 --json
 
 **Read a single message:**
 ```bash
+# read 默认递归所有文件夹查找该 UID（与 list 一致），无需手动指定 folder
+everyday mail read 12345 --json
+# 也可限定单文件夹 / 仅 INBOX：
 everyday mail read 12345 --folder INBOX --json
 ```
 
