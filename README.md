@@ -15,15 +15,43 @@
 
 ## 安装
 
+### 下载预编译二进制（推荐）
+
+从 [GitHub Releases](https://github.com/duyixian1234/everyday/releases) 下载对应平台的压缩包，解压后将 `everyday` 加入 `PATH` 即可。每个 Release 附带三个平台的资产：
+
+| 平台 | 资产文件 | 解压 / 安装 |
+|------|----------|-------------|
+| Linux (x86_64) | `everyday-x86_64-unknown-linux-gnu.tar.gz` | `tar xzf <file> && sudo mv everyday /usr/local/bin/` |
+| macOS (x86_64) | `everyday-x86_64-apple-darwin.tar.gz` | `tar xzf <file> && sudo mv everyday /usr/local/bin/` |
+| Windows (x86_64) | `everyday-x86_64-pc-windows-msvc.zip` | 解压后将 `everyday.exe` 放入 `PATH` 目录 |
+
+macOS / Linux 一行安装（自动取 latest）：
+
+```bash
+# Linux
+curl -L https://github.com/duyixian1234/everyday/releases/latest/download/everyday-x86_64-unknown-linux-gnu.tar.gz | tar xz && sudo mv everyday /usr/local/bin/
+
+# macOS
+curl -L https://github.com/duyixian1234/everyday/releases/latest/download/everyday-x86_64-apple-darwin.tar.gz | tar xz && sudo mv everyday /usr/local/bin/
+```
+
+> 二进制由 CI 在每次打 `v*` tag 时自动构建并发布（见 `.github/workflows/release.yml`）。当前仅提供 x86_64 架构；Apple Silicon / ARM64 用户可改用下方源码或 `cargo install` 方式。
+
 ### 从源码构建
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/duyixian1234/everyday.git
 cd everyday
 cargo build --release
 ```
 
 编译产物位于 `target/release/everyday`，将其加入 `PATH` 即可。
+
+### 通过 cargo 安装
+
+```bash
+cargo install --git https://github.com/duyixian1234/everyday.git
+```
 
 ### 验证安装
 

@@ -20,3 +20,9 @@ everyday <module> <action> [options] [--json] [--account NAME]
 | `config` · `mail` · `cal` · `rss` · `note` | ✅ 可用 |
 
 > 本文件面向 Agent 用户，精简介绍；人类可读的完整文档见仓库根 `README.md`，协作规范见 `agents.md`。
+
+## 安装 everyday
+
+- **预编译二进制**（Linux / macOS / Windows x86_64）：[GitHub Releases](https://github.com/duyixian1234/everyday/releases)，每个 `v*` tag 自动发布，下载解压后把 `everyday` 加入 `PATH`。
+- **从源码**：`cargo install --git https://github.com/duyixian1234/everyday.git`，或 `git clone` 后 `cargo build --release`。
+- 验证：`everyday --version`。完整安装步骤见仓库根 `README.md`。

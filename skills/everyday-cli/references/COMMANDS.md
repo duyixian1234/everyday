@@ -2,6 +2,16 @@
 
 Loaded on demand by the `everyday-cli` skill. Every command below supports the global flags `--json` (machine-readable output) and `--account <NAME>` (override the module's default account).
 
+## Install
+
+Prebuilt binaries (Linux / macOS / Windows, x86_64) are on [GitHub Releases](https://github.com/duyixian1234/everyday/releases) for every `v*` tag. Or install from source:
+
+```bash
+cargo install --git https://github.com/duyixian1234/everyday.git
+```
+
+Verify with `everyday --version`. Per-platform extraction steps are in the repo root [README.md](../../../README.md).
+
 ## Implementation status
 
 | Module | Status | Notes |

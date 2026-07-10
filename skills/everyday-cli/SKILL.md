@@ -8,6 +8,18 @@ license: MIT
 
 `everyday` is a Rust CLI installed on the local machine. It gives an agent hands-on access to the user's machine: email, calendar, RSS, and config. The binary is `everyday` (on PATH, or `target/release/everyday` after `cargo build --release`).
 
+## Install
+
+Prebuilt binaries for Linux / macOS / Windows (x86_64) are published on [GitHub Releases](https://github.com/duyixian1234/everyday/releases) for every `v*` tag. Download the matching asset, extract, and put `everyday` (or `everyday.exe`) on PATH. Or build from source:
+
+```bash
+cargo install --git https://github.com/duyixian1234/everyday.git
+# or
+git clone https://github.com/duyixian1234/everyday.git && cd everyday && cargo build --release
+```
+
+Verify with `everyday --version`. Full install steps (per-platform extraction commands, one-liners) are in the repo root [README.md](../../../README.md).
+
 ## Command structure
 
 ```
