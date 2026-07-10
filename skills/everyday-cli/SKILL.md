@@ -1,12 +1,12 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), system status (CPU/memory/disk), and config management. Use when the user asks to check/read/send email, manage calendar events, monitor system resources, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
 # everyday CLI
 
-`everyday` is a Rust CLI installed on the local machine. It gives an agent hands-on access to the user's machine: email, system status, and config. The binary is `everyday` (on PATH, or `target/release/everyday` after `cargo build --release`).
+`everyday` is a Rust CLI installed on the local machine. It gives an agent hands-on access to the user's machine: email, calendar, RSS, and config. The binary is `everyday` (on PATH, or `target/release/everyday` after `cargo build --release`).
 
 ## Command structure
 
@@ -14,7 +14,7 @@ license: MIT
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `sys` · `config` · `fs` · `net` · `cal` · `rss`
+Modules: `mail` · `cal` · `rss` · `config`
 
 ## Rules (follow exactly)
 
@@ -24,7 +24,7 @@ Modules: `mail` · `sys` · `config` · `fs` · `net` · `cal` · `rss`
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Skeleton modules return `NotImplemented`.** `fs` and `net` are not yet implemented — do not promise them. `mail`, `cal`, `rss`, `sys status`, and `config` work today.
+4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
 
 ## First-time setup (only if config is missing)
 
@@ -68,13 +68,6 @@ everyday mail search --query "invoice" --json
 
 ```bash
 everyday mail send --to a@b.com --subject "Hi" --body "内容"
-```
-
-**System status:**
-
-```bash
-everyday sys status --json
-# → [{"resource":"cpu","used":"12.3%","total":"100.0%","pct":"12.3%"}, ...]
 ```
 
 **List calendar events (today & future by default; `--all` for all):**

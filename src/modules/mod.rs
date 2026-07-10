@@ -1,7 +1,10 @@
 //! 模块层：定义 [`Executor`] trait 与 [`ModuleRegistry`]。
 //!
-//! 每个功能模块（邮件、日历、RSS、系统、网络、文件）实现 `Executor`，
+//! 每个功能模块（邮件、日历、RSS）实现 `Executor`，
 //! 主程序只通过 `Box<dyn Executor>` 调度，保持 `main.rs` 极简。
+//!
+//! 定位：everyday 是 AI Agent 连接外部世界（邮件/日历/资讯）的统一接口，
+//! 不内置文件搜索、HTTP、系统监控等代理可用 shell 直接完成的通用能力。
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -17,7 +20,7 @@ use crate::output::Output;
 /// 主程序通过 [`ModuleRegistry`] 按 name 查找 trait object 并调用 [`Executor::execute`]。
 #[async_trait]
 pub trait Executor: Send + Sync {
-    /// 模块名（对应 CLI 的 `<module>`，如 `mail`、`sys`）。
+    /// 模块名（对应 CLI 的 `<module>`，如 `mail`、`cal`）。
     fn name(&self) -> &'static str;
 
     /// 一句话描述。
@@ -65,9 +68,6 @@ impl ModuleRegistry {
         modules.insert("mail", Box::new(crate::modules::email::EmailModule::new(config.clone())));
         modules.insert("cal", Box::new(crate::modules::calendar::CalendarModule::new(config.clone())));
         modules.insert("rss", Box::new(crate::modules::rss::RssModule::new(config.clone())));
-        modules.insert("sys", Box::new(crate::modules::system::SystemModule::new()));
-        modules.insert("net", Box::new(crate::modules::network::NetworkModule::new()));
-        modules.insert("fs", Box::new(crate::modules::fs::FsModule::new()));
 
         let _ = account_override; // 各模块按需通过 config 自行解析；此处保留参数以便未来扩展
         Ok(Self { modules })
@@ -93,9 +93,6 @@ impl ModuleRegistry {
 pub mod email;
 pub mod calendar;
 pub mod rss;
-pub mod system;
-pub mod network;
-pub mod fs;
 
 /// 解析 `--flag value` 形式的简单参数。
 /// 返回 (flags map, positional args)。

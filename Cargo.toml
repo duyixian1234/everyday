@@ -32,16 +32,8 @@ anyhow = "1"
 # 凭证安全（系统密钥环）
 keyring = "2"
 
-# 系统信息
-sysinfo = "0.30"
-
-# 网页抓取
+# HTTP 客户端（RSS 抓取复用）
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-scraper = "0.19"
-
-# 文件搜索
-ignore = "0.4"
-walkdir = "2"
 
 # 邮件
 async-imap = "0.9"
@@ -67,12 +59,6 @@ roxmltree = "0.21"
 
 # RSS
 feed-rs = "2"
-
-# 剪贴板
-arboard = "3"
-
-# 文件监听
-notify = "6"
 
 # 时间
 chrono = { version = "0.4", features = ["serde"] }

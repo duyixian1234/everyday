@@ -8,11 +8,8 @@ Loaded on demand by the `everyday-cli` skill. Every command below supports the g
 |--------|--------|-------|
 | `config` | ✅ Complete | path / list / get / set / init |
 | `mail` | ✅ Complete | IMAP receive + SMTP send + keyring credentials |
-| `sys` | ✅ Partial | `status` works; `watch` / `clip` not implemented |
-| `fs` | ⚠️ Skeleton | search / tree / read-json return `NotImplemented` |
-| `net` | ⚠️ Skeleton | fetch / request return `NotImplemented` |
 | `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
-| `rss` | ⚠️ Skeleton | follow / list / digest return `NotImplemented` |
+| `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 
 ---
 
@@ -68,43 +65,6 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 ```json
 [{"field":"subject","value":"..."},{"field":"from","value":"..."},{"field":"date","value":"..."},{"field":"folder","value":"Junk"},{"field":"body","value":"..."}]
 ```
-
----
-
-## sys — system monitoring ✅ (partial)
-
-| Command | Description | Status | Example |
-|---------|-------------|--------|---------|
-| `sys status` | CPU / memory / disk usage snapshot | ✅ | `everyday sys status --json` |
-| `sys watch <path>` | Watch filesystem changes | ⚠️ | — |
-| `sys clip` | Read/write system clipboard | ⚠️ | — |
-
-### sys status — JSON output (array of objects)
-
-```json
-[{"resource":"cpu","used":"12.3%","total":"100.0%","pct":"12.3%"},
- {"resource":"memory","used":"8.0 GiB","total":"16.0 GiB","pct":"50.0%"},
- {"resource":"disk C:\\","used":"200.0 GiB","total":"512.0 GiB","pct":"39.1%"}]
-```
-
----
-
-## fs — file operations ⚠️ (skeleton)
-
-| Command | Description | Status | Example |
-|---------|-------------|--------|---------|
-| `fs search` | Search by filename or content | ⚠️ | `everyday fs search --content "error" --path ./logs` |
-| `fs tree` | Directory tree | ⚠️ | `everyday fs tree --path . --max-depth 3` |
-| `fs read-json` | Pretty-print JSON/TOML file | ⚠️ | `everyday fs read-json config.toml` |
-
----
-
-## net — network tools ⚠️ (skeleton)
-
-| Command | Description | Status | Example |
-|---------|-------------|--------|---------|
-| `net fetch <url>` | Fetch a web page and clean it to Markdown | ⚠️ | `everyday net fetch https://example.com` |
-| `net request` | Generic HTTP request | ⚠️ | `everyday net request --method POST --url URL --body '...'` |
 
 ---
 

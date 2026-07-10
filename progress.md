@@ -311,3 +311,55 @@ _(暂无)_
 
 ### 下一步
 - `fs`/`net`/`sys` 补全；Phase 7 全量构建/测试/文档
+
+---
+
+## Session 2026-07-10 (范围变更：移除 fs/net 模块，收窄定位)
+
+### 需求
+用户评审认为 `fs` / `net` 模块封装的是代理可用 shell / `curl` / `fd` / `rg` 直接完成的通用能力，过于底层，不符合 everyday「外部集成接口」定位。决定收窄定位，移除 fs + net，仅保留 mail / cal / rss + sys 的感知类动作。
+
+### 已完成
+- 删除 `src/modules/fs.rs` 与 `src/modules/network.rs`，注销 `ModuleRegistry` 中两模块的声明与注册
+- `cli.rs` 的 `long_about` 与 `module` 字段注释去掉 net/fs
+- `sys` 模块收敛为 `status` + `watch`，移除 `clip`（剪贴板，非感知类动作）
+- `Cargo.toml` 移除仅 fs/net 使用的 `scraper` / `ignore` / `walkdir` / `arboard`；保留 `reqwest`（rss 复用）与 `notify`（sys watch 预留）
+- `agents.md`：新增「范围与定位」节，同步目录结构 / 命令结构 / 命名别名 / 性能·安全备注
+- `task_plan.md`：Phase 6 移除 fs/net 待办、状态汇总更新、关键设计决策表补范围行
+- `findings.md`：新增「架构决策：移除 fs / net 模块」记录理由与决策
+- `README.md` / `skills/everyday-cli/SKILL.md` / `references/COMMANDS.md`：移除 fs/net 与 sys clip 引用
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 86 passed / 0 failed（与移除前持平，fs/net 无单测）
+- 冒烟测试 ✅：
+  - `everyday fs ...` / `everyday net ...` → `{"error":"ModuleNotFound",...}` exit=1
+  - `everyday sys status --json` → 正常 JSON 数组（cpu/memory/disk）
+
+### 下一步
+- Phase 7 全量构建/测试/文档
+- 视需要补全 `sys watch`（notify）
+
+---
+
+## Session 2026-07-10 (范围再收窄：移除 sys 模块)
+
+### 需求
+用户进一步评审：`sys` 模块（系统资源监控）整体不保留，定位收窄为纯外部集成接口（mail/cal/rss + config）。同时要求 SKILL.md 只正向介绍现有模块，不要以"移除了哪些模块"的口吻编写。
+
+### 已完成
+- 删除 `src/modules/system.rs`，注销 `ModuleRegistry` 中 `sys` 的声明与注册
+- `cli.rs` 模块列表（`long_about` + `module` 字段）去掉 `sys`
+- `Cargo.toml` 移除仅 sys 使用的 `sysinfo` 与 `notify`（sys watch 预留也不再需要）
+- `agents.md`「范围与定位」改为仅外部集成（mail/cal/rss），不内置项补充"系统监控"；目录结构 / 命令结构 / 命名别名去 sys；提交规范示例改用现存模块
+- `task_plan.md`：Phase 6 删 `sys watch` 待办、范围变更说明补 sys 移除、设计决策表模块范围行、Phase 状态汇总去 sys
+- `findings.md`：架构决策节补 sys 整体移除理由、`notify` 不再预留
+- `README.md` / `COMMANDS.md`：删 sys 段与实现状态行；并修正 cal/rss 实现状态为"已实现"（原文档误标"待实现/骨架"，与代码实际不符）
+- `SKILL.md` 重写：只介绍现有模块（mail/cal/rss/config），去掉"Removed modules"表述与 system status 示例
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 84 passed（较移除前 86 少 2，即 system.rs 的 2 个单测）
+- 冒烟测试 ✅：`everyday sys ...` → `{"error":"ModuleNotFound",...}` exit=1；`cal`/`rss`/`mail` 正常
+
+### 下一步
+- Phase 7 全量构建/测试/文档
+- 剩余历史文档（PRD.md 按约定只读不改）定位与 agents.md 口径一致

@@ -46,12 +46,11 @@
 - [x] `system` 模块 `status` 已可工作（sysinfo，作为参考实现）
 
 ### Phase 6: 参考模块实现 [pending]
-- [ ] `system` 模块补全（`sys watch`：notify；`sys clip`：arboard）
-- [ ] `fs` 模块完整实现（`fs search --content`、`fs tree`、`fs read-json`）
-- [ ] `network` 模块完整实现（`net fetch <url>` → Markdown、`net request`）
 - [x] `email` 模块（IMAP list/read/search + SMTP send + keyring login）[2026-07-08 完成]
 - [x] `calendar` 模块（CalDAV：login/calendars/list/add/delete，libdav+icalendar）[2026-07-09 完成]
 - [x] `rss` 模块（feed-rs）[2026-07-09 完成]
+
+> **范围变更（2026-07-10）**：经设计评审，移除 `fs`、`net` 与 `sys` 模块。理由：`fs`/`net` 封装的是代理可用 shell / `curl` / `fd` / `rg` 直接完成的通用能力，无明显差异化价值；`sys`（系统资源监控）亦属代理可经系统工具直接获取的信息，与 everyday「外部集成接口」定位不符。最终保留 `mail` / `cal` / `rss` 三个外部集成模块（+ `config` 配置管理）。详见 `findings.md`。
 
 ### Phase 7: 构建、测试、文档 [pending]
 - [ ] 全模块 `cargo build` 全绿，`cargo clippy -- -D warnings` 无警告
@@ -73,6 +72,7 @@
 | 凭证存储 | `keyring` (系统密钥环) | PRD 安全要求，禁明文 |
 | 输出抽象 | `Output` enum (Text/Json) + `Renderer` | 一处切换，全局生效 |
 | 模块抽象 | `Executor` trait + `Box<dyn Executor>` | 主程序与模块解耦 |
+| 模块范围 | 仅保留外部集成类（mail/cal/rss）+ config 配置管理 | fs/net/sys 封装通用能力，与定位不符，已移除 |
 
 ---
 
@@ -133,5 +133,5 @@ username = "me"
 - Phase 3: complete
 - Phase 4: complete
 - Phase 5: complete
-- Phase 6: 进行中（email + calendar + rss 完成；system/fs/network 待办）
+- Phase 6: 进行中（email + calendar + rss 完成；fs/net/sys 已移除）
 - Phase 7: pending

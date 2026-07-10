@@ -165,3 +165,18 @@
 用 `GetCalendarResources`（calendar-query REPORT，全量含 calendar-data）拉取每个日历事件，本地 icalendar 解析 VEVENT + `date_naive()` 按目标日期过滤 + `NaiveDateTime` 排序。比服务端 time-range REPORT 可靠（国内服务端实现质量参差可能返空），不启用 `chrono-tz` feature（用 NaiveDateTime 本地时间序对单日事件更直观）
 
 _(持续更新)_
+
+## 架构决策：移除 fs / net 模块（2026-07-10）
+
+### 背景
+用户评审认为 `fs`（文件搜索 / 目录树 / 结构化读取）、`net`（网页抓取 / 通用 HTTP）与 `sys`（系统资源监控）相对 `mail` / `cal` / `rss` 过于底层、可替代，不符合 everyday「AI Agent 的外部集成接口」定位。
+
+### 判断
+- 根因不是"层级高低"，而是**可替代性**：`mail` / `cal` / `rss` 封装代理自身难以实现的外部协议 + 状态 + 凭证（IMAP 鉴权、CalDAV、feed 解析与已读状态）；而 `fs` / `net` 封装的是代理用 shell / `curl` / `fd` / `rg` 即可直接完成的通用能力，CLI 包装无差异化价值。
+- PRD 原愿景将 everyday 定义为"深入操作系统层面"的运行时工具箱，与收窄后的定位冲突。本次决策采纳"外部集成接口"定位。
+
+### 决策
+- 移除 `src/modules/fs.rs` 与 `src/modules/network.rs`，注销 `ModuleRegistry` 注册，更新 `cli.rs` / `agents.md` / `README.md` / skill 文档。
+- `src/modules/system.rs` 整体移除（`sys` 不保留）。`sys status` 输出的 CPU/内存/磁盘信息代理可经系统工具直接获取，无差异化价值，与"外部集成接口"定位不符。
+- `Cargo.toml` 移除仅 fs/net/sys 使用的依赖：`scraper`、`ignore`、`walkdir`、`arboard`、`sysinfo`、`notify`；保留 `reqwest`（rss 复用）。
+- `PRD.md` 按项目约定为只读，不在本次修改；定位变更以 `agents.md`「范围与定位」节为权威说明。

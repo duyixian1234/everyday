@@ -12,6 +12,14 @@
 - **异步运行时：** `tokio`
 - **规划文件：** `task_plan.md` / `findings.md` / `progress.md`（使用 planning-with-files 工作流）
 
+## 范围与定位
+
+Everyday 是 AI Agent 连接**外部世界**的统一接口，定位为"外部集成接口"，而非通用系统工具箱。
+
+- **保留的模块**封装代理自身难以实现的外部协议 / 状态 / 凭证：`mail`（IMAP/SMTP + keyring）、`cal`（CalDAV）、`rss`（feed 解析 + 状态）。
+- **不内置**文件搜索、HTTP 请求、系统监控、剪贴板等"通用能力"——这些代理用 shell / `curl` / `fd` / `rg` 即可直接完成，CLI 包装无差异化价值。
+- 据此，`fs`、`net` 与 `sys` 模块均已移除（详见 `findings.md`）。
+
 ## 目录结构
 
 ```text
@@ -33,17 +41,14 @@
         ├── mod.rs          # Executor trait + ModuleRegistry
         ├── email.rs        # 邮件（IMAP/SMTP）
         ├── calendar.rs     # 日历（CalDAV）
-        ├── rss.rs          # RSS/Atom 订阅
-        ├── system.rs       # 系统监控/文件监听
-        ├── network.rs      # 网页抓取/HTTP 工具
-        └── fs.rs           # 文件搜索/目录树/结构化读取
+        └── rss.rs          # RSS/Atom 订阅
 ```
 
 ## 核心架构约定
 
 ### 1. 命令结构
 所有命令遵循 `everyday <module> <action> [options]`：
-- `module`：`mail` | `cal` | `rss` | `sys` | `net` | `fs` | `config`
+- `module`：`mail` | `cal` | `rss` | `config`
 - `action`：由各模块自定义（如 `list`、`send`、`status`）
 - 全局 flag：`--json`（切换 JSON 输出）、`--account <name>`（指定账户）
 
@@ -94,7 +99,7 @@ pub enum Output {
 
 ### 命名
 - 模块文件：小写（`email.rs`，不用 `mail.rs` —— 模块名描述领域）
-- CLI 命令别名：`mail`→邮件、`cal`→日历、`sys`→系统、`net`→网络、`fs`→文件
+- CLI 命令别名：`mail`→邮件、`cal`→日历
 - 结构体：`PascalCase`；函数/变量：`snake_case`；常量：`SCREAMING_SNAKE_CASE`
 
 ### 依赖
@@ -131,7 +136,7 @@ pub enum Output {
 - ✅ 每次提交后项目应处于可编译、可运行的稳定状态
 
 "完整任务"的判定标准（满足其一即可视为完成一个任务单元）：
-- 实现了一个完整功能（如 `fs search` 可用、`net fetch` 可用）
+- 实现了一个完整功能（如 `mail login` 可用、`cal add` 可用）
 - 完成一个模块的全部骨架或核心动作
 - 完成 `task_plan.md` 中的一个 Phase
 - 一组紧密相关、不可分割的小改动（如修复一个 bug + 其测试）
@@ -163,10 +168,10 @@ test(<module>): <简述>          # 测试
 - ❌ 不得在配置文件、日志、输出中明文打印密码/token
 - ❌ 不得 `unwrap()` 用户输入解析结果
 - ✅ 网络请求必须设超时（`reqwest::Client::builder().timeout()`）
-- ✅ 文件操作需处理权限错误，返回 `AgentError::PermissionDenied`
+- ✅ 本地文件操作（如读取配置）需处理权限错误，返回 `AgentError::PermissionDenied`
 - ✅ 凭证只通过 `keyring` 读写
 
 ## 性能预算
 - 冷启动 < 100ms（避免在 main 早期做重 IO）
-- 文件搜索/网络请求支持异步流式
+- 网络请求（RSS 抓取）支持异步流式（超时 + 并发）
 - 大输出避免全量 buffer，必要时分块

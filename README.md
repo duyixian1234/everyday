@@ -2,7 +2,7 @@
 
 > The Rust-powered hands for your AI Agent.
 
-`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、系统监控、文件操作、网络抓取等场景，支持 Text / JSON 双输出模式。
+`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅等外部集成场景，支持 Text / JSON 双输出模式。
 
 ## 特性
 
@@ -88,9 +88,6 @@ everyday mail list --unread
 
 # JSON 模式（AI 友好）
 everyday mail list --unread --limit 10 --json
-
-# 查看系统状态
-everyday sys status
 ```
 
 ## 命令参考
@@ -153,44 +150,21 @@ everyday config set default_account.mail personal
 
 **递归搜索**：`list` / `search` / `read` 默认遍历所有文件夹。`list` / `search` 跨文件夹按邮件日期降序合并；`read` 找到首个命中 UID 的邮件即返回（IMAP UID 仅文件夹内唯一，跨文件夹不唯一，故需递归查找）。
 
-### sys — 系统监控
-
-| 命令 | 说明 | 状态 | 用法 |
-|------|------|------|------|
-| `status` | CPU / 内存 / 磁盘使用率 | ✅ 可用 | `everyday sys status [--json]` |
-| `watch` | 监听文件系统变化 | 待实现 | `everyday sys watch <path>` |
-| `clip` | 读写系统剪贴板 | 待实现 | `everyday sys clip [get\|set VALUE]` |
-
-### fs — 文件操作
-
-| 命令 | 说明 | 状态 | 用法 |
-|------|------|------|------|
-| `search` | 按文件名或内容搜索 | 待实现 | `everyday fs search [--content PATTERN] [--path P] [NAME-GLOB]` |
-| `tree` | 目录树 | 待实现 | `everyday fs tree [--path P] [--max-depth N]` |
-| `read-json` | 读取并美化 JSON/TOML | 待实现 | `everyday fs read-json <path>` |
-
-### net — 网络工具
-
-| 命令 | 说明 | 状态 | 用法 |
-|------|------|------|------|
-| `fetch` | 抓取网页并清洗为 Markdown | 待实现 | `everyday net fetch <url>` |
-| `request` | 通用 HTTP 请求 | 待实现 | `everyday net request --method POST --url URL [--body '...']` |
-
 ### cal — 日历管理（CalDAV）
 
 | 命令 | 说明 | 状态 | 用法 |
 |------|------|------|------|
-| `list` | 列出日程 | 待实现 | `everyday cal list [--today\|--date YYYY-MM-DD]` |
-| `add` | 添加日程 | 待实现 | `everyday cal add --title T --start ISO --end ISO` |
-| `delete` | 删除日程 | 待实现 | `everyday cal delete --id ID` |
+| `list` | 列出日程 | ✅ 可用 | `everyday cal list [--today\|--date YYYY-MM-DD]` |
+| `add` | 添加日程 | ✅ 可用 | `everyday cal add --title T --start ISO --end ISO` |
+| `delete` | 删除日程 | ✅ 可用 | `everyday cal delete --id ID` |
 
 ### rss — RSS/Atom 订阅
 
 | 命令 | 说明 | 状态 | 用法 |
 |------|------|------|------|
-| `follow` | 添加订阅源 | 待实现 | `everyday rss follow --name N --url URL [--category C]` |
-| `list` | 列出订阅源 | 待实现 | `everyday rss list` |
-| `digest` | 聚合近期内容 | 待实现 | `everyday rss digest [--limit N]` |
+| `follow` | 添加订阅源 | ✅ 可用 | `everyday rss follow --name N --url URL [--category C]` |
+| `list` | 列出订阅源 | ✅ 可用 | `everyday rss list` |
+| `digest` | 聚合近期内容 | ✅ 可用 | `everyday rss digest [--limit N]` |
 
 ## 输出模式
 
@@ -308,16 +282,6 @@ everyday mail send \
 everyday mail list --account personal --json
 ```
 
-### 系统
-
-```bash
-# 查看系统资源
-everyday sys status
-
-# JSON 格式（便于监控脚本）
-everyday sys status --json
-```
-
 ### 配置
 
 ```bash
@@ -351,10 +315,7 @@ everyday/
 │       ├── mod.rs       # Executor trait + ModuleRegistry
 │       ├── email.rs     # 邮件（IMAP/SMTP）
 │       ├── calendar.rs  # 日历（CalDAV）
-│       ├── rss.rs       # RSS/Atom
-│       ├── system.rs    # 系统监控
-│       ├── network.rs   # 网页抓取/HTTP
-│       └── fs.rs        # 文件搜索/目录树
+│       └── rss.rs       # RSS/Atom
 ├── skills/
 │   ├── README.md              # 面向 Agent 用户的精简项目介绍
 │   └── everyday-cli/
@@ -376,7 +337,6 @@ everyday/
 - **CLI 解析**：clap (derive)
 - **序列化**：serde + serde_json + toml
 - **邮件**：async-imap (IMAP) + lettre (SMTP) + mailparse
-- **系统信息**：sysinfo
 - **凭证**：keyring（系统密钥环）
 - **TLS**：rustls + webpki-roots
 
@@ -410,11 +370,8 @@ pub trait Executor: Send + Sync {
 |------|------|------|
 | `config` | ✅ 完整可用 | path / list / get / set / init |
 | `mail` | ✅ 完整可用 | IMAP 收件 + SMTP 发件 + keyring 凭证 |
-| `sys` | ✅ 部分可用 | `status` 可用；`watch` / `clip` 待实现 |
-| `fs` | 🚧 待实现 | search / tree / read-json |
-| `net` | 🚧 待实现 | fetch / request |
-| `cal` | 🚧 待实现 | CalDAV list / add / delete |
-| `rss` | 🚧 待实现 | follow / list / digest |
+| `cal` | ✅ 完整可用 | CalDAV login / calendars / list / add / delete |
+| `rss` | ✅ 完整可用 | follow / list / unfollow / digest / fetch |
 
 ## 许可证
 
