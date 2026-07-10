@@ -123,7 +123,8 @@ pub enum Output {
 ### 改动后
 1. `cargo build` 必须通过
 2. `cargo clippy -- -D warnings` 无警告
-3. 受影响模块的单测通过
+3. `cargo fmt --check` 无差异（提交前先 `cargo fmt` 统一格式）—— 对齐 CI 的 `rustfmt --check` 门槛，漏跑会导致 Format check 直接失败
+4. 受影响模块的单测通过
 4. 更新 `progress.md`（已完成 / 下一步）
 5. 把 task 状态标 `completed`
 6. **每完成一次完整任务必须 git 提交**（见下方提交规范）
@@ -156,6 +157,7 @@ test(<module>): <简述>          # 测试
 **提交前检查清单：**
 - [ ] `cargo build` 通过
 - [ ] `cargo clippy -- -D warnings` 无警告
+- [ ] `cargo fmt --check` 通过（或已 `cargo fmt` 统一格式）
 - [ ] `cargo test` 通过
 - [ ] `progress.md` 已记录本次工作
 - [ ] commit message 符合 Conventional Commits 格式
