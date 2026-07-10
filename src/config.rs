@@ -231,22 +231,6 @@ impl Config {
         Self::load_from(&path)
     }
 
-    /// 保存到指定路径（自动创建父目录）。
-    pub fn save_to(&self, path: &Path) -> Result<()> {
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        let text = toml::to_string_pretty(self)
-            .map_err(|e| AgentError::Config(format!("failed to serialize config: {e}")))?;
-        std::fs::write(path, text)?;
-        Ok(())
-    }
-
-    /// 保存到默认路径。
-    pub fn save(&self) -> Result<()> {
-        Self::save_to(self, &Self::config_path()?)
-    }
-
     // ---- 账户查找 ----
 
     /// 解析邮件账户：优先 `override_name`，其次默认，最后报错。
@@ -412,7 +396,8 @@ url = "https://hnrss.org/frontpage"
         let tmp = std::env::temp_dir().join("everyday_roundtrip_test.toml");
         let _ = std::fs::remove_file(&tmp);
         let cfg: Config = toml::from_str(SAMPLE).unwrap();
-        cfg.save_to(&tmp).unwrap();
+        let text = toml::to_string_pretty(&cfg).unwrap();
+        std::fs::write(&tmp, &text).unwrap();
         let reloaded = Config::load_from(&tmp).unwrap();
         assert_eq!(reloaded.mail.accounts.len(), 2);
         assert_eq!(reloaded.default_account.mail.as_deref(), Some("work"));

@@ -41,3 +41,10 @@
 ### 2026-07-10 — 发布 v0.2.0
 - 自 v0.1.0 以来的增量：`feat(todo)` Notion 待办模块 + 共享 notion-client SDK（commit `a721f5c`）、`fix(todo)` Status 改为 select 修复 Notion 过滤、`ci` 增加 aarch64-apple-darwin 到 CI + release 矩阵、移除过时 PRD.md、精简 progress/findings/task_plan 历史。
 - 版本号 `0.1.0 → 0.2.0`（Cargo.toml + Cargo.lock 由 cargo 自动更新）；tag `v0.2.0` 触发 release workflow 构建三平台 + aarch64 macOS 预编译二进制。
+
+### 2026-07-10 — 重构：清理 dead_code + note 接入共享 notion-client
+- 移除 `main.rs` 的 crate 级 `#![allow(dead_code)]`（该抑制原本为「预留公共 API」而加，现模块已齐备会掩盖死代码），恢复 clippy 对死代码的正常检查。
+- 删除确认的死代码：`Config::save`/`save_to`、`AgentError::NotImplemented` 变体、`ModuleRegistry::module_names`、`Output::json` 构造器，以及 `notion_client` 中带 `#[allow(dead_code)]` 且从未读取的 `token` 字段；相应测试同步调整（保留 Config 序列化 roundtrip 与 JSON 渲染覆盖）。
+- `note` 模块接入 `src/notion_client.rs` 共享 `NotionClient`：删除其自建的 `build_client`/`notion_request`/`api_get`/`api_post`/`api_patch` 与 `NOTION_API`/`NOTION_VERSION` 常量，`fetch_all_blocks` 改为接收 `&NotionClient`，所有请求走 `get`/`post`/`patch` + 分页查询。行为不变（401/403→Auth、其它→Network、429 自动退避重试），`note read` 的 block 递归聚合改用 `&NotionClient`。
+- 消除原 ADR「note 暂不复用 notion_client（择机去重）」的偏差，mail/cal/rss 之外两个 Notion 模块现在共用同一底层 SDK。
+- 质量门禁：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 113 passed。

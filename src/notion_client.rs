@@ -31,9 +31,6 @@ const NOTION_VERSION: &str = "2022-06-28";
 /// `reqwest::Client`，所有请求复用同一连接池。
 pub struct NotionClient {
     client: reqwest::Client,
-    /// 保留 token 以备未来需要（如刷新/调试）。构造时需它来注入头。
-    #[allow(dead_code)]
-    token: String,
 }
 
 impl NotionClient {
@@ -54,9 +51,9 @@ impl NotionClient {
             .default_headers(headers)
             .timeout(Duration::from_secs(30))
             .user_agent(format!("everyday/{}", env!("CARGO_PKG_VERSION")))
-            .build()
-            .map_err(|e| AgentError::Network(format!("build notion client: {e}")))?;
-        Ok(Self { client, token })
+        .build()
+        .map_err(|e| AgentError::Network(format!("build notion client: {e}")))?;
+        Ok(Self { client })
     }
 
     /// 通用请求：发送并解析响应为 `R`。
@@ -159,9 +156,8 @@ mod tests {
 
     #[test]
     fn builds_client_with_token() {
-        // 构造不应 unwrap/panic，且带鉴权头。
-        let c = NotionClient::new("ntn_test".into()).unwrap();
-        let _ = c.token;
+        // 构造不应 unwrap/panic。
+        let _c = NotionClient::new("ntn_test".into()).unwrap();
     }
 
     #[test]

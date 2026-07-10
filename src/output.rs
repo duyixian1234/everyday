@@ -44,11 +44,6 @@ impl Output {
         Self::Text(s.into())
     }
 
-    /// 创建一个 JSON 输出。
-    pub fn json<V: Into<Value>>(v: V) -> Self {
-        Self::Json(v.into())
-    }
-
     /// 创建一个表格输出。
     pub fn records(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
         Self::Records { headers, rows }
@@ -184,7 +179,7 @@ mod tests {
 
     #[test]
     fn json_output_compact_in_json_mode() {
-        let out = Output::json(json!({"a": 1, "b": [2, 3]}));
+        let out = Output::Json(json!({"a": 1, "b": [2, 3]}));
         assert_eq!(out.render(RenderMode::Json), r#"{"a":1,"b":[2,3]}"#);
     }
 

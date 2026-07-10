@@ -103,13 +103,6 @@ impl ModuleRegistry {
             .map(|b| b.as_ref())
             .ok_or_else(|| AgentError::ModuleNotFound(name.to_string()))
     }
-
-    /// 列出所有已注册模块名。
-    pub fn module_names(&self) -> Vec<&'static str> {
-        let mut names: Vec<&'static str> = self.modules.keys().copied().collect();
-        names.sort();
-        names
-    }
 }
 
 // ---- 模块子模块声明 ----

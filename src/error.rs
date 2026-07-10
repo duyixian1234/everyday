@@ -43,9 +43,6 @@ pub enum AgentError {
     #[error("permission denied: {0}")]
     PermissionDenied(String),
 
-    #[error("not implemented: {0}")]
-    NotImplemented(String),
-
     #[error("{0}")]
     Other(String),
 }
@@ -63,7 +60,6 @@ impl AgentError {
             Self::UnknownAction(_) => "UnknownAction",
             Self::InvalidArgument(_) => "InvalidArgument",
             Self::PermissionDenied(_) => "PermissionDenied",
-            Self::NotImplemented(_) => "NotImplemented",
             Self::Other(_) => "Other",
         }
     }
@@ -136,7 +132,6 @@ mod tests {
         let cases = [
             (AgentError::Config("x".into()), "ConfigError"),
             (AgentError::Network("x".into()), "NetworkError"),
-            (AgentError::NotImplemented("x".into()), "NotImplemented"),
             (AgentError::Other("x".into()), "Other"),
         ];
         for (err, name) in cases {

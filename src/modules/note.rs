@@ -17,7 +17,6 @@
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
@@ -25,12 +24,9 @@ use serde_json::{Map, Value, json};
 use crate::config::NoteAccount;
 use crate::error::{AgentError, Result};
 use crate::modules::{ActionDoc, Executor};
+use crate::notion_client::NotionClient;
 use crate::output::Output;
 
-/// Notion REST API 基址。
-const NOTION_API: &str = "https://api.notion.com/v1";
-/// 使用的 Notion API 版本（固定，向后兼容）。
-const NOTION_VERSION: &str = "2022-06-28";
 /// 密钥环中存放 token 的条目用户名（与账户名无关，同 service 下唯一）。
 const KEYRING_USER: &str = "token";
 
@@ -209,113 +205,20 @@ async fn note_login(account: &NoteAccount) -> Result<Output> {
 }
 
 // ============ HTTP 封装 ============
-
-/// 构建带超时与 UA 的 reqwest 客户端（复用 main.rs 安装的 rustls ring provider）。
-fn build_client() -> Result<reqwest::Client> {
-    reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .user_agent(format!("everyday/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| AgentError::Network(format!("build http client: {e}")))
-}
-
-/// 发起 Notion API 请求（JSON body），成功返回解析后的 JSON Value。
-///
-/// 状态码非 2xx 时：401/403 映射为 `Auth`，其余映射为 `Network`，并尽量从响应体
-/// 提取 `message` 字段。
-async fn notion_request(
-    method: reqwest::Method,
-    path: &str,
-    token: &str,
-    body: Option<Value>,
-) -> Result<Value> {
-    let client = build_client()?;
-    let url = format!("{NOTION_API}{path}");
-    let mut req = client
-        .request(method, &url)
-        .header("Authorization", format!("Bearer {token}"))
-        .header("Notion-Version", NOTION_VERSION)
-        .header("Content-Type", "application/json");
-    if let Some(b) = body {
-        req = req.json(&b);
-    }
-    let resp = req
-        .send()
-        .await
-        .map_err(|e| AgentError::Network(format!("notion request failed: {e}")))?;
-    let status = resp.status();
-    let text = resp
-        .text()
-        .await
-        .map_err(|e| AgentError::Network(format!("read response body: {e}")))?;
-    if !status.is_success() {
-        let msg = serde_json::from_str::<Value>(&text)
-            .ok()
-            .and_then(|v| {
-                v.get("message")
-                    .and_then(|m| m.as_str())
-                    .map(|s| s.to_string())
-            })
-            .unwrap_or_else(|| text.clone());
-        if status == 401 || status == 403 {
-            return Err(AgentError::Auth(format!(
-                "Notion API auth failed ({}): {}",
-                status, msg
-            )));
-        }
-        return Err(AgentError::Network(format!(
-            "Notion API error ({}): {}",
-            status, msg
-        )));
-    }
-    serde_json::from_str(&text)
-        .map_err(|e| AgentError::Other(format!("parse notion response: {e}")))
-}
-
-async fn api_get(path: &str, token: &str) -> Result<Value> {
-    notion_request(reqwest::Method::GET, path, token, None).await
-}
-
-async fn api_post(path: &str, token: &str, body: Value) -> Result<Value> {
-    notion_request(reqwest::Method::POST, path, token, Some(body)).await
-}
-
-async fn api_patch(path: &str, token: &str, body: Value) -> Result<Value> {
-    notion_request(reqwest::Method::PATCH, path, token, Some(body)).await
-}
+//
+// 所有 Notion HTTP 请求统一走共享 [`NotionClient`]（见 `notion_client.rs`）：
+// 它注入鉴权头、处理 429 退避重试并映射错误类型。本模块不再自带 HTTP 层。
 
 /// 分页拉取某 block 的全部子 block（用于 `read` 内容聚合）。
-async fn fetch_all_blocks(token: &str, block_id: &str) -> Result<Vec<Value>> {
-    let client = build_client()?;
-    let url = format!("{NOTION_API}/blocks/{block_id}/children");
+async fn fetch_all_blocks(client: &NotionClient, block_id: &str) -> Result<Vec<Value>> {
     let mut out: Vec<Value> = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
-        let mut rb = client
-            .get(&url)
-            .header("Authorization", format!("Bearer {token}"))
-            .header("Notion-Version", NOTION_VERSION)
-            .query(&[("page_size", "100")]);
+        let mut path = format!("/blocks/{block_id}/children?page_size=100");
         if let Some(c) = &cursor {
-            rb = rb.query(&[("start_cursor", c.as_str())]);
+            path.push_str(&format!("&start_cursor={c}"));
         }
-        let resp = rb
-            .send()
-            .await
-            .map_err(|e| AgentError::Network(format!("fetch blocks: {e}")))?;
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| AgentError::Network(format!("read blocks body: {e}")))?;
-        if !status.is_success() {
-            return Err(AgentError::Network(format!(
-                "Notion API error ({}) while fetching blocks: {}",
-                status, text
-            )));
-        }
-        let v: Value = serde_json::from_str(&text)
-            .map_err(|e| AgentError::Other(format!("parse blocks: {e}")))?;
+        let v: Value = client.get(&path).await?;
         if let Some(results) = v.get("results").and_then(|r| r.as_array()) {
             out.extend(results.iter().cloned());
         }
@@ -719,7 +622,7 @@ fn rt_from_str(s: &str) -> Vec<Value> {
 // ============ Block -> Markdown（递归聚合） ============
 
 /// 把页面所有 block 递归渲染为 Markdown，作为 `read` 的正文聚合结果。
-async fn blocks_to_markdown(token: &str, blocks: &[Value], depth: usize) -> Result<String> {
+async fn blocks_to_markdown(client: &NotionClient, blocks: &[Value], depth: usize) -> Result<String> {
     let mut out = String::new();
     for b in blocks {
         let block_type = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -731,8 +634,8 @@ async fn blocks_to_markdown(token: &str, blocks: &[Value], depth: usize) -> Resu
             && depth < MAX_BLOCK_DEPTH
             && let Some(id) = b.get("id").and_then(|i| i.as_str())
         {
-            let children = fetch_all_blocks(token, id).await?;
-            let child_md = Box::pin(blocks_to_markdown(token, &children, depth + 1)).await?;
+            let children = fetch_all_blocks(client, id).await?;
+            let child_md = Box::pin(blocks_to_markdown(client, &children, depth + 1)).await?;
             // 子列表缩进 2 空格，保持层级结构。
             let indented = child_md
                 .lines()
@@ -913,9 +816,10 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
         .unwrap_or(10)
         .min(100);
     let token = get_token(account)?;
+    let client = NotionClient::new(token)?;
 
     let body = json!({ "query": query, "page_size": limit });
-    let resp = api_post("/search", &token, body).await?;
+    let resp: Value = client.post("/search", &body).await?;
     let results = resp
         .get("results")
         .and_then(|r| r.as_array())
@@ -989,10 +893,10 @@ async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Re
         .unwrap_or(50)
         .min(100);
     let token = get_token(account)?;
+    let client = NotionClient::new(token)?;
 
     // 分页查询数据库下的页面。
-    let client = build_client()?;
-    let url = format!("{NOTION_API}/databases/{db_id}/query");
+    let url = format!("/databases/{db_id}/query");
     let mut out: Vec<Value> = Vec::new();
     let mut cursor: Option<String> = None;
     loop {
@@ -1000,42 +904,7 @@ async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Re
         if let Some(c) = &cursor {
             body["start_cursor"] = json!(c);
         }
-        let resp = client
-            .post(&url)
-            .header("Authorization", format!("Bearer {token}"))
-            .header("Notion-Version", NOTION_VERSION)
-            .header("Content-Type", "application/json")
-            .json(&body)
-            .send()
-            .await
-            .map_err(|e| AgentError::Network(format!("query database: {e}")))?;
-        let status = resp.status();
-        let text = resp
-            .text()
-            .await
-            .map_err(|e| AgentError::Network(format!("read query body: {e}")))?;
-        if !status.is_success() {
-            let msg = serde_json::from_str::<Value>(&text)
-                .ok()
-                .and_then(|v| {
-                    v.get("message")
-                        .and_then(|m| m.as_str())
-                        .map(|s| s.to_string())
-                })
-                .unwrap_or_else(|| text.clone());
-            if status == 401 || status == 403 {
-                return Err(AgentError::Auth(format!(
-                    "Notion API auth failed ({}): {}",
-                    status, msg
-                )));
-            }
-            return Err(AgentError::Network(format!(
-                "Notion API error ({}) while querying database: {}",
-                status, msg
-            )));
-        }
-        let v: Value = serde_json::from_str(&text)
-            .map_err(|e| AgentError::Other(format!("parse query response: {e}")))?;
+        let v: Value = client.post(&url, &body).await?;
         if let Some(results) = v.get("results").and_then(|r| r.as_array()) {
             out.extend(results.iter().cloned());
         }
@@ -1119,9 +988,10 @@ async fn note_create(
             )
         })?;
     let token = get_token(account)?;
+    let client = NotionClient::new(token)?;
 
     // 取数据库 schema 以定位 title 属性名 + 校验 --prop 类型。
-    let schema = api_get(&format!("/databases/{}", db_id), &token).await?;
+    let schema: Value = client.get(&format!("/databases/{}", db_id)).await?;
     let title_prop = db_title_property_name(&schema)?;
 
     let mut props = Map::new();
@@ -1139,7 +1009,7 @@ async fn note_create(
     }
 
     let body = json!({ "parent": { "database_id": db_id }, "properties": Value::Object(props) });
-    let created = api_post("/pages", &token, body).await?;
+    let created: Value = client.post("/pages", &body).await?;
     let id = created
         .get("id")
         .and_then(|i| i.as_str())
@@ -1175,8 +1045,9 @@ async fn note_read(
 ) -> Result<Output> {
     let page_id = resolve_page_id(account, positional)?;
     let token = get_token(account)?;
+    let client = NotionClient::new(token)?;
 
-    let page = api_get(&format!("/pages/{}", page_id), &token).await?;
+    let page: Value = client.get(&format!("/pages/{}", page_id)).await?;
     let title = extract_title(&page);
     let url = page
         .get("url")
@@ -1191,8 +1062,8 @@ async fn note_read(
     let props_str = page_props_to_strings(&props);
 
     // 正文：递归拉取全部 block 并聚合为 Markdown。
-    let blocks = fetch_all_blocks(&token, &page_id).await?;
-    let content = blocks_to_markdown(&token, &blocks, 0).await?;
+    let blocks = fetch_all_blocks(&client, &page_id).await?;
+    let content = blocks_to_markdown(&client, &blocks, 0).await?;
 
     let json_out = json!({
         "id": page_id,
@@ -1245,6 +1116,7 @@ async fn note_append(
     }
 
     let token = get_token(account)?;
+    let client = NotionClient::new(token)?;
     let blocks = text_to_blocks(&text);
     if blocks.is_empty() {
         return Err(AgentError::InvalidArgument(
@@ -1256,7 +1128,9 @@ async fn note_append(
     let mut appended = 0usize;
     for chunk in blocks.chunks(100) {
         let body = json!({ "children": chunk });
-        api_patch(&format!("/blocks/{}/children", page_id), &token, body).await?;
+        let _: Value = client
+            .patch(&format!("/blocks/{}/children", page_id), &body)
+            .await?;
         appended += chunk.len();
     }
 
@@ -1293,16 +1167,17 @@ async fn note_update(
         ));
     }
     let token = get_token(account)?;
+    let client = NotionClient::new(token)?;
 
     // 尝试从页面父级拿到数据库 schema 以精确编码属性类型；
     // 无数据库父级（独立页面）时退化为启发式编码。
-    let page = api_get(&format!("/pages/{}", page_id), &token).await?;
+    let page: Value = client.get(&format!("/pages/{}", page_id)).await?;
     let schema_opt: Option<Value> = match page
         .get("parent")
         .and_then(|p| p.get("database_id"))
         .and_then(|d| d.as_str())
     {
-        Some(db_id) => api_get(&format!("/databases/{db_id}"), &token).await.ok(),
+        Some(db_id) => client.get::<Value>(&format!("/databases/{db_id}")).await.ok(),
         None => None,
     };
 
@@ -1322,7 +1197,7 @@ async fn note_update(
     }
 
     let body = json!({ "properties": Value::Object(props) });
-    let updated = api_patch(&format!("/pages/{}", page_id), &token, body).await?;
+    let updated: Value = client.patch(&format!("/pages/{}", page_id), &body).await?;
     let id = updated
         .get("id")
         .and_then(|i| i.as_str())

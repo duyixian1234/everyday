@@ -3,11 +3,6 @@
 //! 流程：解析 CLI → 加载配置 → 查找模块 → 执行 → 渲染 → 退出码。
 //! `config` 模块特殊处理（需要写配置）。
 
-// 基础架构阶段：部分公共 API（AgentError::Auth/Network、Config::save/keyring_service、
-// ModuleRegistry::module_names、Output::json）为 Phase 6 模块预留，暂未调用。
-// 待邮件/日历/网络模块实现后移除此 allow。
-#![allow(dead_code)]
-
 mod cli;
 mod config;
 mod error;
