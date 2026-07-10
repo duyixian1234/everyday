@@ -1,5 +1,9 @@
 # Everyday — 开发流程管理（just）
 # 运行 `just` 查看可用命令列表。
+# 跨平台终端：Unix 用 bash，Windows 用 powershell.exe。
+
+set shell := ["bash", "-c"]
+set windows-shell := ["powershell.exe", "-NoProfile", "-NoLogo", "-Command"]
 
 # 列出所有可用命令
 default:

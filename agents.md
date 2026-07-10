@@ -127,6 +127,8 @@ pub enum Output {
 
 > 提交前统一用 `just ci` 跑一遍；日常开发中 `just format` 修正格式，`just check` 做静态检查。
 
+> 跨平台终端：Justfile 顶部用 `set shell := ["bash", "-c"]`（Unix）与 `set windows-shell := ["powershell.exe", "-NoProfile", "-NoLogo", "-Command"]`（Windows），无需额外配置即可在两类平台运行 `just`。
+
 ### 改动前
 1. 读 `task_plan.md` 确认当前 Phase
 2. 读相关源文件，理解现有实现
