@@ -439,6 +439,7 @@ fn example_config() -> String {
 [default_account]
 mail = "work"
 calendar = "personal"
+note = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -459,6 +460,13 @@ ignore_calendars = ["好友生日"]
 [[rss.feeds]]
 name = "hackernews"
 url = "https://hnrss.org/frontpage"
+
+[[note.accounts]]
+name = "personal"
+provider = "notion"
+# 预设常用 ID，减少 Agent 每次输入长字符串；按需替换为你的数据库/页面 ID
+default_database_id = "db_abc123..."
+default_page_id = "page_xyz789..."
 "#
     .to_string()
 }

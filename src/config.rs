@@ -28,6 +28,10 @@ pub struct Config {
     /// RSS 模块配置。
     #[serde(default)]
     pub rss: RssConfig,
+
+    /// 笔记模块配置。
+    #[serde(default)]
+    pub note: NoteConfig,
 }
 
 /// 各模块默认账户名。
@@ -39,6 +43,10 @@ pub struct DefaultAccount {
     /// 默认日历账户名。
     #[serde(default)]
     pub calendar: Option<String>,
+
+    /// 默认笔记账户名。
+    #[serde(default)]
+    pub note: Option<String>,
 }
 
 // ---- 邮件 ----
@@ -121,6 +129,40 @@ pub struct RssFeed {
     pub category: Option<String>,
 }
 
+// ---- 笔记 (note) ----
+
+/// 笔记模块配置。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct NoteConfig {
+    /// 命名账户列表。
+    #[serde(default)]
+    pub accounts: Vec<NoteAccount>,
+}
+
+/// 单个笔记账户。
+///
+/// `provider` 字段为未来扩展预留（如 `obsidian` 本地目录、`feishu` 文档等），
+/// 当前仅实现 `notion`。
+/// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/note/<account>`）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteAccount {
+    /// 账户名（如 `personal`、`work`）。
+    pub name: String,
+    /// 后端提供方：`notion` 等。默认 `notion`。
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    /// 默认数据库 ID：用于 `note create` 未显式指定 `--db` 时。
+    #[serde(default)]
+    pub default_database_id: Option<String>,
+    /// 默认页面 ID：用于 `note append`/`note read` 未显式指定 page_id 时。
+    #[serde(default)]
+    pub default_page_id: Option<String>,
+}
+
+fn default_provider() -> String {
+    "notion".to_string()
+}
+
 // ---- 加载 / 保存 ----
 
 impl Config {
@@ -196,6 +238,21 @@ impl Config {
             .iter()
             .find(|a| a.name == name)
             .ok_or_else(|| AgentError::AccountNotFound(format!("calendar account '{name}'")))
+    }
+
+    /// 解析笔记账户。
+    pub fn note_account(&self, override_name: Option<&str>) -> Result<&NoteAccount> {
+        let want = override_name.or(self.default_account.note.as_deref());
+        let name = want.ok_or_else(|| {
+            AgentError::AccountNotFound(
+                "no note account specified and no default set in [default_account]".into(),
+            )
+        })?;
+        self.note
+            .accounts
+            .iter()
+            .find(|a| a.name == name)
+            .ok_or_else(|| AgentError::AccountNotFound(format!("note account '{name}'")))
     }
 
     /// keyring 服务名约定：`everyday/<module>/<account>`。
@@ -314,5 +371,61 @@ url = "https://hnrss.org/frontpage"
             Config::keyring_service("mail", "work"),
             "everyday/mail/work"
         );
+    }
+
+    #[test]
+    fn parses_note_account_config() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+note = "personal"
+
+[[note.accounts]]
+name = "personal"
+provider = "notion"
+default_database_id = "db_abc"
+default_page_id = "page_xyz"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.note.accounts.len(), 1);
+        assert_eq!(cfg.note.accounts[0].provider, "notion");
+        assert_eq!(
+            cfg.note.accounts[0].default_database_id.as_deref(),
+            Some("db_abc")
+        );
+        assert_eq!(
+            cfg.note.accounts[0].default_page_id.as_deref(),
+            Some("page_xyz")
+        );
+    }
+
+    #[test]
+    fn note_provider_defaults_to_notion() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[note.accounts]]
+name = "x"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.note.accounts[0].provider, "notion");
+    }
+
+    #[test]
+    fn resolves_default_note_account() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+note = "personal"
+
+[[note.accounts]]
+name = "personal"
+provider = "notion"
+"#,
+        )
+        .unwrap();
+        let acc = cfg.note_account(None).unwrap();
+        assert_eq!(acc.name, "personal");
     }
 }

@@ -68,6 +68,7 @@ impl ModuleRegistry {
         modules.insert("mail", Box::new(crate::modules::email::EmailModule::new(config.clone())));
         modules.insert("cal", Box::new(crate::modules::calendar::CalendarModule::new(config.clone())));
         modules.insert("rss", Box::new(crate::modules::rss::RssModule::new(config.clone())));
+        modules.insert("note", Box::new(crate::modules::note::NoteModule::new(config.clone())));
 
         let _ = account_override; // 各模块按需通过 config 自行解析；此处保留参数以便未来扩展
         Ok(Self { modules })
@@ -93,6 +94,7 @@ impl ModuleRegistry {
 pub mod email;
 pub mod calendar;
 pub mod rss;
+pub mod note;
 
 /// 解析 `--flag value` 形式的简单参数。
 /// 返回 (flags map, positional args)。

@@ -363,3 +363,27 @@ _(暂无)_
 ### 下一步
 - Phase 7 全量构建/测试/文档
 - 剩余历史文档（PRD.md 按约定只读不改）定位与 agents.md 口径一致
+
+---
+
+## Session 2026-07-10 (新增 note 模块：Notion 笔记/知识库)
+
+### 需求
+用户给出 note 模块初步设计：基于 Notion API，提供 `login`/`search`/`create`/`read`/`append`/`update` 六个动作；配置引入 `provider` 字段 + `default_database_id`/`default_page_id` 预设；凭证走 keyring；屏蔽 Block 嵌套，提供纯文本/Markdown 追加与简化属性操作；支持文本/JSON 双输出。
+
+### 已完成
+- `src/config.rs`：新增 `DefaultAccount.note`、`NoteConfig`、`NoteAccount { name, provider(default=notion), default_database_id?, default_page_id? }`、`Config::note_account()` 解析；补充 3 个单测。
+- `src/modules/note.rs`（新）：实现六动作 + Notion HTTP 封装（请求/分页拉 block/递归聚合为 Markdown/文本→block 切分/属性精确编码/keyring 凭证）；12 个纯函数单测（参数解析、属性编码、rich_text、标题提取、block 渲染等）。
+- `src/modules/mod.rs`：注册 `note` 模块。
+- `src/cli.rs`：`long_about` 模块列表加入 note。
+- `src/main.rs` 内 `example_config()` 与 `config.example.toml`：加入 note 账户示例。
+- 复用既有 `reqwest`（json + rustls-tls），**未新增依赖**。
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy -- -D warnings` ✅ 零警告、`cargo test` ✅ 100 passed（含 note 模块 12 个新单测）。
+- 冒烟测试 ✅：`everyday note --help` / `everyday note read --help` 正常列出动作；无账户配置时 `note login` 文本与 JSON 错误路径均正确（AccountNotFound）。
+
+### 下一步
+- 真实 Notion 联调（需用户提供 Integration Token + 数据库/页面 ID，并授予 integration 访问权限）。
+- 视反馈扩展更多 block 类型或 `provider`（obsidian/feishu）。
+

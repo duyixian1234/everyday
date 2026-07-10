@@ -6,6 +6,7 @@
 [default_account]
 mail = "work"
 calendar = "personal"
+note = "personal"
 
 # ---- 邮件账户（可多个）----
 [[mail.accounts]]
@@ -48,3 +49,15 @@ category = "tech"
 [[rss.feeds]]
 name = "rust-blog"
 url = "https://blog.rust-lang.org/feed.xml"
+
+# ---- 笔记账户（Notion 等；可多个）----
+# provider 预留扩展（notion / 未来 obsidian、feishu 等）
+# 凭证（Notion Integration Token，形如 ntn_...）绝不写在此文件，
+# 通过 `everyday note login --account personal` 存入系统 keyring，
+# service 名约定：everyday/note/<account>
+# default_database_id / default_page_id 为常用目标预设，减少 Agent 重复输入长字符串
+[[note.accounts]]
+name = "personal"
+provider = "notion"
+default_database_id = "db_abc123..."   # 例如：阅读清单、灵感库
+default_page_id = "page_xyz789..."     # 例如：每日速记本

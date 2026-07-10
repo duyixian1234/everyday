@@ -180,3 +180,30 @@ _(持续更新)_
 - `src/modules/system.rs` 整体移除（`sys` 不保留）。`sys status` 输出的 CPU/内存/磁盘信息代理可经系统工具直接获取，无差异化价值，与"外部集成接口"定位不符。
 - `Cargo.toml` 移除仅 fs/net/sys 使用的依赖：`scraper`、`ignore`、`walkdir`、`arboard`、`sysinfo`、`notify`；保留 `reqwest`（rss 复用）。
 - `PRD.md` 按项目约定为只读，不在本次修改；定位变更以 `agents.md`「范围与定位」节为权威说明。
+
+## 笔记(note)模块实现（2026-07-10，基于 Notion API）
+
+### 设计定位
+- 屏蔽 Notion 繁琐的 Block 嵌套，向 Agent 暴露**纯文本/Markdown 追加**（`append`）与**简化版属性操作**（`create`/`update` 的 `--prop K:V`）。
+- 复用既有 `reqwest`（json + rustls-tls），**未引入新依赖**。`provider` 字段预留（notion / 未来 obsidian、feishu），当前仅实现 notion。
+
+### Notion API 关键约定（源码实现验证）
+- Base `https://api.notion.com/v1`，固定 Header `Notion-Version: 2022-06-28` + `Authorization: Bearer <token>`。
+- 凭证：Notion Integration Token（`ntn_...`）走 keyring，service = `everyday/note/<account>`，条目用户名固定 `token`（与账户名无关，避免多账户冲突）。
+- 关键端点：`POST /v1/search`、`POST /v1/pages`（create）、`GET /v1/pages/{id}`（属性）、`PATCH /v1/pages/{id}`（改属性）、`GET /v1/blocks/{id}/children`（分页读，page_size≤100）、`PATCH /v1/blocks/{id}/children`（追加，单次≤100 block，超出分批）、`GET /v1/databases/{id}`（取 schema）。
+- 401/403 → `AgentError::Auth`；其余非 2xx → `AgentError::Network`（尽量提取响应体 `message`）。
+
+### 实现要点
+- **`create`/`update` 属性编码**：先 `GET /v1/databases/{id}` 取 schema，按属性 `type` 精确编码（title/rich_text/number/checkbox/select/multi_select/url/email/phone）；未知类型降级 rich_text。无 database 父级的独立页面 `update` 退化为启发式编码（bool→checkbox、可解析数→number、其余→rich_text）。
+- **`read` 正文聚合**：递归拉取 block 子节点（`MAX_BLOCK_DEPTH=12` 防无限展开），将 paragraph/heading/list/quote/code/callout/divider/image/bookmark/child_page 等聚合成标准 Markdown；rich_text 渲染行内格式（bold/italic/code/strike + 链接）。`--json` 返回 `{id,title,url,properties,content}` 结构化对象，极大节省 Agent context。
+- **`append` 文本→block**：Markdown-lite 切分（`#` 标题、`-`/`*` 列表、`1.` 有序、`> ` 引用、```代码块、`---` 分割线、空行分段）。无 `--text` 时从 stdin 读取，但仅当 stdin 非 TTY（避免交互挂起）。
+- **重复 flag 解析**：`--prop` 可多次出现且值含冒号，故 `note` 模块用专用 `parse_args`（单值 flag 取末次、`prop` 收集为有序列表），不复用 `parse_simple_args`。
+- **双输出判别**：模块 `execute` 签名不含 `RenderMode`，`note` 通过 `std::env::args().any(|a| a=="--json")` 判别（main 已把 `--json` 注入进程参数），`search`/`read`/`create`/`append`/`update` 均支持文本/JSON 双形态。
+
+### 踩坑（已解决）
+- `matches!` 宏参数顺序：`matches!(expr, pattern)`，初版写成 `(pattern, expr)` 触发 E0532。
+- 递归 `async fn` 需 `Box::pin` 打破无限 future 类型。
+- `&Vec<Value>` 经 `.map(rich_text_plain)` 不自动 coerce 为 `&[Value]`，需闭包 `|r| rich_text_plain(r)`。
+- `std::io::Stdin::is_terminal()` 需 `use std::io::IsTerminal;`。
+- `note_account` 解析、`DefaultAccount.note`、`Config.note` 三处配套扩展，并同步 `config.example.toml` 与 `main.rs` 内 `example_config()`。
+
