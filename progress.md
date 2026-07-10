@@ -387,3 +387,22 @@ _(暂无)_
 - 真实 Notion 联调（需用户提供 Integration Token + 数据库/页面 ID，并授予 integration 访问权限）。
 - 视反馈扩展更多 block 类型或 `provider`（obsidian/feishu）。
 
+---
+
+## Session 2026-07-10 (note 新增 list 子命令)
+
+### 需求
+用户要求给 note 模块加 `list` 子命令，列出指定数据库下的页面。
+
+### 已完成
+- `src/modules/note.rs`：新增 `note_list`（动作 `list`），通过 `POST /databases/{id}/query` 分页拉取页面，支持 `--db`（缺省取 `default_database_id`）与 `--limit`（默认 50，上限 100）；文本模式输出 `id/title/last_edited` 表格，JSON 模式返回含 `properties`（简化字符串）的对象数组。
+- `actions()` 注册 `list`；`Executor::description` 更新；dispatch 增加 `list` 分支；模块文档补全。
+- 未新增依赖，复用已有 HTTP/分页/属性提取逻辑。
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy -- -D warnings` ✅ 零警告、`cargo test` ✅ 100 passed。
+- 真实联调 ✅：环境中已存在 note 账户与 keyring token，`everyday note list`（默认库）、`--json`、`--limit N` 均返回正确数据（如 Quick Note 页面）。
+
+### 下一步
+- 视需要为 list 增加按属性过滤（`--filter` 对应 Notion query filter）或排序。
+

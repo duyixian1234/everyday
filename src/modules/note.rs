@@ -10,6 +10,7 @@
 //! - `read`    读取页面正文，自动聚合为 Markdown（`--json` 下返回结构化对象）
 //! - `append`  向页面末尾追加文本区块（支持 `--text` 或管道 stdin）
 //! - `update`  修改页面属性（Meta 信息）
+//! - `list`    列出指定数据库下的全部页面（标题 + 属性）
 //!
 //! 凭证安全：Token 仅存系统密钥环（service = `everyday/note/<account>`），绝不落盘 config。
 
@@ -60,7 +61,7 @@ impl Executor for NoteModule {
     }
 
     fn description(&self) -> &'static str {
-        "Note & knowledge-base (Notion): login, search, create, read, append, update."
+        "Note & knowledge-base (Notion): login, search, list, create, read, append, update."
     }
 
     fn actions(&self) -> Vec<ActionDoc> {
@@ -95,6 +96,11 @@ impl Executor for NoteModule {
                 "Update a page's properties (metadata)",
                 "everyday note update <page_id> --prop K:V ...",
             ),
+            ActionDoc::new(
+                "list",
+                "List pages in a database",
+                "everyday note list [--db ID] [--limit N]",
+            ),
         ]
     }
 
@@ -111,6 +117,7 @@ impl Executor for NoteModule {
             "read" => note_read(account, &flags, &positional).await,
             "append" => note_append(account, &flags, &positional).await,
             "update" => note_update(account, &flags, &positional, &multi).await,
+            "list" => note_list(account, &flags).await,
             other => Err(AgentError::UnknownAction(format!("note {other}"))),
         }
     }
@@ -887,6 +894,127 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
     } else {
         Ok(Output::records(
             vec!["id".into(), "type".into(), "title".into(), "last_edited".into()],
+            rows,
+        ))
+    }
+}
+
+/// `note list [--db ID] [--limit N]`：列出指定数据库下的页面。
+///
+/// 通过 `POST /databases/{id}/query` 分页拉取，自动截断到 `--limit`（默认 50，上限 100）。
+/// 目标数据库优先 `--db`，否则取账户配置的 `default_database_id`。
+async fn note_list(
+    account: &NoteAccount,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
+    let db_id = flags
+        .get("db")
+        .cloned()
+        .or_else(|| account.default_database_id.clone())
+        .ok_or_else(|| {
+            AgentError::InvalidArgument(
+                "no --db given and no default_database_id set for this account".into(),
+            )
+        })?;
+    let limit: usize = flags
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50)
+        .min(100);
+    let token = get_token(account)?;
+
+    // 分页查询数据库下的页面。
+    let client = build_client()?;
+    let url = format!("{NOTION_API}/databases/{db_id}/query");
+    let mut out: Vec<Value> = Vec::new();
+    let mut cursor: Option<String> = None;
+    loop {
+        let mut body = json!({ "page_size": 100u32 });
+        if let Some(c) = &cursor {
+            body["start_cursor"] = json!(c);
+        }
+        let resp = client
+            .post(&url)
+            .header("Authorization", format!("Bearer {token}"))
+            .header("Notion-Version", NOTION_VERSION)
+            .header("Content-Type", "application/json")
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| AgentError::Network(format!("query database: {e}")))?;
+        let status = resp.status();
+        let text = resp
+            .text()
+            .await
+            .map_err(|e| AgentError::Network(format!("read query body: {e}")))?;
+        if !status.is_success() {
+            let msg = serde_json::from_str::<Value>(&text)
+                .ok()
+                .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+                .unwrap_or_else(|| text.clone());
+            if status == 401 || status == 403 {
+                return Err(AgentError::Auth(format!(
+                    "Notion API auth failed ({}): {}",
+                    status, msg
+                )));
+            }
+            return Err(AgentError::Network(format!(
+                "Notion API error ({}) while querying database: {}",
+                status, msg
+            )));
+        }
+        let v: Value = serde_json::from_str(&text)
+            .map_err(|e| AgentError::Other(format!("parse query response: {e}")))?;
+        if let Some(results) = v.get("results").and_then(|r| r.as_array()) {
+            out.extend(results.iter().cloned());
+        }
+        // 继续翻页直到没有更多、或已达到 limit（limit==0 表示不限制）。
+        let has_more = v.get("has_more").and_then(|h| h.as_bool()) == Some(true);
+        if has_more && (limit == 0 || out.len() < limit) {
+            match v.get("next_cursor").and_then(|c| c.as_str()) {
+                Some(c) => cursor = Some(c.to_string()),
+                None => break,
+            }
+        } else {
+            break;
+        }
+    }
+    if limit != 0 && out.len() > limit {
+        out.truncate(limit);
+    }
+
+    let mut rows: Vec<Vec<String>> = Vec::new();
+    let mut items: Vec<Value> = Vec::new();
+    for p in &out {
+        let id = p.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+        let title = extract_title(p);
+        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+        let edited = p
+            .get("last_edited_time")
+            .and_then(|t| t.as_str())
+            .unwrap_or("")
+            .to_string();
+        let props = p
+            .get("properties")
+            .and_then(|pr| pr.as_object())
+            .cloned()
+            .unwrap_or_default();
+        let props_str = page_props_to_strings(&props);
+        rows.push(vec![id.clone(), title.clone(), edited.clone()]);
+        let mut item = Map::new();
+        item.insert("id".into(), Value::String(id));
+        item.insert("title".into(), Value::String(title));
+        item.insert("url".into(), Value::String(url));
+        item.insert("last_edited".into(), Value::String(edited));
+        item.insert("properties".into(), Value::Object(props_str));
+        items.push(Value::Object(item));
+    }
+
+    if matches!(mode_from_json(), crate::output::RenderMode::Json) {
+        Ok(Output::Json(Value::Array(items)))
+    } else {
+        Ok(Output::records(
+            vec!["id".into(), "title".into(), "last_edited".into()],
             rows,
         ))
     }
