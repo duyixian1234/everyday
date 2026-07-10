@@ -2,7 +2,7 @@
 
 > The Rust-powered hands for your AI Agent.
 
-`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅等外部集成场景，支持 Text / JSON 双输出模式。
+`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（Notion）等外部集成场景，支持 Text / JSON 双输出模式。
 
 ## 特性
 
@@ -166,6 +166,33 @@ everyday config set default_account.mail personal
 | `list` | 列出订阅源 | ✅ 可用 | `everyday rss list` |
 | `digest` | 聚合近期内容 | ✅ 可用 | `everyday rss digest [--limit N]` |
 
+### note — 笔记与知识库（Notion）
+
+基于 Notion API，屏蔽繁琐的 Block 嵌套，向 Agent 暴露**纯文本 / Markdown 追加**与**简化属性操作**两个高层能力。凭证（Notion Integration Token）仅存系统密钥环，绝不落盘。`provider` 字段为后续扩展（Obsidian 本地目录、飞书文档等）预留。
+
+| 命令 | 说明 | 用法 |
+|------|------|------|
+| `login` | 交互式存储 Notion Token 到密钥环 | `everyday note login [--account NAME]` |
+| `search` | 按标题搜索页面 / 数据库 | `everyday note search --query Q [--limit N]` |
+| `list` | 列出指定数据库下的页面 | `everyday note list [--db ID] [--limit N]` |
+| `create` | 在数据库中新建页面（记录） | `everyday note create --title T [--db ID] [--prop K:V ...]` |
+| `read` | 读取页面正文，聚合成 Markdown | `everyday note read <page_id>` |
+| `append` | 向页面末尾追加文本区块 | `everyday note append [page_id] --text TEXT` |
+| `update` | 修改页面属性（Meta 信息） | `everyday note update <page_id> --prop K:V ...` |
+
+**选项说明**：
+
+| 选项 | 适用命令 | 说明 |
+|------|----------|------|
+| `--account NAME` | 全部 | 指定账户 |
+| `--query Q` | `search` | 关键词搜索（页面 / 数据库标题） |
+| `--db ID` | `create` / `list` | 目标数据库 ID；未指定则读取配置 `default_database_id` |
+| `--prop K:V` | `create` / `update` | 简化属性设置，可多次指定；按数据库 schema 精确编码（标题 / 文本 / 数字 / Checkbox / Select 等），值可含冒号 |
+| `--text TEXT` | `append` | 要追加的文本；不带此参数时从管道 `stdin` 读取（仅非终端模式） |
+| `--limit N` | `search` / `list` | 限制条数（`search` 默认 10，`list` 默认 50，上限 100；`--limit 0` 表示不限制） |
+
+> **前置**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday note login` 存入密钥环 → 在 config 填好 `[[note.accounts]]`（含 `default_database_id` / `default_page_id`）→ 在 Notion 把目标页面 / 数据库**分享给该 integration**。
+
 ## 输出模式
 
 ### Text 模式（默认）
@@ -208,6 +235,7 @@ JSON 模式下错误格式：
 [default_account]
 mail = "work"
 calendar = "personal"
+note = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -236,6 +264,14 @@ username = "me"
 name = "hackernews"
 url = "https://hnrss.org/frontpage"
 category = "tech"
+
+[[note.accounts]]
+name = "personal"
+provider = "notion"
+# 预设常用 ID，减少每次输入长字符串的负担（值以实际 Notion ID 为准）
+default_database_id = "db_abc123..."
+default_page_id = "page_xyz789..."
+# Notion Integration Token (ntn_...) 不在此处填写，由 `everyday note login` 存入密钥环
 ```
 
 ### 凭证安全
@@ -301,6 +337,40 @@ everyday config set mail.accounts.0.smtp_port 465
 everyday config get mail.accounts.0.smtp_port
 ```
 
+### 笔记（Notion）
+
+```bash
+# 交互式存入 Notion Integration Token（仅密钥环，不落盘）
+everyday note login
+
+# 搜索页面 / 数据库（JSON）
+everyday note search --query "工作" --json
+
+# 列出某数据库下的页面（缺省取配置 default_database_id）
+everyday note list --json
+everyday note list --db "db_abc123" --limit 20
+
+# 在数据库中新建一条记录，含多项属性
+everyday note create \
+  --title "Rust 异步运行时深入浅出" \
+  --prop "类型:文章" \
+  --prop "状态:未读" \
+  --prop "URL:https://..."
+
+# 读取页面正文（聚合成 Markdown）
+everyday note read <page_id> --json
+
+# 向默认速记页面追加一条闪念（也可不带 page_id 自动寻址 default_page_id）
+everyday note append --text "### AI 自动捕获
+在 12345 号邮件发现竞品链接：https://..."
+
+# 管道方式追加
+echo "批量捕获的内容" | everyday note append <page_id>
+
+# 修改页面属性
+everyday note update <page_id> --prop "状态:已读"
+```
+
 ## 项目结构
 
 ```
@@ -315,7 +385,8 @@ everyday/
 │       ├── mod.rs       # Executor trait + ModuleRegistry
 │       ├── email.rs     # 邮件（IMAP/SMTP）
 │       ├── calendar.rs  # 日历（CalDAV）
-│       └── rss.rs       # RSS/Atom
+│       ├── rss.rs       # RSS/Atom
+│       └── note.rs      # 笔记与知识库（Notion API）
 ├── skills/
 │   ├── README.md              # 面向 Agent 用户的精简项目介绍
 │   └── everyday-cli/
@@ -372,6 +443,7 @@ pub trait Executor: Send + Sync {
 | `mail` | ✅ 完整可用 | IMAP 收件 + SMTP 发件 + keyring 凭证 |
 | `cal` | ✅ 完整可用 | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ 完整可用 | follow / list / unfollow / digest / fetch |
+| `note` | ✅ 完整可用 | login / search / list / create / read / append / update（Notion API） |
 
 ## 许可证
 

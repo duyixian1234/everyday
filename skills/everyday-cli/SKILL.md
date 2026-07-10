@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), Notion note/knowledge-base (search, list, create, read, append, update, login), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, capture notes to Notion, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -14,7 +14,7 @@ license: MIT
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `config`
+Modules: `mail` · `cal` · `rss` · `note` · `config`
 
 ## Rules (follow exactly)
 
@@ -24,7 +24,7 @@ Modules: `mail` · `cal` · `rss` · `config`
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
+4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `note` (Notion), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
 
 ## First-time setup (only if config is missing)
 
@@ -89,6 +89,45 @@ everyday cal add --title "会议" --start "2026-07-09T15:00:00Z" --end "2026-07-
 everyday cal calendars --json           # list calendar collections (get hrefs)
 everyday cal delete --id "/cal/ev.ics"  # delete by href from `cal list`
 ```
+
+**Search / list Notion pages (JSON):**
+
+```bash
+everyday note search --query "工作" --json
+# → [{"id":"...","type":"page","title":"2026年工作计划","last_edited":"...","url":"..."}]
+everyday note list --json                       # pages in default_database_id
+everyday note list --db "db_abc123" --limit 20  # pages in a specific database
+```
+
+**Create a record in a Notion database (with properties):**
+
+```bash
+everyday note create \
+  --title "Rust 异步运行时深入浅出" \
+  --prop "类型:文章" --prop "状态:未读" --prop "URL:https://..."
+```
+
+**Read a page as Markdown (JSON returns aggregated `{id,title,url,properties,content}`):**
+
+```bash
+everyday note read <page_id> --json
+```
+
+**Append a flash note (text arg, or pipe via stdin):**
+
+```bash
+everyday note append --text "### AI 自动捕获
+发现竞品链接：https://..."
+echo "批量捕获内容" | everyday note append <page_id>
+```
+
+**Update page properties:**
+
+```bash
+everyday note update <page_id> --prop "状态:已读"
+```
+
+First-time Notion setup: `everyday note login` (stores the `ntn_...` integration token in the OS keyring, service `everyday/note/<account>`). The target page/database must be shared with the integration in Notion. `--db` / page id default to `default_database_id` / `default_page_id` from config when omitted.
 
 ## Error format
 

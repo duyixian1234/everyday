@@ -406,3 +406,20 @@ _(暂无)_
 ### 下一步
 - 视需要为 list 增加按属性过滤（`--filter` 对应 Notion query filter）或排序。
 
+---
+
+## Session 2026-07-10 (为 note 模块补文档)
+
+### 需求
+用户在 README 与 skills 文档中加入 note 工具的介绍与说明。
+
+### 已完成
+- `README.md`：命令参考新增 `note` 章节（七动作 + 选项说明 + Notion 前置步骤）；intro、配置示例、项目结构图、实现状态表、使用示例均补 note；配置示例加 `[[note.accounts]]`。
+- `skills/everyday-cli/SKILL.md`：frontmatter 描述、模块列表、Rule #4、Common tasks 均加 note 任务（search/list/create/read/append/update + 首次 setup）。
+- `skills/everyday-cli/references/COMMANDS.md`：实现状态表加 note；新增完整 note 章节（命令表/选项/六个动作的 JSON 输出 schema）；配置示例加 note 账户与 `default_account.note`。
+- `skills/README.md`：纠正过时内容（原仍列 sys/fs/net 骨架），改为 config/mail/cal/rss/note ✅ 可用，intro 覆盖笔记（Notion）。
+- 所有 JSON schema 均对照 `src/modules/note.rs` 实际输出核对，确保文档与代码一致。
+
+### 测试结果
+- 纯文档改动，无代码变更；未触发构建/测试。
+

@@ -10,6 +10,7 @@ Loaded on demand by the `everyday-cli` skill. Every command below supports the g
 | `mail` | ✅ Complete | IMAP receive + SMTP send + keyring credentials |
 | `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
+| `note` | ✅ Complete | Notion: login / search / list / create / read / append / update |
 
 ---
 
@@ -123,12 +124,78 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → `every
 
 ---
 
+## note — Notion notes & knowledge base ✅
+
+Credentials: config holds account metadata (`provider`, `default_database_id`, `default_page_id`) → `everyday note login` stores the Notion Integration Token (`ntn_...`) in the OS keyring → other commands read it automatically. The token never touches disk. Design goal: hide Notion's nested Block model behind plain-text/Markdown append and simplified property ops.
+
+**Setup:** create a Notion integration to get the `ntn_...` token, run `everyday note login`, set `[[note.accounts]]` in config, then **share the target page/database with the integration** in Notion.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `note login` | Interactively enter Notion token into the OS keyring | `everyday note login --account personal` |
+| `note search` | Search pages/databases by title | `everyday note search --query "工作" --limit 10 --json` |
+| `note list` | List pages in a database (`--db` or `default_database_id`) | `everyday note list --db "db_abc" --limit 20 --json` |
+| `note create` | Create a page (record) in a database, with properties | `everyday note create --title T --db ID --prop "状态:未读" --json` |
+| `note read` | Read a page; render its content as aggregated Markdown | `everyday note read <page_id> --json` |
+| `note append` | Append text/markdown blocks to a page (or pipe via stdin) | `everyday note append <page_id> --text "内容"` |
+| `note update` | Update a page's properties (metadata) | `everyday note update <page_id> --prop "状态:已读" --json` |
+
+### note options
+
+| Flag | Applies to | Description |
+|------|-----------|-------------|
+| `--account NAME` | all | Specify account (override default) |
+| `--query Q` | `search` | Keyword matched against page/database titles (required) |
+| `--db ID` | `create` / `list` | Target database id; defaults to `default_database_id` when omitted |
+| `--prop K:V` | `create` / `update` | Property setter, repeatable. Encoded by db schema (title/rich_text/number/checkbox/select…); value may contain `:`. |
+| `--text TEXT` | `append` | Text/markdown to append. If omitted, reads from `stdin` (non-TTY only) |
+| `--limit N` | `search` / `list` | Max rows (`search` default 10, `list` default 50, cap 100; `0` = unlimited) |
+
+### note search — JSON output (array of objects)
+
+```json
+[{"id":"abc123_x","type":"page","title":"2026年工作计划","last_edited":"2026-07-09 18:00","url":"https://www.notion.so/..."}]
+```
+
+### note list — JSON output (array of objects, properties simplified to strings)
+
+```json
+[{"id":"...","title":"Quick Note","url":"https://www.notion.so/...","last_edited":"2026-07-10T07:01:00.000Z","properties":{"名称":"Quick Note"}}]
+```
+
+### note create — JSON output (object)
+
+```json
+{"id":"...","url":"https://www.notion.so/...","title":"Rust 异步运行时深入浅出","database_id":"db_abc123"}
+```
+
+### note read — JSON output (object with aggregated Markdown)
+
+```json
+{"id":"abc123_x","title":"2026年工作计划","url":"https://www.notion.so/...","properties":{"Status":"In Progress"},"content":"# 2026年工作计划\n\n## 核心目标\n- 完成 everyday CLI 稳定版发布。"}
+```
+
+### note append — JSON output (object)
+
+```json
+{"id":"...","url":"https://www.notion.so/...","appended":3}
+```
+
+### note update — JSON output (object)
+
+```json
+{"id":"...","url":"https://www.notion.so/...","updated":1}
+```
+
+---
+
 ## Config file format
 
 ```toml
 [default_account]
 mail = "work"
 calendar = "personal"
+note = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -149,9 +216,16 @@ username = "me"
 name = "hackernews"
 url = "https://hnrss.org/frontpage"
 category = "tech"
+
+[[note.accounts]]
+name = "personal"
+provider = "notion"
+default_database_id = "db_abc123..."
+default_page_id = "page_xyz789..."
+# Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/note/personal"
 ```
 
-**Keyring service-name convention:** `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
+**Keyring service-name convention:** `everyday/<module>/<account>` (e.g. `everyday/mail/work`, `everyday/note/personal`).
 
 ---
 
