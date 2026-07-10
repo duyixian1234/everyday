@@ -4,11 +4,12 @@
 //! `config` 模块特殊处理（需要写配置）。
 
 mod cli;
-mod config;
-mod error;
 mod modules;
-mod notion_client;
-mod output;
+mod shared;
+mod util;
+
+// 让共享设施保持稳定的 crate::X 路径（物理位置在 shared/ 下，对上层透明）。
+pub(crate) use shared::{config, error, notion_client, output};
 
 use std::sync::Arc;
 

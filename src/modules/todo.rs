@@ -522,7 +522,7 @@ fn resolve_db_id(account: &TodoAccount, flags: &HashMap<String, String>) -> Resu
 /// 探测当前渲染模式（JSON 全局 flag 已注入 args 并被 parse_simple_args 捕获到 flags，
 /// 但模式判定统一以进程参数中的 `--json` 为准，与 note 模块一致）。
 fn mode_json() -> bool {
-    std::env::args().any(|a| a == "--json")
+    crate::util::json_mode::is_json()
 }
 
 /// 读取配置文件为 toml::Value（不存在/空则空表）。

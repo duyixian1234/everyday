@@ -39,13 +39,9 @@ async fn open(account: &TodoAccount) -> Result<sqlx::SqlitePool> {
     Ok(pool)
 }
 
-/// 生成短唯一 ID（基于纳秒时间戳的十六进制；CLI 串行调用下足够唯一）。
+/// 生成短唯一 ID（todo 前缀 `t`；实现见 [`crate::util::id::gen_id`]）。
 fn gen_id() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("t{nanos:x}")
+    crate::util::id::gen_id("t")
 }
 
 // ============ actions ============

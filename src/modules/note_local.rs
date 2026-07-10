@@ -44,13 +44,9 @@ async fn open(account: &NoteAccount) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// 生成短唯一 ID。
+/// 生成短唯一 ID（note 前缀 `n`；实现见 [`crate::util::id::gen_id`]）。
 fn gen_id() -> String {
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("n{nanos:x}")
+    crate::util::id::gen_id("n")
 }
 
 /// 解析 page_id：优先位置参数，否则账户 default_page_id。

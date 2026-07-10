@@ -1270,7 +1270,7 @@ fn mode_from_json() -> crate::output::RenderMode {
     // note 的动作内部直接决定输出形态，但 `search`/`read` 需要按模式分支。
     // 由于 main 已把 `--json` 注入 args 并被 parse_args 捕获到 flags，这里读取它。
     // 为避免重复传参，本函数通过检查进程参数中是否含 `--json` 简单判断。
-    if std::env::args().any(|a| a == "--json") {
+    if crate::util::json_mode::is_json() {
         crate::output::RenderMode::Json
     } else {
         crate::output::RenderMode::Text

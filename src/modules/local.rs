@@ -65,7 +65,7 @@ pub async fn connect(path: &Path) -> Result<SqlitePool> {
 /// 探测当前渲染模式是否为 JSON（与 note/todo 模块保持一致：以进程参数中的
 /// `--json` 为准）。
 pub fn mode_json() -> bool {
-    std::env::args().any(|a| a == "--json")
+    crate::util::json_mode::is_json()
 }
 
 #[cfg(test)]
