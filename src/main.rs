@@ -12,6 +12,7 @@ mod cli;
 mod config;
 mod error;
 mod modules;
+mod notion_client;
 mod output;
 
 use std::sync::Arc;
@@ -464,6 +465,7 @@ fn example_config() -> String {
 mail = "work"
 calendar = "personal"
 note = "personal"
+todo = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -491,6 +493,18 @@ provider = "notion"
 # 预设常用 ID，减少 Agent 每次输入长字符串；按需替换为你的数据库/页面 ID
 default_database_id = "db_abc123..."
 default_page_id = "page_xyz789..."
+
+# ---- 待办账户（Notion 任务数据库；可多个）----
+# provider 预留扩展（notion）
+# 凭证（Notion Integration Token，形如 ntn_...）绝不写在此文件，
+# 通过 `everyday todo login --account personal` 存入系统 keyring，
+# service 名约定：everyday/todo/<account>
+# parent_page_id：创建任务数据库时的父级页面（init-db 需要）
+# default_database_id：由 `everyday todo init-db` 成功后自动回填此处
+[[todo.accounts]]
+name = "personal"
+provider = "notion"
+parent_page_id = "page_parent_..."
 "#
     .to_string()
 }

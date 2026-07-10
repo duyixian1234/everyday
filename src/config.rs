@@ -32,6 +32,10 @@ pub struct Config {
     /// 笔记模块配置。
     #[serde(default)]
     pub note: NoteConfig,
+
+    /// 待办模块配置（基于 Notion）。
+    #[serde(default)]
+    pub todo: TodoConfig,
 }
 
 /// 各模块默认账户名。
@@ -47,6 +51,10 @@ pub struct DefaultAccount {
     /// 默认笔记账户名。
     #[serde(default)]
     pub note: Option<String>,
+
+    /// 默认待办账户名。
+    #[serde(default)]
+    pub todo: Option<String>,
 }
 
 // ---- 邮件 ----
@@ -163,6 +171,37 @@ fn default_provider() -> String {
     "notion".to_string()
 }
 
+// ---- 待办 (todo) ----
+
+/// 待办模块配置（基于 Notion 的任务数据库）。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TodoConfig {
+    /// 命名账户列表。
+    #[serde(default)]
+    pub accounts: Vec<TodoAccount>,
+}
+
+/// 单个待办账户。
+///
+/// `provider` 字段为未来扩展预留（当前仅 `notion`）。
+/// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/todo/<account>`）。
+/// `parent_page_id` 用于 `init-db` 创建数据库时的父级页面；`default_database_id`
+/// 由 `init-db` 成功后在本地 config 中回填（非机密元数据，可落盘）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TodoAccount {
+    /// 账户名（如 `personal`、`work`）。
+    pub name: String,
+    /// 后端提供方：`notion` 等。默认 `notion`。
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    /// 创建数据库时的父级页面 ID（非机密，可落盘）。
+    #[serde(default)]
+    pub parent_page_id: Option<String>,
+    /// 默认任务数据库 ID（`init-db` 后回填；缺省时由 `--db` 显式指定）。
+    #[serde(default)]
+    pub default_database_id: Option<String>,
+}
+
 // ---- 加载 / 保存 ----
 
 impl Config {
@@ -253,6 +292,21 @@ impl Config {
             .iter()
             .find(|a| a.name == name)
             .ok_or_else(|| AgentError::AccountNotFound(format!("note account '{name}'")))
+    }
+
+    /// 解析待办账户。
+    pub fn todo_account(&self, override_name: Option<&str>) -> Result<&TodoAccount> {
+        let want = override_name.or(self.default_account.todo.as_deref());
+        let name = want.ok_or_else(|| {
+            AgentError::AccountNotFound(
+                "no todo account specified and no default set in [default_account]".into(),
+            )
+        })?;
+        self.todo
+            .accounts
+            .iter()
+            .find(|a| a.name == name)
+            .ok_or_else(|| AgentError::AccountNotFound(format!("todo account '{name}'")))
     }
 
     /// keyring 服务名约定：`everyday/<module>/<account>`。
@@ -426,6 +480,62 @@ provider = "notion"
         )
         .unwrap();
         let acc = cfg.note_account(None).unwrap();
+        assert_eq!(acc.name, "personal");
+    }
+
+    #[test]
+    fn parses_todo_account_config() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+todo = "personal"
+
+[[todo.accounts]]
+name = "personal"
+provider = "notion"
+parent_page_id = "page_xyz"
+default_database_id = "db_abc"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.todo.accounts.len(), 1);
+        assert_eq!(cfg.todo.accounts[0].provider, "notion");
+        assert_eq!(
+            cfg.todo.accounts[0].parent_page_id.as_deref(),
+            Some("page_xyz")
+        );
+        assert_eq!(
+            cfg.todo.accounts[0].default_database_id.as_deref(),
+            Some("db_abc")
+        );
+    }
+
+    #[test]
+    fn todo_provider_defaults_to_notion() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[todo.accounts]]
+name = "x"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.todo.accounts[0].provider, "notion");
+    }
+
+    #[test]
+    fn resolves_default_todo_account() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+todo = "personal"
+
+[[todo.accounts]]
+name = "personal"
+provider = "notion"
+"#,
+        )
+        .unwrap();
+        let acc = cfg.todo_account(None).unwrap();
         assert_eq!(acc.name, "personal");
     }
 }

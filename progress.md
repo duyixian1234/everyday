@@ -423,3 +423,37 @@ _(暂无)_
 ### 测试结果
 - 纯文档改动，无代码变更；未触发构建/测试。
 
+---
+
+## Session 2026-07-10 (新增 todo 模块：Notion 待办任务)
+
+### 需求
+参考用户给出的「Notion 客户端 + 待办模块」两层架构设计文档，实现共享 `notion-client` 基础设施与上层的 `todo` 业务模块（login / init-db / list / add / start / complete）。
+
+### 已完成
+- **`src/notion_client.rs`（新，底层共享 SDK）**：`NotionClient` 持有带 `Authorization`/`Notion-Version` 头的 reqwest 客户端；通用 `request<B,R>` + `get/post/patch`；内置 **429 退避重试一次**（读 `Retry-After`，缺省 1s），平滑 Notion 限流；不使用 `unwrap()`（构造失败收拢为 `AgentError`）。
+- **`src/modules/todo.rs`（新，业务层）**：
+  - 干净 DTO `TodoItem { id, title, status, due?, priority? }` + Notion 原始结构 `NotionPage`/`TodoProperties`（TitleProperty/StatusProperty/DateProperty/SelectProperty 等强类型叶子）+ `From<NotionPage> for TodoItem` 双向映射。
+  - 动作：`login`（token 存 keyring，service=`everyday/todo/<account>`）、`init-db`（`POST /v1/databases` 创建 Task/Status/Due/Priority，回填 `database_id` 到 config 局部编辑）、`list`（`/query` 含 filter(≠Done)+sorts(Due asc)，客户端兜底，`--all` 不过滤）、`add`（设计未列但必需，`--title` 必填）、`start`/`complete`（`PATCH /pages/{id}` 改 Status）。
+  - 双输出判别复用 `std::env::args().any(|a| a=="--json")`（与 note 一致）。
+- **`src/config.rs`**：新增 `DefaultAccount.todo`、`TodoConfig`、`TodoAccount { name, provider(=notion), parent_page_id?, default_database_id? }`、`Config.todo`、`Config::todo_account()`；补 4 个单测。
+- **`src/modules/mod.rs`**：注册 `todo` 模块 + `pub mod todo;`。
+- **`src/main.rs`**：`mod notion_client;` + `example_config()` 加 todo 账户与 `default_account.todo`；**`config.example.toml`** 同步 todo 账户示例。
+- **`src/cli.rs`**：`long_about` 与 `module` 注释模块列表加 `todo`。
+- **`findings.md`**：新增 todo 实现记录，明确与官方 design 的**有意偏差**（不新增 `AgentError` 变体 / 禁 unwrap / 不引入 toml_edit / note 暂不迁移复用），理由见文档。
+
+### 与设计的偏差（以当前项目状态为准）
+- 设计建议新增 `AgentError::NotionApiError/CredentialsMissing/ConfigWriteError` → 复用现有 `Auth`/`Network`/`Config`/`Other`（note 已用同映射，避免分裂分类）。
+- 设计 `NotionClient::new` 用 `.unwrap()` → 改为返回 `Result`（安全红线）。
+- 设计用 `toml_edit` 写回 → 用既有 `toml` crate `toml::Value` 局部编辑（零新增依赖）。
+- 设计称 notion-client 为 todo+note 共享 → note 已完整可用，本次仅 todo 接入，note 保留内联 HTTP（择机去重）。
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 112 passed（原 100 + todo 6 + notion_client 3 + config 4）。
+- 冒烟 ✅：`everyday todo --help` 列出 6 动作；无配置 `todo list --json` → `{"error":"AccountNotFound",...}` 退出码 1。
+- 真实 Notion 联调待用户提供服务端 Token + parent_page_id（沿用 note 已验证的 keyring/端点模式）。
+
+### 下一步
+- 真实 Notion 联调（提供 Integration Token + parent_page_id，并授予 integration 访问权限）。
+- 视反馈为 `list` 增加 `--filter`/`--sort` 自定义，或将 note 迁移到共享 `notion_client` 去重。
+

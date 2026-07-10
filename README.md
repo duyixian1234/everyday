@@ -2,7 +2,7 @@
 
 > The Rust-powered hands for your AI Agent.
 
-`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（Notion）等外部集成场景，支持 Text / JSON 双输出模式。
+`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（Notion）、待办（Notion）等外部集成场景，支持 Text / JSON 双输出模式。
 
 ## 特性
 
@@ -225,6 +225,33 @@ everyday config set default_account.mail personal
 
 > **前置**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday note login` 存入密钥环 → 在 config 填好 `[[note.accounts]]`（含 `default_database_id` / `default_page_id`）→ 在 Notion 把目标页面 / 数据库**分享给该 integration**。
 
+### todo — 待办任务（Notion）
+
+基于共享 `notion-client` SDK 与 Notion 数据库，提供任务管理能力。底层 HTTP / Token 注入 / 429 限流重试由 `notion-client` 统一处理；本模块把干净的领域模型 `TodoItem`（id / title / status / due / priority）与 Notion 原始属性做强类型映射。凭证（Notion Integration Token）仅存系统密钥环（`everyday/todo/<account>`），`database_id` 等非机密元数据可落盘 config。
+
+| 命令 | 说明 | 用法 |
+|------|------|------|
+| `login` | 交互式存储 Notion Token 到密钥环 | `everyday todo login [--account NAME]` |
+| `init-db` | 在 Notion 创建任务数据库（需 `parent_page_id`），并回填 `database_id` | `everyday todo init-db [--account NAME] [--parent PAGE_ID]` |
+| `list` | 列出未完成任务（按 Due 升序） | `everyday todo list [--db ID] [--all]` |
+| `add` | 新增任务 | `everyday todo add --title T [--due DATE] [--priority P] [--db ID]` |
+| `start` | 标记任务为 In Progress | `everyday todo start <page_id>` |
+| `complete` | 标记任务为 Done | `everyday todo complete <page_id>` |
+
+**选项说明**：
+
+| 选项 | 适用命令 | 说明 |
+|------|----------|------|
+| `--account NAME` | 全部 | 指定账户 |
+| `--parent PAGE_ID` | `init-db` | 创建数据库时的父级页面；未指定则读取配置 `parent_page_id` |
+| `--db ID` | `list` / `add` | 目标数据库 ID；未指定则读取配置 `default_database_id`（`init-db` 后自动回填） |
+| `--all` | `list` | 列出全部任务（含已完成的 Done） |
+| `--title T` | `add` | 任务标题（必填） |
+| `--due DATE` | `add` | 截止日期（ISO 8601，如 `2026-07-15`） |
+| `--priority P` | `add` | 优先级（Select：P0 / P1 / P2） |
+
+> **前置**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday todo login` 存入密钥环 → 在 config 填好 `[[todo.accounts]]`（含 `parent_page_id`）→ `everyday todo init-db` 创建任务数据库并授权该 integration 访问父级页面。之后 `list` / `add` / `start` / `complete` 即可使用。
+
 ## 输出模式
 
 ### Text 模式（默认）
@@ -403,6 +430,27 @@ echo "批量捕获的内容" | everyday note append <page_id>
 everyday note update <page_id> --prop "状态:已读"
 ```
 
+### 待办（Notion，基于 notion-client）
+
+```bash
+# 一次性配置：存 Token、创建任务数据库
+everyday todo login
+everyday todo init-db --parent "<page_id>"     # 需在 Notion 把父页面授权给该 integration
+
+# 列出未完成任务（按 Due 升序）
+everyday todo list --json
+
+# 全部任务（含已完成）
+everyday todo list --all --json
+
+# 新增任务
+everyday todo add --title "写周报" --due 2026-07-15 --priority P1
+
+# 状态切换（返回含 page id 与 url）
+everyday todo start <page_id>
+everyday todo complete <page_id>
+```
+
 ## 项目结构
 
 ```
@@ -413,12 +461,14 @@ everyday/
 │   ├── config.rs        # 配置加载与多账户管理
 │   ├── error.rs         # 统一错误类型 AgentError
 │   ├── output.rs        # Output（Text/Json/Records 渲染）
+│   ├── notion_client.rs # 底层共享 Notion API 客户端（HTTP/限流/反序列化）
 │   └── modules/
 │       ├── mod.rs       # Executor trait + ModuleRegistry
 │       ├── email.rs     # 邮件（IMAP/SMTP）
 │       ├── calendar.rs  # 日历（CalDAV）
 │       ├── rss.rs       # RSS/Atom
-│       └── note.rs      # 笔记与知识库（Notion API）
+│       ├── note.rs      # 笔记与知识库（Notion API）
+│       └── todo.rs      # 待办任务（Notion，基于 notion_client）
 ├── skills/
 │   ├── README.md              # 面向 Agent 用户的精简项目介绍
 │   └── everyday-cli/
@@ -476,6 +526,7 @@ pub trait Executor: Send + Sync {
 | `cal` | ✅ 完整可用 | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ 完整可用 | follow / list / unfollow / digest / fetch |
 | `note` | ✅ 完整可用 | login / search / list / create / read / append / update（Notion API） |
+| `todo` | ✅ 完整可用 | login / init-db / list / add / start / complete（Notion API，基于 notion-client） |
 
 ## 许可证
 

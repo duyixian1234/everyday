@@ -7,6 +7,7 @@
 mail = "work"
 calendar = "personal"
 note = "personal"
+todo = "personal"
 
 # ---- 邮件账户（可多个）----
 [[mail.accounts]]
@@ -61,3 +62,15 @@ name = "personal"
 provider = "notion"
 default_database_id = "db_abc123..."   # 例如：阅读清单、灵感库
 default_page_id = "page_xyz789..."     # 例如：每日速记本
+
+# ---- 待办账户（Notion 任务数据库；可多个）----
+# provider 预留扩展（notion）
+# 凭证（Notion Integration Token，形如 ntn_...）绝不写在此文件，
+# 通过 `everyday todo login --account personal` 存入系统 keyring，
+# service 名约定：everyday/todo/<account>
+# parent_page_id：创建任务数据库时的父级页面（init-db 需要）
+# default_database_id：由 `everyday todo init-db` 成功后自动回填此处
+[[todo.accounts]]
+name = "personal"
+provider = "notion"
+parent_page_id = "page_parent_..."     # 例如：用于承载任务数据库的 Notion 页面

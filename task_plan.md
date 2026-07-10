@@ -49,6 +49,8 @@
 - [x] `email` 模块（IMAP list/read/search + SMTP send + keyring login）[2026-07-08 完成]
 - [x] `calendar` 模块（CalDAV：login/calendars/list/add/delete，libdav+icalendar）[2026-07-09 完成]
 - [x] `rss` 模块（feed-rs）[2026-07-09 完成]
+- [x] `note` 模块（Notion 笔记/知识库：login/search/create/read/append/update/list）[2026-07-10 完成]
+- [x] `notion-client` 共享 SDK + `todo` 模块（Notion 待办：login/init-db/list/add/start/complete）[2026-07-10 完成]
 
 > **范围变更（2026-07-10）**：经设计评审，移除 `fs`、`net` 与 `sys` 模块。理由：`fs`/`net` 封装的是代理可用 shell / `curl` / `fd` / `rg` 直接完成的通用能力，无明显差异化价值；`sys`（系统资源监控）亦属代理可经系统工具直接获取的信息，与 everyday「外部集成接口」定位不符。最终保留 `mail` / `cal` / `rss` 三个外部集成模块（+ `config` 配置管理）。详见 `findings.md`。
 
@@ -72,7 +74,11 @@
 | 凭证存储 | `keyring` (系统密钥环) | PRD 安全要求，禁明文 |
 | 输出抽象 | `Output` enum (Text/Json) + `Renderer` | 一处切换，全局生效 |
 | 模块抽象 | `Executor` trait + `Box<dyn Executor>` | 主程序与模块解耦 |
-| 模块范围 | 仅保留外部集成类（mail/cal/rss）+ config 配置管理 | fs/net/sys 封装通用能力，与定位不符，已移除 |
+| 模块范围 | 仅保留外部集成类（mail/cal/rss/note/todo）+ config 配置管理 | fs/net/sys 封装通用能力，与定位不符，已移除 |
+| 错误处理 | 复用现有 `AgentError`（`Auth`/`Network`/`Config`/`Other`） | 设计文档建议新增 `NotionApiError` 等变体，但与既有 note 映射重复、会分裂错误分类，故不新增 |
+| 非测试代码 | 禁止 `unwrap()`/`expect()` | 设计文档 `NotionClient::new` 用 unwrap，已改为返回 `Result` |
+| 配置回写 | `toml` crate 的 `toml::Value` 局部编辑 | 设计文档建议 `toml_edit`；项目已统一用 `toml`，零新增依赖 |
+| 凭证存储 | `keyring`（service=`everyday/<module>/<account>`） | 设计文档与本项目一致；Token 绝不落盘 |
 
 ---
 
@@ -133,5 +139,5 @@ username = "me"
 - Phase 3: complete
 - Phase 4: complete
 - Phase 5: complete
-- Phase 6: 进行中（email + calendar + rss 完成；fs/net/sys 已移除）
+- Phase 6: 进行中（email + calendar + rss + note + notion-client/todo 完成；fs/net/sys 已移除）
 - Phase 7: pending

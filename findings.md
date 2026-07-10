@@ -207,3 +207,32 @@ _(持续更新)_
 - `std::io::Stdin::is_terminal()` 需 `use std::io::IsTerminal;`。
 - `note_account` 解析、`DefaultAccount.note`、`Config.note` 三处配套扩展，并同步 `config.example.toml` 与 `main.rs` 内 `example_config()`。
 
+## 待办(todo)模块实现（2026-07-10，基于 Notion API + 共享 notion-client）
+
+### 背景
+用户给出「Notion 客户端 + 待办模块」两层架构设计文档。目标：`notion-client` 作为底层共享 SDK（HTTP/Token/限流/反序列化），`todo` 模块作上层语义化业务，做 `TodoItem` 与 Notion 原始 `Properties` 的强类型映射。
+
+### 与官方 design 的有意偏差（以当前项目状态为准）
+- **不新增 `AgentError` 变体**：设计文档建议加 `NotionApiError(String)` / `CredentialsMissing` / `ConfigWriteError`。但现有 `AgentError` 已有 `Auth`/`Network`/`Config`/`Other` 且 note 模块已用相同映射（401/403→Auth，其它非2xx→Network）。新增重复语义变体会分裂错误分类、破坏 JSON 错误格式稳定性。因此复用现有变体：Token 缺失→`Auth`（带 `run everyday todo login` 提示）；API 错误→`Network`；配置写入→`Config`/`Io`。
+- **禁止 `unwrap()`**：设计中 `NotionClient::new` 用 `.unwrap()` 注入头，违反 `agents.md` 安全红线（非测试代码禁 unwrap）。改为返回 `Result<NotionClient>`，头解析/客户端构建失败收拢为 `AgentError`。
+- **不引入 `toml_edit`**：设计建议用 `toml_edit` 无损写回 `database_id`。但项目已统一用 `toml` crate 做局部 `toml::Value` 编辑（rss/main 均如此），且 `init-db` 仅改 `todo.accounts` 的 `default_database_id`（一处字段），用 `toml::Value` 即可保留其它段落与格式，**未新增依赖**。
+- **`note` 模块未重构复用 `notion_client`**：设计中 `notion-client` 定位为 todo+note 共享。但 note 模块已完整可用（真实联调通过），重写其 HTTP 层有回归风险。本次仅让 `todo` 使用新建的 `notion_client`；note 保留各自内联 HTTP 封装（后续可择机迁移以去重）。这是对「以当前项目状态为准」的取舍：不破坏既有可用模块。
+
+### 架构落点
+- 新增 `src/notion_client.rs`（顶层组件，与 `config.rs`/`error.rs` 同级）：`NotionClient { client, token }`，通用 `request<B,R>` + `get/post/patch`；内置 **429 退避重试一次**（读 `Retry-After` 头，缺省 1s），平滑 Notion ~3 req/s 限流。
+- 新增 `src/modules/todo.rs`：`TodoItem`（干净 DTO）+ `NotionPage`/`TodoProperties` 等强类型原始结构 + `From<NotionPage> for TodoItem`；动作 `login`/`init-db`/`list`/`add`/`start`/`complete`。
+- `config.rs`：新增 `TodoConfig`/`TodoAccount`（`name`, `provider`(=notion), `parent_page_id?`, `default_database_id?`）、`DefaultAccount.todo`、`Config.todo`、`Config::todo_account()`。
+- 凭证走 keyring（service=`everyday/todo/<account>`，条目用户=`token`），与 note 约定一致；`database_id`/`parent_page_id` 落盘 config。
+
+### 动作要点
+- `init-db`：`POST /v1/databases`（parent=`page_id`），创建 Task(title)/Status(select:Todo|In Progress|Done)/Due(date)/Priority(select:P0|P1|P2)；成功后将 `database_id` 写回 config（局部编辑）。`parent_page_id` 优先 `--parent`，否则取账户配置。
+- `list`：`POST /v1/databases/{id}/query`，payload 按设计含 `filter(Status != Done)` + `sorts(Due asc)`；客户端兜底再过滤 Done 并按 due 升序（null 排最后），保证输出稳健。`--all` 跳过过滤。
+- `add`：设计未列，但属必要能力（设计已含 `TodoItem` 映射）。`POST /v1/pages`，`--title` 必填，`--due`/`--priority` 可选，Status 默认 `Todo`。
+- `start`/`complete`：`PATCH /v1/pages/{id}`，Status 改 `In Progress` / `Done`。
+- 双输出判别复用 `std::env::args().any(|a| a=="--json")`（与 note 一致）。
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 112 passed（+12：notion_client 3 + todo 6 + config 4 - 原 100）。
+- 冒烟 ✅：`everyday todo --help` 列出 6 动作；无配置时 `todo list --json` → `AccountNotFound`（退出码 1，JSON 格式正确）。
+- 真实 Notion 联调待用户提供服务端 Token + parent_page_id（沿用 note 已验证的 keyring/端点模式）。
+

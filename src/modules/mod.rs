@@ -87,6 +87,10 @@ impl ModuleRegistry {
             "note",
             Box::new(crate::modules::note::NoteModule::new(config.clone())),
         );
+        modules.insert(
+            "todo",
+            Box::new(crate::modules::todo::TodoModule::new(config.clone())),
+        );
 
         let _ = account_override; // 各模块按需通过 config 自行解析；此处保留参数以便未来扩展
         Ok(Self { modules })
@@ -113,6 +117,7 @@ pub mod calendar;
 pub mod email;
 pub mod note;
 pub mod rss;
+pub mod todo;
 
 /// 解析 `--flag value` 形式的简单参数。
 /// 返回 (flags map, positional args)。

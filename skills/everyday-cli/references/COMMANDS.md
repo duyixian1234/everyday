@@ -21,6 +21,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Complete | Notion: login / search / list / create / read / append / update |
+| `todo` | ✅ Complete | Notion tasks (shared `notion-client` SDK): login / init-db / list / add / start / complete |
 
 ---
 
@@ -124,13 +125,15 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → `every
 
 ---
 
-## rss — RSS/Atom subscriptions ⚠️ (skeleton)
+## rss — RSS/Atom subscriptions ✅
 
-| Command | Description | Status | Example |
-|---------|-------------|--------|---------|
-| `rss follow` | Add a feed | ⚠️ | `everyday rss follow --name N --url URL` |
-| `rss list` | List feeds | ⚠️ | `everyday rss list` |
-| `rss digest` | Aggregate recent items | ⚠️ | `everyday rss digest --limit 20` |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `rss follow` | Add a feed to config | `everyday rss follow --name N --url URL [--category C]` |
+| `rss list` | List followed feeds | `everyday rss list` |
+| `rss unfollow` | Remove a feed | `everyday rss unfollow --name N` |
+| `rss digest` | Aggregate recent items across feeds (sorted by date) | `everyday rss digest [--limit N] [--name FEED] [--category C]` |
+| `rss fetch` | Fetch one feed and list its entries | `everyday rss fetch --name N [--limit N]` |
 
 ---
 
@@ -149,6 +152,45 @@ Credentials: config holds account metadata (`provider`, `default_database_id`, `
 | `note read` | Read a page; render its content as aggregated Markdown | `everyday note read <page_id> --json` |
 | `note append` | Append text/markdown blocks to a page (or pipe via stdin) | `everyday note append <page_id> --text "内容"` |
 | `note update` | Update a page's properties (metadata) | `everyday note update <page_id> --prop "状态:已读" --json` |
+
+## todo — Notion task database ✅
+
+Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `TodoItem` (id / title / status / due / priority) to/from Notion page properties. Credentials: `everyday todo login` stores the Notion Integration Token (`ntn_...`) in the OS keyring (service `everyday/todo/<account>`); the token never touches disk.
+
+**Setup:** create a Notion integration → `everyday todo login` → add `[[todo.accounts]]` with `parent_page_id` → `everyday todo init-db` (creates the Task/Status/Due/Priority database and writes `database_id` back to config; the integration must be granted access to the parent page).
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `todo login` | Interactively enter Notion token into the OS keyring | `everyday todo login --account personal` |
+| `todo init-db` | Create the todo database in Notion (needs `parent_page_id`); writes `database_id` back to config | `everyday todo init-db --parent "page_xyz"` |
+| `todo list` | List incomplete todos, sorted by due (`--all` includes Done) | `everyday todo list --db "db_abc" --json` |
+| `todo add` | Add a todo (`--title` required; `--due` / `--priority` optional) | `everyday todo add --title "写周报" --due 2026-07-15 --priority P1 --json` |
+| `todo start` | Mark a todo as In Progress | `everyday todo start <page_id>` |
+| `todo complete` | Mark a todo as Done | `everyday todo complete <page_id>` |
+
+### todo options
+
+| Flag | Applies to | Description |
+|------|-----------|-------------|
+| `--account NAME` | all | Specify account (override default) |
+| `--parent PAGE_ID` | `init-db` | Parent page for the new database; falls back to config `parent_page_id` |
+| `--db ID` | `list` / `add` | Target database; falls back to config `default_database_id` (written by `init-db`) |
+| `--all` | `list` | Include completed (Done) todos |
+| `--title T` | `add` | Task title (required) |
+| `--due DATE` | `add` | Due date (ISO 8601, e.g. `2026-07-15`) |
+| `--priority P` | `add` | Priority select: `P0` / `P1` / `P2` |
+
+### todo list — JSON output (array of TodoItem)
+
+```json
+[{"id":"page_abc","title":"写周报","status":"Todo","due":"2026-07-15","priority":"P1"}]
+```
+
+### todo add / start / complete / init-db — JSON output (object)
+
+```json
+{"id":"page_abc","url":"https://www.notion.so/...","title":"写周报","database_id":"db_xyz"}
+```
 
 ### note options
 
@@ -206,6 +248,7 @@ Credentials: config holds account metadata (`provider`, `default_database_id`, `
 mail = "work"
 calendar = "personal"
 note = "personal"
+todo = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -233,9 +276,16 @@ provider = "notion"
 default_database_id = "db_abc123..."
 default_page_id = "page_xyz789..."
 # Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/note/personal"
+
+[[todo.accounts]]
+name = "personal"
+provider = "notion"
+parent_page_id = "page_parent_..."     # init-db needs this
+# default_database_id is written back here automatically by `everyday todo init-db`
+# Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/todo/personal"
 ```
 
-**Keyring service-name convention:** `everyday/<module>/<account>` (e.g. `everyday/mail/work`, `everyday/note/personal`).
+**Keyring service-name convention:** `everyday/<module>/<account>` (e.g. `everyday/mail/work`, `everyday/note/personal`, `everyday/todo/personal`).
 
 ---
 

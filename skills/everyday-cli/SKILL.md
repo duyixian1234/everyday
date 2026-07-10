@@ -26,7 +26,7 @@ Verify with `everyday --version`. Full install steps (per-platform extraction co
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `note` · `config`
+Modules: `mail` · `cal` · `rss` · `note` · `todo` · `config`
 
 ## Rules (follow exactly)
 
@@ -36,7 +36,7 @@ Modules: `mail` · `cal` · `rss` · `note` · `config`
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `note` (Notion), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
+4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `note` (Notion), `todo` (Notion tasks), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
 
 ## First-time setup (only if config is missing)
 
@@ -140,6 +140,20 @@ everyday note update <page_id> --prop "状态:已读"
 ```
 
 First-time Notion setup: `everyday note login` (stores the `ntn_...` integration token in the OS keyring, service `everyday/note/<account>`). The target page/database must be shared with the integration in Notion. `--db` / page id default to `default_database_id` / `default_page_id` from config when omitted.
+
+**Manage todos (Notion task database, built on the shared `notion-client`):**
+
+```bash
+everyday todo login                            # store Notion token (keyring service everyday/todo/<account>)
+everyday todo init-db --parent "<page_id>"     # create the task database; writes database_id back to config
+everyday todo list --json                      # incomplete todos, sorted by due
+everyday todo list --all --json                # include Done
+everyday todo add --title "写周报" --due 2026-07-15 --priority P1
+everyday todo start <page_id>                  # → In Progress
+everyday todo complete <page_id>               # → Done
+```
+
+First-time todo setup: `everyday todo login` (token in keyring, service `everyday/todo/<account>`), then add `[[todo.accounts]]` with `parent_page_id` and run `everyday todo init-db` (the integration must be granted access to the parent page). `--db` defaults to the `default_database_id` written by `init-db`.
 
 ## Error format
 
