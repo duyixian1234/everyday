@@ -10,7 +10,7 @@ license: MIT
 
 ## Install
 
-Prebuilt binaries for Linux / macOS / Windows (x86_64) are published on [GitHub Releases](https://github.com/duyixian1234/everyday/releases) for every `v*` tag. Download the matching asset, extract, and put `everyday` (or `everyday.exe`) on PATH. Or build from source:
+Prebuilt binaries for Linux / macOS (x86_64 & Apple Silicon / aarch64) / Windows (x86_64) are published on [GitHub Releases](https://github.com/duyixian1234/everyday/releases) for every `v*` tag. Download the matching asset, extract, and put `everyday` (or `everyday.exe`) on PATH. Or build from source:
 
 ```bash
 cargo install --git https://github.com/duyixian1234/everyday.git
