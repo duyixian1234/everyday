@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.1.0 已发布；5 个外部集成模块（mail/cal/rss/note/todo）+ config 均可用；`cargo build` / `cargo clippy --all-targets -- -D warnings` / `cargo test` 全绿（113 passed）。
+**当前状态：** v0.2.0 已发布；5 个外部集成模块（mail/cal/rss/note/todo）+ config 均可用；`cargo build` / `cargo clippy --all-targets -- -D warnings` / `cargo test` 全绿（113 passed）。
 
 ---
 
@@ -39,7 +39,7 @@
 - `notion-client` 共享 SDK + `todo`（Notion 待办：login/init-db/list/add/start/complete）[2026-07-10]
 
 ### Phase 7: 构建、测试、文档、发布 [complete]
-全模块 `cargo build` / `clippy` / 单测 + 集成测试全绿；README + skills 文档与代码一致；CI（三平台 + aarch64 macOS）+ release workflow；**v0.1.0 已打 tag 发布**。
+全模块 `cargo build` / `clippy` / 单测 + 集成测试全绿；README + skills 文档与代码一致；CI（三平台 + aarch64 macOS）+ release workflow；**v0.2.0 已打 tag 发布**。
 
 ---
 
