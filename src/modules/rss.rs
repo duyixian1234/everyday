@@ -20,7 +20,7 @@ use futures::future::join_all;
 
 use crate::config::{Config, RssFeed};
 use crate::error::{AgentError, Result};
-use crate::modules::{parse_simple_args, ActionDoc, Executor};
+use crate::modules::{ActionDoc, Executor, parse_simple_args};
 use crate::output::Output;
 
 /// 单条聚合条目的展示行 + 排序键。
@@ -168,10 +168,7 @@ fn append_feed(root: &mut toml::Value, feed: &RssFeed) -> Result<()> {
 
 /// 从 `rss.feeds` 删除指定名字的源，返回是否真的删除了。
 fn remove_feed(root: &mut toml::Value, name: &str) -> Result<bool> {
-    let Some(rss) = root
-        .as_table_mut()
-        .and_then(|t| t.get_mut("rss"))
-    else {
+    let Some(rss) = root.as_table_mut().and_then(|t| t.get_mut("rss")) else {
         return Ok(false);
     };
     let Some(feeds) = rss.as_table_mut().and_then(|t| t.get_mut("feeds")) else {
@@ -193,7 +190,9 @@ fn filter_feeds(feeds: &[RssFeed], flags: &HashMap<String, String>) -> Result<Ve
     let category = flags.get("category");
     let mut out = Vec::new();
     for f in feeds {
-        if let Some(n) = name && &f.name != n {
+        if let Some(n) = name
+            && &f.name != n
+        {
             continue;
         }
         if let Some(c) = category {
@@ -204,7 +203,9 @@ fn filter_feeds(feeds: &[RssFeed], flags: &HashMap<String, String>) -> Result<Ve
         }
         out.push(f.clone());
     }
-    if let Some(n) = name && out.is_empty() {
+    if let Some(n) = name
+        && out.is_empty()
+    {
         return Err(AgentError::InvalidArgument(format!("feed '{n}' not found")));
     }
     Ok(out)
@@ -349,7 +350,11 @@ async fn rss_fetch(config: &Config, flags: &HashMap<String, String>) -> Result<O
         .feed
         .ok_or_else(|| AgentError::Network(res.error.unwrap_or_else(|| "fetch failed".into())))?;
 
-    let mut rows: Vec<EntryRow> = f.entries.iter().map(|e| build_entry_row(&feed.name, e)).collect();
+    let mut rows: Vec<EntryRow> = f
+        .entries
+        .iter()
+        .map(|e| build_entry_row(&feed.name, e))
+        .collect();
     rows.sort_by(|a, b| cmp_opt_dt_desc(&a.sort_key, &b.sort_key));
     let limit = flags
         .get("limit")
@@ -362,7 +367,12 @@ async fn rss_fetch(config: &Config, flags: &HashMap<String, String>) -> Result<O
         .map(|r| vec![r.title, r.published, r.author, r.link])
         .collect();
     Ok(Output::records(
-        vec!["title".into(), "published".into(), "author".into(), "link".into()],
+        vec![
+            "title".into(),
+            "published".into(),
+            "author".into(),
+            "link".into(),
+        ],
         out_rows,
     ))
 }
@@ -396,7 +406,7 @@ async fn fetch_one(client: &reqwest::Client, feed: &RssFeed) -> FetchedFeed {
                         name: feed.name.clone(),
                         feed: None,
                         error: Some(format!("read body: {e}")),
-                    }
+                    };
                 }
             };
             match feed_rs::parser::parse(bytes.as_ref()) {
@@ -462,7 +472,7 @@ fn pick_link(links: &[feed_rs::model::Link]) -> String {
 /// 按发布时间降序比较（无时间排最后）。
 fn cmp_opt_dt_desc(a: &Option<DateTime<Utc>>, b: &Option<DateTime<Utc>>) -> std::cmp::Ordering {
     match (a, b) {
-        (Some(x), Some(y)) => y.cmp(x), // 降序：新的在前
+        (Some(x), Some(y)) => y.cmp(x),              // 降序：新的在前
         (Some(_), None) => std::cmp::Ordering::Less, // 有时间的排在无时间之前
         (None, Some(_)) => std::cmp::Ordering::Greater,
         (None, None) => std::cmp::Ordering::Equal,
@@ -496,10 +506,10 @@ mod tests {
         let mut root = toml::Value::Table(toml::value::Table::new());
         // 预置一个 mail 账户，验证局部编辑不会破坏它。
         // 注意：toml::Value 索引不自动插入，必须用 insert。
-        root
-            .as_table_mut()
-            .unwrap()
-            .insert("mail".into(), toml::from_str("accounts = [{ name = 'work' }]").unwrap());
+        root.as_table_mut().unwrap().insert(
+            "mail".into(),
+            toml::from_str("accounts = [{ name = 'work' }]").unwrap(),
+        );
 
         let feed = RssFeed {
             name: "hn".into(),
@@ -538,9 +548,21 @@ mod tests {
     #[test]
     fn filter_feeds_by_name_and_category() {
         let feeds = vec![
-            RssFeed { name: "a".into(), url: "u1".into(), category: Some("tech".into()) },
-            RssFeed { name: "b".into(), url: "u2".into(), category: None },
-            RssFeed { name: "c".into(), url: "u3".into(), category: Some("tech".into()) },
+            RssFeed {
+                name: "a".into(),
+                url: "u1".into(),
+                category: Some("tech".into()),
+            },
+            RssFeed {
+                name: "b".into(),
+                url: "u2".into(),
+                category: None,
+            },
+            RssFeed {
+                name: "c".into(),
+                url: "u3".into(),
+                category: Some("tech".into()),
+            },
         ];
         // 按分类 tech。
         let f = filter_feeds(&feeds, &HashMap::from([("category".into(), "tech".into())])).unwrap();
@@ -558,32 +580,47 @@ mod tests {
         let t1 = Utc.with_ymd_and_hms(2026, 7, 9, 14, 0, 0).unwrap();
         let t2 = Utc.with_ymd_and_hms(2026, 7, 8, 14, 0, 0).unwrap();
         // 新的（t1）应排在无时间之前。
-        assert_eq!(
-            cmp_opt_dt_desc(&Some(t1), &None),
-            std::cmp::Ordering::Less
-        );
+        assert_eq!(cmp_opt_dt_desc(&Some(t1), &None), std::cmp::Ordering::Less);
         // 降序：t1(新) 应在 t2(旧) 之前 → t1.cmp(t2) 给 Less。
         assert_eq!(
             cmp_opt_dt_desc(&Some(t1), &Some(t2)),
             std::cmp::Ordering::Less
         );
         // 两个无时间的相等。
-        assert_eq!(
-            cmp_opt_dt_desc(&None, &None),
-            std::cmp::Ordering::Equal
-        );
+        assert_eq!(cmp_opt_dt_desc(&None, &None), std::cmp::Ordering::Equal);
     }
 
     #[test]
     fn pick_link_prefers_alternate() {
         use feed_rs::model::Link;
         let links = vec![
-            Link { href: "http://x/self".into(), rel: Some("self".into()), media_type: None, href_lang: None, title: None, length: None },
-            Link { href: "http://x/alt".into(), rel: Some("alternate".into()), media_type: None, href_lang: None, title: None, length: None },
+            Link {
+                href: "http://x/self".into(),
+                rel: Some("self".into()),
+                media_type: None,
+                href_lang: None,
+                title: None,
+                length: None,
+            },
+            Link {
+                href: "http://x/alt".into(),
+                rel: Some("alternate".into()),
+                media_type: None,
+                href_lang: None,
+                title: None,
+                length: None,
+            },
         ];
         assert_eq!(pick_link(&links), "http://x/alt");
         // 无 alternate 时取第一个。
-        let links = vec![Link { href: "http://x/only".into(), rel: Some("self".into()), media_type: None, href_lang: None, title: None, length: None }];
+        let links = vec![Link {
+            href: "http://x/only".into(),
+            rel: Some("self".into()),
+            media_type: None,
+            href_lang: None,
+            title: None,
+            length: None,
+        }];
         assert_eq!(pick_link(&links), "http://x/only");
         assert_eq!(pick_link(&[]), "");
     }
@@ -593,8 +630,16 @@ mod tests {
         let cfg = Config {
             rss: crate::config::RssConfig {
                 feeds: vec![
-                    RssFeed { name: "a".into(), url: "u1".into(), category: None },
-                    RssFeed { name: "b".into(), url: "u2".into(), category: Some("cat".into()) },
+                    RssFeed {
+                        name: "a".into(),
+                        url: "u1".into(),
+                        category: None,
+                    },
+                    RssFeed {
+                        name: "b".into(),
+                        url: "u2".into(),
+                        category: Some("cat".into()),
+                    },
                 ],
             },
             ..Default::default()

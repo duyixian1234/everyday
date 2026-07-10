@@ -22,7 +22,7 @@ use crate::cli::Cli;
 use crate::config::Config;
 use crate::error::{AgentError, Result};
 use crate::modules::ModuleRegistry;
-use crate::output::{finalize, mode_from_json_flag, render_error, Output, RenderMode};
+use crate::output::{Output, RenderMode, finalize, mode_from_json_flag, render_error};
 
 #[tokio::main]
 async fn main() {
@@ -120,7 +120,10 @@ fn module_help(module_name: &str) -> Result<String> {
         module.name()
     );
     for a in module.actions() {
-        out.push_str(&format!("  {:<8} {}\n          {}\n", a.name, a.description, a.usage));
+        out.push_str(&format!(
+            "  {:<8} {}\n          {}\n",
+            a.name, a.description, a.usage
+        ));
     }
     out.push_str("\nGlobal flags: --json, --account <NAME>\n");
     Ok(out)
@@ -234,9 +237,21 @@ fn config_help(action: Option<&str>) -> String {
     /// config 模块支持的 actions：(name, description, usage)
     const CONFIG_ACTIONS: &[(&str, &str, &str)] = &[
         ("path", "Show config file path", "everyday config path"),
-        ("list", "List all config (TOML or JSON)", "everyday config list"),
-        ("get", "Get a config value by dotted path", "everyday config get <dotted.path>"),
-        ("set", "Set a config value by dotted path", "everyday config set <dotted.path> <value>"),
+        (
+            "list",
+            "List all config (TOML or JSON)",
+            "everyday config list",
+        ),
+        (
+            "get",
+            "Get a config value by dotted path",
+            "everyday config get <dotted.path>",
+        ),
+        (
+            "set",
+            "Set a config value by dotted path",
+            "everyday config set <dotted.path> <value>",
+        ),
         ("init", "Create config from example", "everyday config init"),
     ];
 
@@ -249,16 +264,14 @@ fn config_help(action: Option<&str>) -> String {
             out.push_str("\nGlobal flags: --json, --account <NAME>\n");
             out
         }
-        Some(a) => {
-            match CONFIG_ACTIONS.iter().find(|(name, _, _)| *name == a) {
-                Some((name, desc, usage)) => format!(
-                    "config {name} — {desc}\n\nUsage: {usage}\n\nGlobal flags: --json, --account <NAME>\n"
-                ),
-                None => format!(
-                    "unknown config action: {a}\n\nUse `everyday config --help` to list actions.\n"
-                ),
-            }
-        }
+        Some(a) => match CONFIG_ACTIONS.iter().find(|(name, _, _)| *name == a) {
+            Some((name, desc, usage)) => format!(
+                "config {name} — {desc}\n\nUsage: {usage}\n\nGlobal flags: --json, --account <NAME>\n"
+            ),
+            None => format!(
+                "unknown config action: {a}\n\nUse `everyday config --help` to list actions.\n"
+            ),
+        },
     }
 }
 
@@ -286,9 +299,9 @@ async fn run_config(action: Option<&str>, args: &[String], mode: RenderMode) -> 
             }
         }
         "get" => {
-            let path = args
-                .first()
-                .ok_or_else(|| AgentError::InvalidArgument("usage: everyday config get <dotted.path>".into()))?;
+            let path = args.first().ok_or_else(|| {
+                AgentError::InvalidArgument("usage: everyday config get <dotted.path>".into())
+            })?;
             let cfg = Config::load_or_default()?;
             let toml_val: toml::Value = toml::Value::try_from(&cfg)
                 .map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
@@ -297,10 +310,16 @@ async fn run_config(action: Option<&str>, args: &[String], mode: RenderMode) -> 
         }
         "set" => {
             let (path, value) = (
-                args.first()
-                    .ok_or_else(|| AgentError::InvalidArgument("usage: everyday config set <dotted.path> <value>".into()))?,
-                args.get(1)
-                    .ok_or_else(|| AgentError::InvalidArgument("usage: everyday config set <dotted.path> <value>".into()))?,
+                args.first().ok_or_else(|| {
+                    AgentError::InvalidArgument(
+                        "usage: everyday config set <dotted.path> <value>".into(),
+                    )
+                })?,
+                args.get(1).ok_or_else(|| {
+                    AgentError::InvalidArgument(
+                        "usage: everyday config set <dotted.path> <value>".into(),
+                    )
+                })?,
             );
             set_config_path(path, value)?;
             Ok(Output::text(format!("set {path} = {value}")))
@@ -308,12 +327,18 @@ async fn run_config(action: Option<&str>, args: &[String], mode: RenderMode) -> 
         "init" => {
             let path = Config::config_path()?;
             if path.exists() {
-                return Ok(Output::text(format!("config already exists: {}", path.display())));
+                return Ok(Output::text(format!(
+                    "config already exists: {}",
+                    path.display()
+                )));
             }
             let example = example_config();
             std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")))?;
             std::fs::write(&path, example)?;
-            Ok(Output::text(format!("created config at: {}", path.display())))
+            Ok(Output::text(format!(
+                "created config at: {}",
+                path.display()
+            )))
         }
         other => Err(AgentError::UnknownAction(format!("config {other}"))),
     }
@@ -324,17 +349,16 @@ fn get_dotted(root: &toml::Value, path: &str) -> Result<toml::Value> {
     let mut cur = root.clone();
     for seg in path.split('.') {
         cur = if let Some(table) = cur.as_table() {
-            table
-                .get(seg)
-                .cloned()
-                .ok_or_else(|| AgentError::InvalidArgument(format!("path segment '{seg}' not found")))?
+            table.get(seg).cloned().ok_or_else(|| {
+                AgentError::InvalidArgument(format!("path segment '{seg}' not found"))
+            })?
         } else if let Some(arr) = cur.as_array() {
-            let idx: usize = seg
-                .parse()
-                .map_err(|_| AgentError::InvalidArgument(format!("array index '{seg}' not a number")))?;
-            arr.get(idx)
-                .cloned()
-                .ok_or_else(|| AgentError::InvalidArgument(format!("array index {idx} out of bounds")))?
+            let idx: usize = seg.parse().map_err(|_| {
+                AgentError::InvalidArgument(format!("array index '{seg}' not a number"))
+            })?;
+            arr.get(idx).cloned().ok_or_else(|| {
+                AgentError::InvalidArgument(format!("array index {idx} out of bounds"))
+            })?
         } else {
             return Err(AgentError::InvalidArgument(format!(
                 "path segment '{seg}' not found"
@@ -365,8 +389,8 @@ fn set_config_path(path: &str, raw_value: &str) -> Result<()> {
     let segs: Vec<&str> = path.split('.').collect();
     set_dotted(&mut root, &segs, new_val)?;
 
-    let text = toml::to_string_pretty(&root)
-        .map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
+    let text =
+        toml::to_string_pretty(&root).map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
     if let Some(parent) = cfg_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -390,9 +414,9 @@ fn set_dotted(root: &mut toml::Value, segs: &[&str], value: toml::Value) -> Resu
             set_dotted(entry, &segs[1..], value)
         }
         toml::Value::Array(arr) => {
-            let idx: usize = segs[0]
-                .parse()
-                .map_err(|_| AgentError::InvalidArgument(format!("array index '{}' not a number", segs[0])))?;
+            let idx: usize = segs[0].parse().map_err(|_| {
+                AgentError::InvalidArgument(format!("array index '{}' not a number", segs[0]))
+            })?;
             if arr.len() <= idx {
                 arr.resize(idx + 1, toml::Value::Table(toml::value::Table::new()));
             }
@@ -508,7 +532,12 @@ mod tests {
     #[test]
     fn set_dotted_into_array_index() {
         let mut t: toml::Value = toml::from_str("accounts = [{ name = 'work' }]").unwrap();
-        set_dotted(&mut t, &["accounts", "0", "imap_host"], toml::Value::String("imap.x.com".into())).unwrap();
+        set_dotted(
+            &mut t,
+            &["accounts", "0", "imap_host"],
+            toml::Value::String("imap.x.com".into()),
+        )
+        .unwrap();
         assert_eq!(
             get_dotted(&t, "accounts.0.imap_host").unwrap().as_str(),
             Some("imap.x.com")

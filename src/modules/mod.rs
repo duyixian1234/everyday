@@ -46,7 +46,11 @@ pub struct ActionDoc {
 
 impl ActionDoc {
     pub const fn new(name: &'static str, description: &'static str, usage: &'static str) -> Self {
-        Self { name, description, usage }
+        Self {
+            name,
+            description,
+            usage,
+        }
     }
 }
 
@@ -65,10 +69,24 @@ impl ModuleRegistry {
         let mut modules: HashMap<&'static str, Box<dyn Executor>> = HashMap::new();
 
         // 注册各模块。模块内部决定是否需要账户配置、是否容忍缺失。
-        modules.insert("mail", Box::new(crate::modules::email::EmailModule::new(config.clone())));
-        modules.insert("cal", Box::new(crate::modules::calendar::CalendarModule::new(config.clone())));
-        modules.insert("rss", Box::new(crate::modules::rss::RssModule::new(config.clone())));
-        modules.insert("note", Box::new(crate::modules::note::NoteModule::new(config.clone())));
+        modules.insert(
+            "mail",
+            Box::new(crate::modules::email::EmailModule::new(config.clone())),
+        );
+        modules.insert(
+            "cal",
+            Box::new(crate::modules::calendar::CalendarModule::new(
+                config.clone(),
+            )),
+        );
+        modules.insert(
+            "rss",
+            Box::new(crate::modules::rss::RssModule::new(config.clone())),
+        );
+        modules.insert(
+            "note",
+            Box::new(crate::modules::note::NoteModule::new(config.clone())),
+        );
 
         let _ = account_override; // 各模块按需通过 config 自行解析；此处保留参数以便未来扩展
         Ok(Self { modules })
@@ -91,10 +109,10 @@ impl ModuleRegistry {
 }
 
 // ---- 模块子模块声明 ----
-pub mod email;
 pub mod calendar;
-pub mod rss;
+pub mod email;
 pub mod note;
+pub mod rss;
 
 /// 解析 `--flag value` 形式的简单参数。
 /// 返回 (flags map, positional args)。
@@ -154,9 +172,15 @@ mod tests {
     struct DummyModule;
     #[async_trait]
     impl Executor for DummyModule {
-        fn name(&self) -> &'static str { "dummy" }
-        fn description(&self) -> &'static str { "test" }
-        fn actions(&self) -> Vec<ActionDoc> { vec![] }
+        fn name(&self) -> &'static str {
+            "dummy"
+        }
+        fn description(&self) -> &'static str {
+            "test"
+        }
+        fn actions(&self) -> Vec<ActionDoc> {
+            vec![]
+        }
         async fn execute(&self, _a: &str, _args: &[String]) -> Result<Output> {
             Ok(Output::text("ok"))
         }

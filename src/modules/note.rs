@@ -20,7 +20,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 
 use crate::config::NoteAccount;
 use crate::error::{AgentError, Result};
@@ -38,11 +38,7 @@ const KEYRING_USER: &str = "token";
 const MAX_BLOCK_DEPTH: usize = 12;
 
 /// `parse_args` 的返回类型别名（避免复杂元组类型直接内联）。
-type ParsedArgs = (
-    HashMap<String, String>,
-    Vec<(String, String)>,
-    Vec<String>,
-);
+type ParsedArgs = (HashMap<String, String>, Vec<(String, String)>, Vec<String>);
 
 pub struct NoteModule {
     config: Arc<crate::config::Config>,
@@ -200,7 +196,9 @@ async fn note_login(account: &NoteAccount) -> Result<Output> {
         .map_err(|e| AgentError::Other(format!("read token: {e}")))?;
     let token = password.trim().to_string();
     if token.is_empty() {
-        return Err(AgentError::InvalidArgument("token must not be empty".into()));
+        return Err(AgentError::InvalidArgument(
+            "token must not be empty".into(),
+        ));
     }
     entry
         .set_password(&token)
@@ -253,7 +251,11 @@ async fn notion_request(
     if !status.is_success() {
         let msg = serde_json::from_str::<Value>(&text)
             .ok()
-            .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+            .and_then(|v| {
+                v.get("message")
+                    .and_then(|m| m.as_str())
+                    .map(|s| s.to_string())
+            })
             .unwrap_or_else(|| text.clone());
         if status == 401 || status == 403 {
             return Err(AgentError::Auth(format!(
@@ -266,7 +268,8 @@ async fn notion_request(
             status, msg
         )));
     }
-    serde_json::from_str(&text).map_err(|e| AgentError::Other(format!("parse notion response: {e}")))
+    serde_json::from_str(&text)
+        .map_err(|e| AgentError::Other(format!("parse notion response: {e}")))
 }
 
 async fn api_get(path: &str, token: &str) -> Result<Value> {
@@ -317,7 +320,10 @@ async fn fetch_all_blocks(token: &str, block_id: &str) -> Result<Vec<Value>> {
             out.extend(results.iter().cloned());
         }
         if v.get("has_more").and_then(|h| h.as_bool()) == Some(true) {
-            cursor = v.get("next_cursor").and_then(|c| c.as_str()).map(|s| s.to_string());
+            cursor = v
+                .get("next_cursor")
+                .and_then(|c| c.as_str())
+                .map(|s| s.to_string());
         } else {
             break;
         }
@@ -344,7 +350,10 @@ fn rich_text_md(rt: &[Value]) -> String {
             .and_then(|p| p.as_str())
             .unwrap_or("")
             .to_string();
-        let href = t.get("href").and_then(|h| h.as_str()).map(|s| s.to_string());
+        let href = t
+            .get("href")
+            .and_then(|h| h.as_str())
+            .map(|s| s.to_string());
         let ann = t.get("annotations");
         let code = ann.and_then(|a| a.get("code")).and_then(|b| b.as_bool()) == Some(true);
         let bold = ann.and_then(|a| a.get("bold")).and_then(|b| b.as_bool()) == Some(true);
@@ -496,10 +505,24 @@ fn page_props_to_strings(props: &Map<String, Value>) -> Map<String, Value> {
                 .and_then(|t| t.as_array())
                 .map(|r| rich_text_plain(r))
                 .filter(|s| !s.is_empty()),
-            "number" => p.get("number").and_then(|n| n.as_f64()).map(|n| n.to_string()),
-            "checkbox" => p.get("checkbox").and_then(|b| b.as_bool()).map(|b| b.to_string()),
-            "select" => p.get("select").and_then(|s| s.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()),
-            "status" => p.get("status").and_then(|s| s.get("name")).and_then(|n| n.as_str()).map(|s| s.to_string()),
+            "number" => p
+                .get("number")
+                .and_then(|n| n.as_f64())
+                .map(|n| n.to_string()),
+            "checkbox" => p
+                .get("checkbox")
+                .and_then(|b| b.as_bool())
+                .map(|b| b.to_string()),
+            "select" => p
+                .get("select")
+                .and_then(|s| s.get("name"))
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string()),
+            "status" => p
+                .get("status")
+                .and_then(|s| s.get("name"))
+                .and_then(|n| n.as_str())
+                .map(|s| s.to_string()),
             "multi_select" => p
                 .get("multi_select")
                 .and_then(|a| a.as_array())
@@ -510,10 +533,20 @@ fn page_props_to_strings(props: &Map<String, Value>) -> Map<String, Value> {
                         .join(", ")
                 })
                 .filter(|s| !s.is_empty()),
-            "date" => p.get("date").and_then(|d| d.get("start")).and_then(|s| s.as_str()).map(|s| s.to_string()),
+            "date" => p
+                .get("date")
+                .and_then(|d| d.get("start"))
+                .and_then(|s| s.as_str())
+                .map(|s| s.to_string()),
             "url" => p.get("url").and_then(|u| u.as_str()).map(|s| s.to_string()),
-            "email" => p.get("email").and_then(|e| e.as_str()).map(|s| s.to_string()),
-            "phone_number" => p.get("phone_number").and_then(|e| e.as_str()).map(|s| s.to_string()),
+            "email" => p
+                .get("email")
+                .and_then(|e| e.as_str())
+                .map(|s| s.to_string()),
+            "phone_number" => p
+                .get("phone_number")
+                .and_then(|e| e.as_str())
+                .map(|s| s.to_string()),
             _ => None,
         };
         if let Some(v) = value {
@@ -620,7 +653,10 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
         }
 
         // 无序列表。
-        if let Some(rest) = trimmed.strip_prefix("- ").or_else(|| trimmed.strip_prefix("* ")) {
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+        {
             flush_para(&mut para, &mut blocks);
             blocks.push(block_text("bulleted_list_item", rest));
             i += 1;
@@ -628,7 +664,10 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
         }
 
         // 有序列表。
-        if let Some(rest) = trimmed.split_once(". ").filter(|(n, _)| n.parse::<usize>().is_ok()) {
+        if let Some(rest) = trimmed
+            .split_once(". ")
+            .filter(|(n, _)| n.parse::<usize>().is_ok())
+        {
             flush_para(&mut para, &mut blocks);
             blocks.push(block_text("numbered_list_item", rest.1));
             i += 1;
@@ -715,7 +754,10 @@ async fn blocks_to_markdown(token: &str, blocks: &[Value], depth: usize) -> Resu
 fn render_block_body(block_type: &str, b: &Value) -> String {
     match block_type {
         "paragraph" => {
-            let rt = b.get("paragraph").and_then(|p| p.get("rich_text")).and_then(|r| r.as_array());
+            let rt = b
+                .get("paragraph")
+                .and_then(|p| p.get("rich_text"))
+                .and_then(|r| r.as_array());
             format!("{}\n\n", rich_text_md(rt.unwrap_or(&vec![])))
         }
         "heading_1" => {
@@ -762,7 +804,10 @@ fn render_block_body(block_type: &str, b: &Value) -> String {
                 .and_then(|c| c.get("language"))
                 .and_then(|l| l.as_str())
                 .unwrap_or("plain text");
-            let rt = b.get("code").and_then(|c| c.get("rich_text")).and_then(|r| r.as_array());
+            let rt = b
+                .get("code")
+                .and_then(|c| c.get("rich_text"))
+                .and_then(|r| r.as_array());
             let code = rich_text_plain(rt.unwrap_or(&vec![]));
             format!("```{lang}\n{code}\n```\n\n")
         }
@@ -782,7 +827,11 @@ fn render_block_body(block_type: &str, b: &Value) -> String {
             }
         }
         "child_page" => {
-            let title = b.get("child_page").and_then(|c| c.get("title")).and_then(|t| t.as_str()).unwrap_or("");
+            let title = b
+                .get("child_page")
+                .and_then(|c| c.get("title"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
             let url = b.get("url").and_then(|u| u.as_str()).unwrap_or("");
             if url.is_empty() {
                 format!("[{}]\n\n", title)
@@ -791,7 +840,11 @@ fn render_block_body(block_type: &str, b: &Value) -> String {
             }
         }
         "child_database" => {
-            let title = b.get("child_database").and_then(|c| c.get("title")).and_then(|t| t.as_str()).unwrap_or("");
+            let title = b
+                .get("child_database")
+                .and_then(|c| c.get("title"))
+                .and_then(|t| t.as_str())
+                .unwrap_or("");
             let url = b.get("url").and_then(|u| u.as_str()).unwrap_or("");
             if url.is_empty() {
                 format!("[{}]\n\n", title)
@@ -863,13 +916,25 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
 
     let body = json!({ "query": query, "page_size": limit });
     let resp = api_post("/search", &token, body).await?;
-    let results = resp.get("results").and_then(|r| r.as_array()).cloned().unwrap_or_default();
+    let results = resp
+        .get("results")
+        .and_then(|r| r.as_array())
+        .cloned()
+        .unwrap_or_default();
 
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut items: Vec<Value> = Vec::new();
     for r in &results {
-        let obj = r.get("object").and_then(|o| o.as_str()).unwrap_or("?").to_string();
-        let id = r.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+        let obj = r
+            .get("object")
+            .and_then(|o| o.as_str())
+            .unwrap_or("?")
+            .to_string();
+        let id = r
+            .get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string();
         let title = extract_title(r);
         let edited = r
             .get("last_edited_time")
@@ -893,7 +958,12 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
         Ok(Output::Json(Value::Array(items)))
     } else {
         Ok(Output::records(
-            vec!["id".into(), "type".into(), "title".into(), "last_edited".into()],
+            vec![
+                "id".into(),
+                "type".into(),
+                "title".into(),
+                "last_edited".into(),
+            ],
             rows,
         ))
     }
@@ -903,10 +973,7 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
 ///
 /// 通过 `POST /databases/{id}/query` 分页拉取，自动截断到 `--limit`（默认 50，上限 100）。
 /// 目标数据库优先 `--db`，否则取账户配置的 `default_database_id`。
-async fn note_list(
-    account: &NoteAccount,
-    flags: &HashMap<String, String>,
-) -> Result<Output> {
+async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let db_id = flags
         .get("db")
         .cloned()
@@ -950,7 +1017,11 @@ async fn note_list(
         if !status.is_success() {
             let msg = serde_json::from_str::<Value>(&text)
                 .ok()
-                .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+                .and_then(|v| {
+                    v.get("message")
+                        .and_then(|m| m.as_str())
+                        .map(|s| s.to_string())
+                })
                 .unwrap_or_else(|| text.clone());
             if status == 401 || status == 403 {
                 return Err(AgentError::Auth(format!(
@@ -986,9 +1057,17 @@ async fn note_list(
     let mut rows: Vec<Vec<String>> = Vec::new();
     let mut items: Vec<Value> = Vec::new();
     for p in &out {
-        let id = p.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+        let id = p
+            .get("id")
+            .and_then(|i| i.as_str())
+            .unwrap_or("")
+            .to_string();
         let title = extract_title(p);
-        let url = p.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+        let url = p
+            .get("url")
+            .and_then(|u| u.as_str())
+            .unwrap_or("")
+            .to_string();
         let edited = p
             .get("last_edited_time")
             .and_then(|t| t.as_str())
@@ -1061,8 +1140,16 @@ async fn note_create(
 
     let body = json!({ "parent": { "database_id": db_id }, "properties": Value::Object(props) });
     let created = api_post("/pages", &token, body).await?;
-    let id = created.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-    let url = created.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+    let id = created
+        .get("id")
+        .and_then(|i| i.as_str())
+        .unwrap_or("")
+        .to_string();
+    let url = created
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let json_out = json!({
         "id": id,
@@ -1091,7 +1178,11 @@ async fn note_read(
 
     let page = api_get(&format!("/pages/{}", page_id), &token).await?;
     let title = extract_title(&page);
-    let url = page.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+    let url = page
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
     let props = page
         .get("properties")
         .and_then(|p| p.as_object())
@@ -1148,13 +1239,17 @@ async fn note_append(
         }
     };
     if text.trim().is_empty() {
-        return Err(AgentError::InvalidArgument("nothing to append (empty text)".into()));
+        return Err(AgentError::InvalidArgument(
+            "nothing to append (empty text)".into(),
+        ));
     }
 
     let token = get_token(account)?;
     let blocks = text_to_blocks(&text);
     if blocks.is_empty() {
-        return Err(AgentError::InvalidArgument("nothing to append (no blocks produced)".into()));
+        return Err(AgentError::InvalidArgument(
+            "nothing to append (no blocks produced)".into(),
+        ));
     }
 
     // Notion 单次最多 100 个 block，超出分批追加。
@@ -1228,8 +1323,16 @@ async fn note_update(
 
     let body = json!({ "properties": Value::Object(props) });
     let updated = api_patch(&format!("/pages/{}", page_id), &token, body).await?;
-    let id = updated.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-    let url = updated.get("url").and_then(|u| u.as_str()).unwrap_or("").to_string();
+    let id = updated
+        .get("id")
+        .and_then(|i| i.as_str())
+        .unwrap_or("")
+        .to_string();
+    let url = updated
+        .get("url")
+        .and_then(|u| u.as_str())
+        .unwrap_or("")
+        .to_string();
 
     let json_out = json!({
         "id": id,
@@ -1255,10 +1358,11 @@ fn resolve_page_id(account: &NoteAccount, positional: &[String]) -> Result<Strin
     if let Some(first) = positional.first() {
         return Ok(first.clone());
     }
-    account
-        .default_page_id
-        .clone()
-        .ok_or_else(|| AgentError::InvalidArgument("no <page_id> given and no default_page_id set for this account".into()))
+    account.default_page_id.clone().ok_or_else(|| {
+        AgentError::InvalidArgument(
+            "no <page_id> given and no default_page_id set for this account".into(),
+        )
+    })
 }
 
 /// 从 stdin 读取全部内容。
@@ -1316,9 +1420,9 @@ mod tests {
         let t = encode_property("title", "hello").unwrap();
         assert_eq!(t["title"][0]["text"]["content"], "hello");
         let n = encode_property("number", "3.14").unwrap();
-        assert_eq!(n["number"], 3.14);
+        assert_eq!(n["number"], "3.14".parse::<f64>().unwrap());
         let c = encode_property("checkbox", "true").unwrap();
-        assert_eq!(c["checkbox"], true);
+        assert!(c["checkbox"].as_bool().unwrap());
         let s = encode_property("select", "未读").unwrap();
         assert_eq!(s["select"]["name"], "未读");
         assert!(encode_property("number", "abc").is_err());
@@ -1327,17 +1431,18 @@ mod tests {
     #[test]
     fn parse_bool_variants() {
         for s in ["true", "yes", "1", "on"] {
-            assert_eq!(parse_bool(s).unwrap(), true);
+            assert!(parse_bool(s).unwrap());
         }
         for s in ["false", "no", "0", "off"] {
-            assert_eq!(parse_bool(s).unwrap(), false);
+            assert!(!parse_bool(s).unwrap());
         }
         assert!(parse_bool("maybe").is_err());
     }
 
     #[test]
     fn text_to_blocks_basic_markdown() {
-        let text = "# 标题\n\n这是一段正文。\n\n- 项目一\n- 项目二\n\n```rust\nlet x = 1;\n```\n\n> 引用";
+        let text =
+            "# 标题\n\n这是一段正文。\n\n- 项目一\n- 项目二\n\n```rust\nlet x = 1;\n```\n\n> 引用";
         let blocks = text_to_blocks(text);
         let types: Vec<&str> = blocks
             .iter()
@@ -1418,7 +1523,10 @@ mod tests {
             json!({ "type": "title", "title": [{ "plain_text": "标题" }] }),
         );
         props.insert("Age".into(), json!({ "type": "number", "number": 30 }));
-        props.insert("Done".into(), json!({ "type": "checkbox", "checkbox": true }));
+        props.insert(
+            "Done".into(),
+            json!({ "type": "checkbox", "checkbox": true }),
+        );
         props.insert(
             "Tag".into(),
             json!({ "type": "select", "select": { "name": "工作" } }),
@@ -1445,7 +1553,8 @@ mod tests {
 
     #[test]
     fn render_block_body_heading_and_code() {
-        let h = json!({ "type": "heading_2", "heading_2": { "rich_text": [{ "plain_text": "Hi" }] } });
+        let h =
+            json!({ "type": "heading_2", "heading_2": { "rich_text": [{ "plain_text": "Hi" }] } });
         assert_eq!(render_block_body("heading_2", &h), "## Hi\n\n");
 
         let code = json!({ "type": "code", "code": { "language": "rust", "rich_text": [{ "plain_text": "let x=1;" }] } });
@@ -1463,6 +1572,9 @@ mod tests {
         let todo2 = json!({ "type": "to_do", "to_do": { "checked": false, "rich_text": [{ "plain_text": "todo" }] } });
         assert_eq!(render_block_body("to_do", &todo2), "- [ ] todo\n");
 
-        assert_eq!(render_block_body("divider", &json!({"type":"divider","divider":{}})), "---\n\n");
+        assert_eq!(
+            render_block_body("divider", &json!({"type":"divider","divider":{}})),
+            "---\n\n"
+        );
     }
 }

@@ -3,7 +3,7 @@
 //! 所有模块返回 [`Output`]，由主程序根据 [`RenderMode`] 统一渲染。
 //! `--json` 切换到 [`RenderMode::Json`]，这是 AI Agent 交互的主模式。
 
-use serde_json::{json, Value};
+use serde_json::{Value, json};
 
 use crate::error::{AgentError, Result};
 
@@ -59,10 +59,13 @@ impl Output {
         match (self, mode) {
             (Output::Text(s), _) => s,
             (Output::Json(v), RenderMode::Json) => compact_json(&v),
-            (Output::Json(v), RenderMode::Text) => serde_json::to_string_pretty(&v)
-                .unwrap_or_else(|_| v.to_string()),
+            (Output::Json(v), RenderMode::Text) => {
+                serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())
+            }
             (Output::Records { headers, rows }, RenderMode::Text) => render_table(&headers, &rows),
-            (Output::Records { headers, rows }, RenderMode::Json) => records_to_json(&headers, &rows),
+            (Output::Records { headers, rows }, RenderMode::Json) => {
+                records_to_json(&headers, &rows)
+            }
         }
     }
 }
@@ -199,14 +202,14 @@ mod tests {
 
     #[test]
     fn records_text_mode_has_header_and_separator() {
-        let out = Output::records(
-            vec!["k".into()],
-            vec![vec!["v".into()]],
-        );
+        let out = Output::records(vec!["k".into()], vec![vec!["v".into()]]);
         let s = out.render(RenderMode::Text);
         assert!(s.contains("k"));
         // 分隔线：一整行只含 '-'
-        assert!(s.lines().any(|l| !l.is_empty() && l.chars().all(|c| c == '-')));
+        assert!(
+            s.lines()
+                .any(|l| !l.is_empty() && l.chars().all(|c| c == '-'))
+        );
         assert!(s.contains("v"));
     }
 

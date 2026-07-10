@@ -11,13 +11,13 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use futures::TryStreamExt;
 use tokio::net::TcpStream;
-use tokio_rustls::client::TlsStream;
 use tokio_rustls::TlsConnector;
+use tokio_rustls::client::TlsStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
 use crate::config::{Config, MailAccount};
 use crate::error::{AgentError, Result};
-use crate::modules::{parse_simple_args, ActionDoc, Executor};
+use crate::modules::{ActionDoc, Executor, parse_simple_args};
 use crate::output::Output;
 
 pub struct EmailModule {
@@ -42,12 +42,36 @@ impl Executor for EmailModule {
 
     fn actions(&self) -> Vec<ActionDoc> {
         vec![
-            ActionDoc::new("folders", "List all mailbox folders", "everyday mail folders [--account NAME]"),
-            ActionDoc::new("list", "List messages (recursively across all folders by default)", "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--account NAME]"),
-            ActionDoc::new("read", "Read a single message (searches all folders by default)", "everyday mail read <uid> [--folder NAME] [--no-recursive] [--account NAME]"),
-            ActionDoc::new("search", "Search messages (recursively across all folders by default)", "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]"),
-            ActionDoc::new("send", "Send a message", "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]"),
-            ActionDoc::new("login", "Store password in system keyring", "everyday mail login [--account NAME]"),
+            ActionDoc::new(
+                "folders",
+                "List all mailbox folders",
+                "everyday mail folders [--account NAME]",
+            ),
+            ActionDoc::new(
+                "list",
+                "List messages (recursively across all folders by default)",
+                "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
+            ),
+            ActionDoc::new(
+                "read",
+                "Read a single message (searches all folders by default)",
+                "everyday mail read <uid> [--folder NAME] [--no-recursive] [--account NAME]",
+            ),
+            ActionDoc::new(
+                "search",
+                "Search messages (recursively across all folders by default)",
+                "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
+            ),
+            ActionDoc::new(
+                "send",
+                "Send a message",
+                "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]",
+            ),
+            ActionDoc::new(
+                "login",
+                "Store password in system keyring",
+                "everyday mail login [--account NAME]",
+            ),
         ]
     }
 
@@ -255,7 +279,10 @@ async fn mail_list(
     flags: &HashMap<String, String>,
 ) -> Result<Output> {
     let unread = flags.contains_key("unread");
-    let limit: usize = flags.get("limit").and_then(|s| s.parse().ok()).unwrap_or(20);
+    let limit: usize = flags
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
 
     let mut session = imap_connect(account, password).await?;
     let folders = resolve_folders(&mut session, flags).await?;
@@ -264,7 +291,13 @@ async fn mail_list(
     session.logout().await.ok();
 
     Ok(Output::records(
-        vec!["uid".into(), "folder".into(), "date".into(), "from".into(), "subject".into()],
+        vec![
+            "uid".into(),
+            "folder".into(),
+            "date".into(),
+            "from".into(),
+            "subject".into(),
+        ],
         rows,
     ))
 }
@@ -330,8 +363,8 @@ async fn mail_read(
         .body()
         .ok_or_else(|| AgentError::Other("message has no body".into()))?;
 
-    let parsed = mailparse::parse_mail(body)
-        .map_err(|e| AgentError::Other(format!("parse mail: {e}")))?;
+    let parsed =
+        mailparse::parse_mail(body).map_err(|e| AgentError::Other(format!("parse mail: {e}")))?;
     let subject = header_value(&parsed, "Subject");
     let from = header_value(&parsed, "From");
     let date = header_value(&parsed, "Date");
@@ -355,10 +388,13 @@ async fn mail_search(
     password: &str,
     flags: &HashMap<String, String>,
 ) -> Result<Output> {
-    let query = flags
-        .get("query")
-        .ok_or_else(|| AgentError::InvalidArgument("usage: everyday mail search --query Q".into()))?;
-    let limit: usize = flags.get("limit").and_then(|s| s.parse().ok()).unwrap_or(20);
+    let query = flags.get("query").ok_or_else(|| {
+        AgentError::InvalidArgument("usage: everyday mail search --query Q".into())
+    })?;
+    let limit: usize = flags
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20);
 
     let mut session = imap_connect(account, password).await?;
     let folders = resolve_folders(&mut session, flags).await?;
@@ -369,7 +405,13 @@ async fn mail_search(
     session.logout().await.ok();
 
     Ok(Output::records(
-        vec!["uid".into(), "folder".into(), "date".into(), "from".into(), "subject".into()],
+        vec![
+            "uid".into(),
+            "folder".into(),
+            "date".into(),
+            "from".into(),
+            "subject".into(),
+        ],
         rows,
     ))
 }
@@ -390,15 +432,12 @@ async fn mail_send(
         .get("body")
         .ok_or_else(|| AgentError::InvalidArgument("--body <text> is required".into()))?;
 
-    use lettre::message::{header::ContentType, Mailbox};
+    use lettre::message::{Mailbox, header::ContentType};
     use lettre::transport::smtp::authentication::Credentials;
     use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
     let from: Mailbox = account.username.parse().map_err(|e| {
-        AgentError::InvalidArgument(format!(
-            "invalid from address '{}': {e}",
-            account.username
-        ))
+        AgentError::InvalidArgument(format!("invalid from address '{}': {e}", account.username))
     })?;
     let to_mb: Mailbox = to
         .parse()
@@ -612,9 +651,7 @@ fn html_to_text(html: &str) -> String {
             match name.to_ascii_lowercase().as_str() {
                 "script" | "style" => skip_content = !closing,
                 "br" => out.push('\n'),
-                "p" | "div" | "tr" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6"
-                    if closing =>
-                {
+                "p" | "div" | "tr" | "li" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" if closing => {
                     out.push('\n');
                 }
                 _ => {}
@@ -861,7 +898,10 @@ mod tests {
     #[test]
     fn imap_utf7_chinese_passthrough() {
         // 用户直接传入中文名（无 & 段），应原样透传不破坏 UTF-8
-        assert_eq!(decode_imap_utf7("其他文件夹/Github通知"), "其他文件夹/Github通知");
+        assert_eq!(
+            decode_imap_utf7("其他文件夹/Github通知"),
+            "其他文件夹/Github通知"
+        );
     }
 
     #[test]
@@ -999,7 +1039,10 @@ mod tests {
     fn find_body_by_type_html_only_single_part() {
         let raw = b"Content-Type: text/html\r\n\r\n<p>hi</p>";
         let parsed = mailparse::parse_mail(raw).unwrap();
-        assert_eq!(find_body_by_type(&parsed, "text/html"), Some("<p>hi</p>".into()));
+        assert_eq!(
+            find_body_by_type(&parsed, "text/html"),
+            Some("<p>hi</p>".into())
+        );
         assert_eq!(find_body_by_type(&parsed, "text/plain"), None);
     }
 }

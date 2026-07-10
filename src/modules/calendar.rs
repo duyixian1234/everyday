@@ -25,7 +25,7 @@ use tower_http::auth::AddAuthorization;
 
 use crate::config::{CalendarAccount, Config};
 use crate::error::{AgentError, Result};
-use crate::modules::{parse_simple_args, ActionDoc, Executor};
+use crate::modules::{ActionDoc, Executor, parse_simple_args};
 use crate::output::Output;
 
 /// hyper-rustls 的 HTTPS connector（webpki 根证书 + http1）。
@@ -60,11 +60,31 @@ impl Executor for CalendarModule {
 
     fn actions(&self) -> Vec<ActionDoc> {
         vec![
-            ActionDoc::new("login", "Store CalDAV password in system keyring", "everyday cal login [--account NAME]"),
-            ActionDoc::new("calendars", "List calendar collections", "everyday cal calendars [--account NAME]"),
-            ActionDoc::new("list", "List events (default: today & future)", "everyday cal list [--today|--date YYYY-MM-DD|--all] [--limit N] [--account NAME]"),
-            ActionDoc::new("add", "Add an event", "everyday cal add --title T --start ISO --end ISO [--location L] [--description D] [--calendar HREF] [--account NAME]"),
-            ActionDoc::new("delete", "Delete an event by href", "everyday cal delete --id HREF [--account NAME]"),
+            ActionDoc::new(
+                "login",
+                "Store CalDAV password in system keyring",
+                "everyday cal login [--account NAME]",
+            ),
+            ActionDoc::new(
+                "calendars",
+                "List calendar collections",
+                "everyday cal calendars [--account NAME]",
+            ),
+            ActionDoc::new(
+                "list",
+                "List events (default: today & future)",
+                "everyday cal list [--today|--date YYYY-MM-DD|--all] [--limit N] [--account NAME]",
+            ),
+            ActionDoc::new(
+                "add",
+                "Add an event",
+                "everyday cal add --title T --start ISO --end ISO [--location L] [--description D] [--calendar HREF] [--account NAME]",
+            ),
+            ActionDoc::new(
+                "delete",
+                "Delete an event by href",
+                "everyday cal delete --id HREF [--account NAME]",
+            ),
         ]
     }
 
@@ -126,7 +146,9 @@ async fn cal_login(account: &CalendarAccount) -> Result<Output> {
 
     // 坑9：空密码校验。set_password("") 会成功，但 base64 成 "Basic Og==" 后服务端返 401。
     if password.is_empty() {
-        return Err(AgentError::InvalidArgument("password cannot be empty".into()));
+        return Err(AgentError::InvalidArgument(
+            "password cannot be empty".into(),
+        ));
     }
     entry
         .set_password(&password)
@@ -145,17 +167,22 @@ async fn cal_login(account: &CalendarAccount) -> Result<Output> {
 /// 只做 `/.well-known/caldav` 重定向探测（坑6：QQ 根 URL PROPFIND 返 404，well-known
 /// 301 到 `/calendar/`，最多 5 跳）。探测失败静默降级用 base_url。
 async fn build_client(account: &CalendarAccount, password: &str) -> Result<CalDav> {
-    let base: Uri = account
-        .caldav_url
-        .parse()
-        .map_err(|e| AgentError::InvalidArgument(format!("invalid caldav_url '{}': {e}", account.caldav_url)))?;
+    let base: Uri = account.caldav_url.parse().map_err(|e| {
+        AgentError::InvalidArgument(format!("invalid caldav_url '{}': {e}", account.caldav_url))
+    })?;
     let host = base
         .host()
-        .ok_or_else(|| AgentError::InvalidArgument(format!("caldav_url missing host: {}", account.caldav_url)))?
+        .ok_or_else(|| {
+            AgentError::InvalidArgument(format!("caldav_url missing host: {}", account.caldav_url))
+        })?
         .to_string();
-    let port = base
-        .port_u16()
-        .unwrap_or_else(|| if base.scheme_str() == Some("http") { 80 } else { 443 });
+    let port = base.port_u16().unwrap_or_else(|| {
+        if base.scheme_str() == Some("http") {
+            80
+        } else {
+            443
+        }
+    });
 
     let https_connector = HttpsConnectorBuilder::new()
         .with_webpki_roots()
@@ -210,7 +237,11 @@ async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<C
     // 一次 PROPFIND Depth:1 查 displayname + color + resourcetype。
     // QQ quirk: 对单日历 Depth:0 查 displayname 返 404，但从 home set Depth:1 批量查返 200。
     // 参照 Python caldav 库 get_calendars() 的实现。
-    let props = [&names::DISPLAY_NAME, &names::CALENDAR_COLOUR, &names::RESOURCETYPE];
+    let props = [
+        &names::DISPLAY_NAME,
+        &names::CALENDAR_COLOUR,
+        &names::RESOURCETYPE,
+    ];
     for url in &home_sets {
         let resp = match caldav
             .request(
@@ -272,7 +303,11 @@ async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<C
 // ============ 动作实现 ============
 
 /// `cal calendars`：列出当前用户的所有日历集合（中文列名 + href 解码 + 无名占位）。
-async fn cal_calendars(account: &CalendarAccount, password: &str, ignored: &[String]) -> Result<Output> {
+async fn cal_calendars(
+    account: &CalendarAccount,
+    password: &str,
+    ignored: &[String],
+) -> Result<Output> {
     let caldav = build_client(account, password).await?;
     let calendars = list_all_calendars(&caldav, ignored).await?;
     let rows = calendars
@@ -304,7 +339,10 @@ async fn cal_list(
 ) -> Result<Output> {
     let caldav = build_client(account, password).await?;
     let calendars = list_all_calendars(&caldav, ignored).await?;
-    let limit: usize = flags.get("limit").and_then(|s| s.parse().ok()).unwrap_or(50);
+    let limit: usize = flags
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
     // 默认返回今天及未来；--all 返回所有；--today 限今天；--date YYYY-MM-DD 限指定日期。
     let today = chrono::Local::now().date_naive();
     let (exact_date, min_date): (Option<chrono::NaiveDate>, Option<chrono::NaiveDate>) =
@@ -334,8 +372,8 @@ async fn cal_list(
                 for event in parsed.events() {
                     if let Some(row) = build_event_row(&res.href, event) {
                         let d = row.sort_key.date();
-                        let keep = exact_date.is_none_or(|e| d == e)
-                            && min_date.is_none_or(|m| d >= m);
+                        let keep =
+                            exact_date.is_none_or(|e| d == e) && min_date.is_none_or(|m| d >= m);
                         if keep {
                             events.push(row);
                         }
@@ -364,7 +402,13 @@ async fn cal_list(
         .map(|e| vec![e.href, e.start, e.end, e.summary, e.location])
         .collect();
     Ok(Output::records(
-        vec!["路径".into(), "开始".into(), "结束".into(), "主题".into(), "地点".into()],
+        vec![
+            "路径".into(),
+            "开始".into(),
+            "结束".into(),
+            "主题".into(),
+            "地点".into(),
+        ],
         rows,
     ))
 }
@@ -420,7 +464,11 @@ async fn cal_add(
     };
 
     // 生成新 href：<calendar_href>/<timestamp>.ics。UID 由 icalendar 自动生成。
-    let new_href = format!("{}{}.ics", ensure_trailing_slash(&target.href), event_filename());
+    let new_href = format!(
+        "{}{}.ics",
+        ensure_trailing_slash(&target.href),
+        event_filename()
+    );
 
     let resp = caldav
         .request(PutResource::new(&new_href).create(ics, "text/calendar; charset=utf-8"))
@@ -658,7 +706,10 @@ mod tests {
 
     #[test]
     fn percent_decode_common_sequences() {
-        assert_eq!(percent_decode("/calendar/duyixian1234%40qq.com"), "/calendar/duyixian1234@qq.com");
+        assert_eq!(
+            percent_decode("/calendar/duyixian1234%40qq.com"),
+            "/calendar/duyixian1234@qq.com"
+        );
         assert_eq!(percent_decode("a%20b"), "a b");
         assert_eq!(percent_decode("no-encoding"), "no-encoding");
         // 非法 %XX 原样保留。
@@ -685,10 +736,12 @@ mod tests {
             Some(ndt)
         );
         assert_eq!(
-            date_perhaps_time_to_naive(&DatePerhapsTime::DateTime(CalendarDateTime::WithTimezone {
-                date_time: ndt,
-                tzid: "Asia/Shanghai".into()
-            })),
+            date_perhaps_time_to_naive(&DatePerhapsTime::DateTime(
+                CalendarDateTime::WithTimezone {
+                    date_time: ndt,
+                    tzid: "Asia/Shanghai".into()
+                }
+            )),
             Some(ndt)
         );
     }
