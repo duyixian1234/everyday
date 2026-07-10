@@ -53,7 +53,7 @@ impl Executor for NoteModule {
     }
 
     fn description(&self) -> &'static str {
-        "Note & knowledge-base (Notion): login, search, list, create, read, append, update."
+        "Note & knowledge-base (Notion or local sqlite): login, search, list, create, read, append, update."
     }
 
     fn actions(&self) -> Vec<ActionDoc> {
@@ -101,6 +101,21 @@ impl Executor for NoteModule {
         let account = self
             .config
             .note_account(flags.get("account").map(|s| s.as_str()))?;
+
+        // 本地 SQLite provider：路由到本地实现；否则走 Notion。
+        if crate::modules::local::is_local_provider(&account.provider) {
+            use crate::modules::note_local as local;
+            return match action {
+                "login" => local::login(account),
+                "search" => local::search(account, &flags).await,
+                "create" => local::create(account, &flags, &multi).await,
+                "read" => local::read(account, &positional).await,
+                "append" => local::append(account, &flags, &positional).await,
+                "update" => local::update(account, &positional, &multi).await,
+                "list" => local::list(account, &flags).await,
+                other => Err(AgentError::UnknownAction(format!("note {other}"))),
+            };
+        }
 
         match action {
             "login" => note_login(account).await,

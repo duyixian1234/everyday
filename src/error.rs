@@ -98,6 +98,12 @@ impl From<anyhow::Error> for AgentError {
     }
 }
 
+impl From<sqlx::Error> for AgentError {
+    fn from(err: sqlx::Error) -> Self {
+        Self::Other(format!("sqlite error: {err}"))
+    }
+}
+
 // 自定义 Serialize：输出 {"error": "...", "message": "..."}
 impl Serialize for AgentError {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {

@@ -108,9 +108,12 @@ impl ModuleRegistry {
 // ---- 模块子模块声明 ----
 pub mod calendar;
 pub mod email;
+pub mod local;
 pub mod note;
+pub mod note_local;
 pub mod rss;
 pub mod todo;
+pub mod todo_local;
 
 /// 解析 `--flag value` 形式的简单参数。
 /// 返回 (flags map, positional args)。

@@ -158,7 +158,7 @@ impl Executor for TodoModule {
     }
 
     fn description(&self) -> &'static str {
-        "Todo tasks on Notion: login, init-db, list, add, start, complete."
+        "Todo tasks (Notion or local sqlite): login, init-db, list, add, start, complete."
     }
 
     fn actions(&self) -> Vec<ActionDoc> {
@@ -201,6 +201,24 @@ impl Executor for TodoModule {
         let account = self
             .config
             .todo_account(flags.get("account").map(|s| s.as_str()))?;
+
+        // 本地 SQLite provider：路由到本地实现；否则走 Notion。
+        if crate::modules::local::is_local_provider(&account.provider) {
+            use crate::modules::todo_local as local;
+            return match action {
+                "login" => local::login(account),
+                "init-db" => local::init_db(account).await,
+                "list" => local::list(account, &flags).await,
+                "add" => local::add(account, &flags).await,
+                "start" => {
+                    local::set_status(account, positional.first(), local::STATUS_IN_PROGRESS).await
+                }
+                "complete" => {
+                    local::set_status(account, positional.first(), local::STATUS_DONE).await
+                }
+                other => Err(AgentError::UnknownAction(format!("todo {other}"))),
+            };
+        }
 
         match action {
             "login" => todo_login(account).await,

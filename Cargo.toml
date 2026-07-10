@@ -60,6 +60,9 @@ roxmltree = "0.21"
 # RSS
 feed-rs = "2"
 
+# 本地存储（SQLite，bundled 编译 C 库，需 MSVC 工具链）
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
+
 # 时间
 chrono = { version = "0.4", features = ["serde"] }
 

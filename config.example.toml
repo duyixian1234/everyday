@@ -63,6 +63,16 @@ provider = "notion"
 default_database_id = "db_abc123..."   # 例如：阅读清单、灵感库
 default_page_id = "page_xyz789..."     # 例如：每日速记本
 
+# 本地 SQLite provider：无需凭证/联网，数据存本地 .db 文件。
+# provider = "local"（别名 "sqlite"）。db_path 可选，缺省为
+# ~/.config/everyday/note-<account>.db。用法与 notion 一致：
+#   everyday note --account local create --title "标题" --prop 类型:文章
+#   everyday note --account local append <id> --text "正文"
+[[note.accounts]]
+name = "local"
+provider = "local"
+# db_path = "/absolute/path/to/notes.db"   # 可选，覆盖默认路径
+
 # ---- 待办账户（Notion 任务数据库；可多个）----
 # provider 预留扩展（notion）
 # 凭证（Notion Integration Token，形如 ntn_...）绝不写在此文件，
@@ -74,3 +84,15 @@ default_page_id = "page_xyz789..."     # 例如：每日速记本
 name = "personal"
 provider = "notion"
 parent_page_id = "page_parent_..."     # 例如：用于承载任务数据库的 Notion 页面
+
+# 本地 SQLite provider：无需凭证/联网，任务存本地 .db 文件。
+# provider = "local"（别名 "sqlite"）。db_path 可选，缺省为
+# ~/.config/everyday/todo-<account>.db。用法与 notion 一致：
+#   everyday todo --account local init-db          # 建表（首次可选，各命令会自动建表）
+#   everyday todo --account local add --title "任务" --due 2026-07-15 --priority P0
+#   everyday todo --account local list
+#   everyday todo --account local complete <id>
+[[todo.accounts]]
+name = "local"
+provider = "local"
+# db_path = "/absolute/path/to/todos.db"   # 可选，覆盖默认路径

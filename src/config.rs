@@ -156,7 +156,7 @@ pub struct NoteConfig {
 pub struct NoteAccount {
     /// 账户名（如 `personal`、`work`）。
     pub name: String,
-    /// 后端提供方：`notion` 等。默认 `notion`。
+    /// 后端提供方：`notion`（默认）或 `local`/`sqlite`（本地 SQLite）。
     #[serde(default = "default_provider")]
     pub provider: String,
     /// 默认数据库 ID：用于 `note create` 未显式指定 `--db` 时。
@@ -165,6 +165,10 @@ pub struct NoteAccount {
     /// 默认页面 ID：用于 `note append`/`note read` 未显式指定 page_id 时。
     #[serde(default)]
     pub default_page_id: Option<String>,
+    /// 本地 provider 的 SQLite 文件路径（仅 `local`/`sqlite` provider 使用）。
+    /// 缺省时用 `~/.config/everyday/note-<account>.db`。
+    #[serde(default)]
+    pub db_path: Option<String>,
 }
 
 fn default_provider() -> String {
@@ -191,7 +195,7 @@ pub struct TodoConfig {
 pub struct TodoAccount {
     /// 账户名（如 `personal`、`work`）。
     pub name: String,
-    /// 后端提供方：`notion` 等。默认 `notion`。
+    /// 后端提供方：`notion`（默认）或 `local`/`sqlite`（本地 SQLite）。
     #[serde(default = "default_provider")]
     pub provider: String,
     /// 创建数据库时的父级页面 ID（非机密，可落盘）。
@@ -200,6 +204,10 @@ pub struct TodoAccount {
     /// 默认任务数据库 ID（`init-db` 后回填；缺省时由 `--db` 显式指定）。
     #[serde(default)]
     pub default_database_id: Option<String>,
+    /// 本地 provider 的 SQLite 文件路径（仅 `local`/`sqlite` provider 使用）。
+    /// 缺省时用 `~/.config/everyday/todo-<account>.db`。
+    #[serde(default)]
+    pub db_path: Option<String>,
 }
 
 // ---- 加载 / 保存 ----
