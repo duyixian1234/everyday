@@ -1,4 +1,5 @@
-//! 笔记模块：基于 Notion API 的笔记 / 知识库管理。
+//! 笔记模块：笔记 / 知识库管理。默认使用本地 SQLite provider（`local`），
+//! 也可切换为 Notion API（`provider = "notion"`）。
 //!
 //! 设计目标：屏蔽 Notion 繁琐的 Block 嵌套，向 Agent 暴露**纯文本/Markdown 追加**
 //! 与**简化版属性操作**两个高层能力。

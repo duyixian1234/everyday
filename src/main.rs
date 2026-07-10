@@ -482,24 +482,39 @@ ignore_calendars = ["好友生日"]
 name = "hackernews"
 url = "https://hnrss.org/frontpage"
 
+# ---- 笔记账户（默认本地 SQLite；可多个）----
+# provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，数据存本地 .db 文件，
+# db_path 可选，缺省为 ~/.config/everyday/note-<account>.db。
 [[note.accounts]]
 name = "personal"
-provider = "notion"
-# 预设常用 ID，减少 Agent 每次输入长字符串；按需替换为你的数据库/页面 ID
-default_database_id = "db_abc123..."
-default_page_id = "page_xyz789..."
+provider = "local"
+# db_path = "/absolute/path/to/notes.db"   # 可选，覆盖默认路径
 
-# ---- 待办账户（Notion 任务数据库；可多个）----
-# provider 预留扩展（notion）
-# 凭证（Notion Integration Token，形如 ntn_...）绝不写在此文件，
-# 通过 `everyday todo login --account personal` 存入系统 keyring，
-# service 名约定：everyday/todo/<account>
-# parent_page_id：创建任务数据库时的父级页面（init-db 需要）
-# default_database_id：由 `everyday todo init-db` 成功后自动回填此处
+# 如需改用 Notion：设 provider = "notion"，并通过
+# `everyday note login --account personal` 把 Token 存入 keyring；
+# default_database_id / default_page_id 为常用目标预设，减少重复输入长字符串。
+# [[note.accounts]]
+# name = "notion"
+# provider = "notion"
+# default_database_id = "db_abc123..."
+# default_page_id = "page_xyz789..."
+
+# ---- 待办账户（默认本地 SQLite；可多个）----
+# provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，任务存本地 .db 文件，
+# db_path 可选，缺省为 ~/.config/everyday/todo-<account>.db。
 [[todo.accounts]]
 name = "personal"
-provider = "notion"
-parent_page_id = "page_parent_..."
+provider = "local"
+# db_path = "/absolute/path/to/todos.db"   # 可选，覆盖默认路径
+
+# 如需改用 Notion：设 provider = "notion"，通过
+# `everyday todo login --account personal` 存入 keyring（service: everyday/todo/<account>）；
+# parent_page_id 为创建任务数据库时的父级页面（init-db 需要），
+# default_database_id 由 `everyday todo init-db` 成功后自动回填。
+# [[todo.accounts]]
+# name = "notion"
+# provider = "notion"
+# parent_page_id = "page_parent_..."
 "#
     .to_string()
 }

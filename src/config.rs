@@ -149,14 +149,14 @@ pub struct NoteConfig {
 
 /// 单个笔记账户。
 ///
-/// `provider` 字段为未来扩展预留（如 `obsidian` 本地目录、`feishu` 文档等），
-/// 当前仅实现 `notion`。
+/// `provider` 字段支持 `local`/`sqlite`（本地 SQLite，**默认**）与 `notion`
+/// （远程 Notion）。为未来扩展预留（如 `obsidian` 本地目录、`feishu` 文档等）。
 /// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/note/<account>`）。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteAccount {
     /// 账户名（如 `personal`、`work`）。
     pub name: String,
-    /// 后端提供方：`notion`（默认）或 `local`/`sqlite`（本地 SQLite）。
+    /// 后端提供方：`local`/`sqlite`（本地 SQLite，默认）或 `notion`（远程 Notion）。
     #[serde(default = "default_provider")]
     pub provider: String,
     /// 默认数据库 ID：用于 `note create` 未显式指定 `--db` 时。
@@ -172,7 +172,7 @@ pub struct NoteAccount {
 }
 
 fn default_provider() -> String {
-    "notion".to_string()
+    "local".to_string()
 }
 
 // ---- 待办 (todo) ----
@@ -187,7 +187,8 @@ pub struct TodoConfig {
 
 /// 单个待办账户。
 ///
-/// `provider` 字段为未来扩展预留（当前仅 `notion`）。
+/// `provider` 字段支持 `local`/`sqlite`（本地 SQLite，**默认**）与 `notion`
+/// （远程 Notion）。
 /// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/todo/<account>`）。
 /// `parent_page_id` 用于 `init-db` 创建数据库时的父级页面；`default_database_id`
 /// 由 `init-db` 成功后在本地 config 中回填（非机密元数据，可落盘）。
@@ -195,7 +196,7 @@ pub struct TodoConfig {
 pub struct TodoAccount {
     /// 账户名（如 `personal`、`work`）。
     pub name: String,
-    /// 后端提供方：`notion`（默认）或 `local`/`sqlite`（本地 SQLite）。
+    /// 后端提供方：`local`/`sqlite`（本地 SQLite，默认）或 `notion`（远程 Notion）。
     #[serde(default = "default_provider")]
     pub provider: String,
     /// 创建数据库时的父级页面 ID（非机密，可落盘）。
@@ -448,11 +449,25 @@ default_page_id = "page_xyz"
     }
 
     #[test]
-    fn note_provider_defaults_to_notion() {
+    fn note_provider_defaults_to_local() {
         let cfg: Config = toml::from_str(
             r#"
 [[note.accounts]]
 name = "x"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.note.accounts[0].provider, "local");
+    }
+
+    #[test]
+    fn note_provider_explicit_notion_preserved() {
+        // 旧版本兼容：显式声明 provider = "notion" 必须原样保留。
+        let cfg: Config = toml::from_str(
+            r#"
+[[note.accounts]]
+name = "x"
+provider = "notion"
 "#,
         )
         .unwrap();
@@ -504,11 +519,25 @@ default_database_id = "db_abc"
     }
 
     #[test]
-    fn todo_provider_defaults_to_notion() {
+    fn todo_provider_defaults_to_local() {
         let cfg: Config = toml::from_str(
             r#"
 [[todo.accounts]]
 name = "x"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.todo.accounts[0].provider, "local");
+    }
+
+    #[test]
+    fn todo_provider_explicit_notion_preserved() {
+        // 旧版本兼容：显式声明 provider = "notion" 必须原样保留。
+        let cfg: Config = toml::from_str(
+            r#"
+[[todo.accounts]]
+name = "x"
+provider = "notion"
 "#,
         )
         .unwrap();

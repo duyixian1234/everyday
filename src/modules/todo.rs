@@ -1,7 +1,8 @@
-//! todo 模块：基于 Notion 的待办任务管理。
+//! todo 模块：待办任务管理。默认使用本地 SQLite provider（`local`），
+//! 也可切换为 Notion（`provider = "notion"`）。
 //!
-//! 两层架构的上层业务：持有共享 [`NotionClient`]，将干净领域模型 [`TodoItem`]
-//! 与 Notion 原始 `Properties` 做强类型双向映射，屏蔽 Notion 属性套娃。
+//! Notion 分支为两层架构的上层业务：持有共享 [`NotionClient`]，将干净领域模型
+//! [`TodoItem`] 与 Notion 原始 `Properties` 做强类型双向映射，屏蔽 Notion 属性套娃。
 //!
 //! 命令（action）：
 //! - `login`    交互式把 Notion Integration Token 存入密钥环

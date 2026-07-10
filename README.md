@@ -2,7 +2,7 @@
 
 > The Rust-powered hands for your AI Agent.
 
-`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（Notion）、待办（Notion）等外部集成场景，支持 Text / JSON 双输出模式。
+`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（默认本地 SQLite / 可选 Notion）、待办（默认本地 SQLite / 可选 Notion）等外部集成场景，支持 Text / JSON 双输出模式。
 
 ## 特性
 
@@ -198,13 +198,13 @@ everyday config set default_account.mail personal
 | `list` | 列出订阅源 | ✅ 可用 | `everyday rss list` |
 | `digest` | 聚合近期内容 | ✅ 可用 | `everyday rss digest [--limit N]` |
 
-### note — 笔记与知识库（Notion）
+### note — 笔记与知识库（默认本地 SQLite / 可选 Notion）
 
-基于 Notion API，屏蔽繁琐的 Block 嵌套，向 Agent 暴露**纯文本 / Markdown 追加**与**简化属性操作**两个高层能力。凭证（Notion Integration Token）仅存系统密钥环，绝不落盘。`provider` 字段为后续扩展（Obsidian 本地目录、飞书文档等）预留。
+**默认使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，数据存于 `~/.config/everyday/note-<account>.db`，开箱即用。也可设 `provider = "notion"` 改用 Notion API，屏蔽繁琐的 Block 嵌套，向 Agent 暴露**纯文本 / Markdown 追加**与**简化属性操作**两个高层能力（Notion Integration Token 仅存系统密钥环，绝不落盘）。命令用法在两种 provider 下一致。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `login` | 交互式存储 Notion Token 到密钥环 | `everyday note login [--account NAME]` |
+| `login` | 交互式存储 Notion Token 到密钥环（仅 `notion` provider 需要） | `everyday note login [--account NAME]` |
 | `search` | 按标题搜索页面 / 数据库 | `everyday note search --query Q [--limit N]` |
 | `list` | 列出指定数据库下的页面 | `everyday note list [--db ID] [--limit N]` |
 | `create` | 在数据库中新建页面（记录） | `everyday note create --title T [--db ID] [--prop K:V ...]` |
@@ -223,16 +223,17 @@ everyday config set default_account.mail personal
 | `--text TEXT` | `append` | 要追加的文本；不带此参数时从管道 `stdin` 读取（仅非终端模式） |
 | `--limit N` | `search` / `list` | 限制条数（`search` 默认 10，`list` 默认 50，上限 100；`--limit 0` 表示不限制） |
 
-> **前置**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday note login` 存入密钥环 → 在 config 填好 `[[note.accounts]]`（含 `default_database_id` / `default_page_id`）→ 在 Notion 把目标页面 / 数据库**分享给该 integration**。
+> **本地 provider（默认）**：无需任何前置步骤，直接 `everyday note create` / `append` 即可，数据库文件自动创建。
+> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday note login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `default_database_id` / `default_page_id` → 在 Notion 把目标页面 / 数据库**分享给该 integration**。
 
-### todo — 待办任务（Notion）
+### todo — 待办任务（默认本地 SQLite / 可选 Notion）
 
-基于共享 `notion-client` SDK 与 Notion 数据库，提供任务管理能力。底层 HTTP / Token 注入 / 429 限流重试由 `notion-client` 统一处理；本模块把干净的领域模型 `TodoItem`（id / title / status / due / priority）与 Notion 原始属性做强类型映射。凭证（Notion Integration Token）仅存系统密钥环（`everyday/todo/<account>`），`database_id` 等非机密元数据可落盘 config。
+**默认使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，任务存于 `~/.config/everyday/todo-<account>.db`，各命令自动建表，开箱即用。也可设 `provider = "notion"` 改用 Notion 数据库：底层 HTTP / Token 注入 / 429 限流重试由共享 `notion-client` 统一处理，本模块把干净的领域模型 `TodoItem`（id / title / status / due / priority）与 Notion 原始属性做强类型映射（Token 仅存系统密钥环 `everyday/todo/<account>`，`database_id` 等非机密元数据可落盘 config）。命令用法在两种 provider 下一致。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `login` | 交互式存储 Notion Token 到密钥环 | `everyday todo login [--account NAME]` |
-| `init-db` | 在 Notion 创建任务数据库（需 `parent_page_id`），并回填 `database_id` | `everyday todo init-db [--account NAME] [--parent PAGE_ID]` |
+| `login` | 交互式存储 Notion Token 到密钥环（仅 `notion` provider 需要） | `everyday todo login [--account NAME]` |
+| `init-db` | 建表：本地 provider 建 SQLite 表，Notion provider 创建任务数据库（需 `parent_page_id`）并回填 `database_id` | `everyday todo init-db [--account NAME] [--parent PAGE_ID]` |
 | `list` | 列出未完成任务（按 Due 升序） | `everyday todo list [--db ID] [--all]` |
 | `add` | 新增任务 | `everyday todo add --title T [--due DATE] [--priority P] [--db ID]` |
 | `start` | 标记任务为 In Progress | `everyday todo start <page_id>` |
@@ -250,7 +251,8 @@ everyday config set default_account.mail personal
 | `--due DATE` | `add` | 截止日期（ISO 8601，如 `2026-07-15`） |
 | `--priority P` | `add` | 优先级（Select：P0 / P1 / P2） |
 
-> **前置**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday todo login` 存入密钥环 → 在 config 填好 `[[todo.accounts]]`（含 `parent_page_id`）→ `everyday todo init-db` 创建任务数据库并授权该 integration 访问父级页面。之后 `list` / `add` / `start` / `complete` 即可使用。
+> **本地 provider（默认）**：无需任何前置步骤，直接 `everyday todo add` / `list` 即可，数据库文件与表自动创建。
+> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday todo login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday todo init-db` 创建任务数据库并授权该 integration 访问父级页面。之后 `list` / `add` / `start` / `complete` 即可使用。
 
 ## 输出模式
 
@@ -324,12 +326,23 @@ name = "hackernews"
 url = "https://hnrss.org/frontpage"
 category = "tech"
 
+# 笔记 / 待办默认本地 SQLite provider，开箱即用、无需凭证
 [[note.accounts]]
 name = "personal"
-provider = "notion"
-# 预设常用 ID，减少每次输入长字符串的负担（值以实际 Notion ID 为准）
-default_database_id = "db_abc123..."
-default_page_id = "page_xyz789..."
+provider = "local"
+# db_path = "/absolute/path/to/notes.db"   # 可选，缺省 ~/.config/everyday/note-personal.db
+
+[[todo.accounts]]
+name = "personal"
+provider = "local"
+# db_path = "/absolute/path/to/todos.db"   # 可选，缺省 ~/.config/everyday/todo-personal.db
+
+# 如需 Notion：把对应账户改为 provider = "notion"，并按各模块「前置」说明配置
+# [[note.accounts]]
+# name = "notion"
+# provider = "notion"
+# default_database_id = "db_abc123..."   # 值以实际 Notion ID 为准
+# default_page_id = "page_xyz789..."
 # Notion Integration Token (ntn_...) 不在此处填写，由 `everyday note login` 存入密钥环
 ```
 
@@ -396,10 +409,10 @@ everyday config set mail.accounts.0.smtp_port 465
 everyday config get mail.accounts.0.smtp_port
 ```
 
-### 笔记（Notion）
+### 笔记（默认本地 SQLite）
 
 ```bash
-# 交互式存入 Notion Integration Token（仅密钥环，不落盘）
+# 本地 provider 无需登录；仅 provider = "notion" 时才需交互式存入 Token（仅密钥环，不落盘）
 everyday note login
 
 # 搜索页面 / 数据库（JSON）
@@ -430,10 +443,11 @@ echo "批量捕获的内容" | everyday note append <page_id>
 everyday note update <page_id> --prop "状态:已读"
 ```
 
-### 待办（Notion，基于 notion-client）
+### 待办（默认本地 SQLite）
 
 ```bash
-# 一次性配置：存 Token、创建任务数据库
+# 本地 provider 无需登录，直接 add / list 即可（表自动创建）；
+# 仅 provider = "notion" 时才需以下一次性配置：存 Token、创建任务数据库
 everyday todo login
 everyday todo init-db --parent "<page_id>"     # 需在 Notion 把父页面授权给该 integration
 
@@ -524,8 +538,8 @@ pub trait Executor: Send + Sync {
 | `mail` | ✅ 完整可用 | IMAP 收件 + SMTP 发件 + keyring 凭证 |
 | `cal` | ✅ 完整可用 | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ 完整可用 | follow / list / unfollow / digest / fetch |
-| `note` | ✅ 完整可用 | login / search / list / create / read / append / update（Notion API） |
-| `todo` | ✅ 完整可用 | login / init-db / list / add / start / complete（Notion API，基于 notion-client） |
+| `note` | ✅ 完整可用 | login / search / list / create / read / append / update（默认本地 SQLite，可选 Notion API） |
+| `todo` | ✅ 完整可用 | login / init-db / list / add / start / complete（默认本地 SQLite，可选 Notion API） |
 
 ## 许可证
 
