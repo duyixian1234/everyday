@@ -255,9 +255,8 @@ async fn todo_login(account: &TodoAccount) -> Result<Output> {
     let entry = keyring::Entry::new(&service, KEYRING_USER)
         .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
     let account_name = account.name.clone();
-    let prompt = format!(
-        "Paste Notion Integration Token (ntn_...) for todo account '{account_name}': "
-    );
+    let prompt =
+        format!("Paste Notion Integration Token (ntn_...) for todo account '{account_name}': ");
     // rpassword 为同步 API，放进 spawn_blocking 避免阻塞运行时。
     let password = tokio::task::spawn_blocking(move || rpassword::prompt_password(prompt))
         .await
@@ -472,9 +471,8 @@ async fn todo_set_status(
     page_id: Option<&String>,
     status: &str,
 ) -> Result<Output> {
-    let page_id = page_id.ok_or_else(|| {
-        AgentError::InvalidArgument(format!("`{status}` requires <page_id>"))
-    })?;
+    let page_id = page_id
+        .ok_or_else(|| AgentError::InvalidArgument(format!("`{status}` requires <page_id>")))?;
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 

@@ -171,9 +171,7 @@ pub async fn set_status(
     id: Option<&String>,
     status: &str,
 ) -> Result<Output> {
-    let id = id.ok_or_else(|| {
-        AgentError::InvalidArgument(format!("`{status}` requires <id>"))
-    })?;
+    let id = id.ok_or_else(|| AgentError::InvalidArgument(format!("`{status}` requires <id>")))?;
     let pool = open(account).await?;
     let res = sqlx::query("UPDATE todos SET status = ?1 WHERE id = ?2")
         .bind(status)

@@ -13,10 +13,10 @@
 
 use std::time::Duration;
 
-use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
 use reqwest::Method;
-use serde::de::DeserializeOwned;
+use reqwest::header::{HeaderMap, HeaderValue, RETRY_AFTER};
 use serde::Serialize;
+use serde::de::DeserializeOwned;
 
 use crate::error::{AgentError, Result};
 
@@ -51,8 +51,8 @@ impl NotionClient {
             .default_headers(headers)
             .timeout(Duration::from_secs(30))
             .user_agent(format!("everyday/{}", env!("CARGO_PKG_VERSION")))
-        .build()
-        .map_err(|e| AgentError::Network(format!("build notion client: {e}")))?;
+            .build()
+            .map_err(|e| AgentError::Network(format!("build notion client: {e}")))?;
         Ok(Self { client })
     }
 
@@ -73,9 +73,10 @@ impl NotionClient {
             if let Some(b) = body {
                 req = req.json(b);
             }
-            let resp = req.send().await.map_err(|e| {
-                AgentError::Network(format!("notion request failed: {e}"))
-            })?;
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| AgentError::Network(format!("notion request failed: {e}")))?;
             let status = resp.status();
 
             // 429：仅在首次尝试时退避重试一次。
@@ -90,9 +91,10 @@ impl NotionClient {
                 continue;
             }
 
-            let text = resp.text().await.map_err(|e| {
-                AgentError::Network(format!("read response body: {e}"))
-            })?;
+            let text = resp
+                .text()
+                .await
+                .map_err(|e| AgentError::Network(format!("read response body: {e}")))?;
             if !status.is_success() {
                 let msg = extract_message(&text);
                 if status == reqwest::StatusCode::UNAUTHORIZED
@@ -146,7 +148,11 @@ impl NotionClient {
 fn extract_message(text: &str) -> String {
     serde_json::from_str::<serde_json::Value>(text)
         .ok()
-        .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(|s| s.to_string()))
+        .and_then(|v| {
+            v.get("message")
+                .and_then(|m| m.as_str())
+                .map(|s| s.to_string())
+        })
         .unwrap_or_else(|| text.to_string())
 }
 
@@ -162,10 +168,7 @@ mod tests {
 
     #[test]
     fn extract_message_prefers_field() {
-        assert_eq!(
-            extract_message(r#"{"message":"boom","code":"x"}"#),
-            "boom"
-        );
+        assert_eq!(extract_message(r#"{"message":"boom","code":"x"}"#), "boom");
     }
 
     #[test]

@@ -155,10 +155,11 @@ pub async fn list(account: &NoteAccount, flags: &HashMap<String, String>) -> Res
         .min(100);
     let pool = open(account).await?;
 
-    let rows = sqlx::query("SELECT id, title, updated_at FROM notes ORDER BY updated_at DESC LIMIT ?1")
-        .bind(limit)
-        .fetch_all(&pool)
-        .await?;
+    let rows =
+        sqlx::query("SELECT id, title, updated_at FROM notes ORDER BY updated_at DESC LIMIT ?1")
+            .bind(limit)
+            .fetch_all(&pool)
+            .await?;
 
     if mode_json() {
         let mut items: Vec<Value> = Vec::new();
@@ -232,10 +233,7 @@ pub async fn create(
 }
 
 /// `note read [page_id]`（本地）：读取标题 + 属性 + 正文。
-pub async fn read(
-    account: &NoteAccount,
-    positional: &[String],
-) -> Result<Output> {
+pub async fn read(account: &NoteAccount, positional: &[String]) -> Result<Output> {
     let id = resolve_page_id(account, positional)?;
     let pool = open(account).await?;
 

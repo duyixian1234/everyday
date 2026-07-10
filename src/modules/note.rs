@@ -638,7 +638,11 @@ fn rt_from_str(s: &str) -> Vec<Value> {
 // ============ Block -> Markdown（递归聚合） ============
 
 /// 把页面所有 block 递归渲染为 Markdown，作为 `read` 的正文聚合结果。
-async fn blocks_to_markdown(client: &NotionClient, blocks: &[Value], depth: usize) -> Result<String> {
+async fn blocks_to_markdown(
+    client: &NotionClient,
+    blocks: &[Value],
+    depth: usize,
+) -> Result<String> {
     let mut out = String::new();
     for b in blocks {
         let block_type = b.get("type").and_then(|t| t.as_str()).unwrap_or("");
@@ -1193,7 +1197,10 @@ async fn note_update(
         .and_then(|p| p.get("database_id"))
         .and_then(|d| d.as_str())
     {
-        Some(db_id) => client.get::<Value>(&format!("/databases/{db_id}")).await.ok(),
+        Some(db_id) => client
+            .get::<Value>(&format!("/databases/{db_id}"))
+            .await
+            .ok(),
         None => None,
     };
 
