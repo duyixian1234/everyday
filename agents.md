@@ -119,7 +119,7 @@ pub enum Output {
 | 命令 | 等价 cargo 命令 | 说明 |
 | --- | --- | --- |
 | `just format` | `cargo fmt` | 格式化全部代码 |
-| `just check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` | 格式检查 + lint（零警告） |
+| `just check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` | 格式检查 + lint（fail-fast：`fmt --check` 失败即中止，不跑 clippy） |
 | `just test` | `cargo test` | 运行测试 |
 | `just build` | `cargo build` | 构建 |
 | `just ci` | `check` → `test` → `build` | 完整 CI 流程 |

@@ -13,9 +13,13 @@ default:
 format:
     cargo fmt
 
-# 检查格式与 lint（fmt --check && clippy）
-check:
+# 检查格式与 lint：fmt --check 失败则立即中止，不跑 clippy（fail-fast）
+check: _fmt-check _clippy
+
+_fmt-check:
     cargo fmt --check
+
+_clippy:
     cargo clippy --all-targets -- -D warnings
 
 # 运行测试（cargo test）
