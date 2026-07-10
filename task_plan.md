@@ -41,6 +41,9 @@
 ### Phase 7: 构建、测试、文档、发布 [complete]
 全模块 `cargo build` / `clippy` / 单测 + 集成测试全绿；README + skills 文档与代码一致；CI（三平台 + aarch64 macOS）+ release workflow；**v0.3.0 已打 tag 发布**。
 
+### Phase 8: 中英文 README [complete]
+根 `README.md` 与 `skills/README.md` 已改写为英文；完整中文文档保留为 `README_ZH.md`；`README.md` 与 `README_ZH.md` 顶部均加语言切换链接（English ↔ 简体中文）。
+
 ---
 
 ## 关键设计决策
@@ -122,3 +125,4 @@ username = "me"
 - Phase 5: complete
 - Phase 6: complete
 - Phase 7: complete
+- Phase 8: complete
