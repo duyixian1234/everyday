@@ -91,6 +91,12 @@ impl ModuleRegistry {
             "todo",
             Box::new(crate::modules::todo::TodoModule::new(config.clone())),
         );
+        modules.insert(
+            "bookmark",
+            Box::new(crate::modules::bookmark::BookmarkModule::new(
+                config.clone(),
+            )),
+        );
 
         let _ = account_override; // 各模块按需通过 config 自行解析；此处保留参数以便未来扩展
         Ok(Self { modules })
@@ -106,6 +112,8 @@ impl ModuleRegistry {
 }
 
 // ---- 模块子模块声明 ----
+pub mod bookmark;
+pub mod bookmark_local;
 pub mod calendar;
 pub mod email;
 pub mod local;

@@ -5,8 +5,8 @@
 ## 当前状态（2026-07-10）
 
 - **v0.3.0 已发布**：tag `v0.3.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
-- **模块**：5 个外部集成模块 **mail / cal / rss / note / todo** + `config` 均可用；note/todo 支持本地 SQLite provider，**默认 local**；初版 `fs` / `net` / `sys` 已整体移除。
-- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 126 passed；CI（ubuntu/macos/windows + aarch64 mac）全绿。
+- **模块**：6 个外部集成模块 **mail / cal / rss / note / todo / bookmark** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；初版 `fs` / `net` / `sys` 已整体移除。
+- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 137 passed；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
 
 ## 核心决策时间线（ADR）
@@ -37,6 +37,12 @@
 
 ### 2026-07-10 — 移除过时的 PRD.md
 - PRD 仍描述已删除的 fs/net/sys/剪贴板，与现实脱节；`git rm` 并清理全仓引用，范围改以 `agents.md` 为准（commit `fc14584`）。
+
+### 2026-07-10 — bookmark 模块（书签：Notion + 本地 SQLite）
+- 新增 `bookmark` 模块：动作 `init-db` / `add`（--url --title --tags）/ `list`（--tag 过滤）/ `login`（仅 notion）。
+- 双 provider 对齐 note/todo：`local`（默认，SQLite，表 `bookmarks` + 关联表 `bookmark_tags` 支持按标签精确过滤）与 `notion`（`init-db` 在 Notion 建库 Title/URL/Tags，add/list 走 `notion-client` 强类型映射）。
+- 配置：`[[bookmark.accounts]]` + `default_account.bookmark`；keyring service `everyday/bookmark/<account>` 存 token；`default_database_id` 由 `init-db` 回填。
+- 沿用既有 ADR：不新增 `AgentError` 变体、禁 `unwrap`、用 `toml::Value` 局部编辑 config。
 
 ### 2026-07-10 — 发布 v0.2.0
 - 自 v0.1.0 以来的增量：`feat(todo)` Notion 待办模块 + 共享 notion-client SDK（commit `a721f5c`）、`fix(todo)` Status 改为 select 修复 Notion 过滤、`ci` 增加 aarch64-apple-darwin 到 CI + release 矩阵、移除过时 PRD.md、精简 progress/findings/task_plan 历史。

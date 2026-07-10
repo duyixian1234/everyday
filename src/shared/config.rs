@@ -36,6 +36,10 @@ pub struct Config {
     /// 待办模块配置（基于 Notion）。
     #[serde(default)]
     pub todo: TodoConfig,
+
+    /// 书签模块配置。
+    #[serde(default)]
+    pub bookmark: BookmarkConfig,
 }
 
 /// 各模块默认账户名。
@@ -55,6 +59,10 @@ pub struct DefaultAccount {
     /// 默认待办账户名。
     #[serde(default)]
     pub todo: Option<String>,
+
+    /// 默认书签账户名。
+    #[serde(default)]
+    pub bookmark: Option<String>,
 }
 
 // ---- 邮件 ----
@@ -211,6 +219,42 @@ pub struct TodoAccount {
     pub db_path: Option<String>,
 }
 
+// ---- 书签 (bookmark) ----
+
+/// 书签模块配置。
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct BookmarkConfig {
+    /// 命名账户列表。
+    #[serde(default)]
+    pub accounts: Vec<BookmarkAccount>,
+}
+
+/// 单个书签账户。
+///
+/// `provider` 字段支持 `local`/`sqlite`（本地 SQLite，**默认**）与 `notion`
+/// （远程 Notion）。
+/// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/bookmark/<account>`）。
+/// `parent_page_id` 用于 `init-db` 创建数据库时的父级页面；`default_database_id`
+/// 由 `init-db` 成功后在本地 config 中回填（非机密元数据，可落盘）。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookmarkAccount {
+    /// 账户名（如 `personal`、`work`）。
+    pub name: String,
+    /// 后端提供方：`local`/`sqlite`（本地 SQLite，默认）或 `notion`（远程 Notion）。
+    #[serde(default = "default_provider")]
+    pub provider: String,
+    /// 创建数据库时的父级页面 ID（仅 notion provider，非机密，可落盘）。
+    #[serde(default)]
+    pub parent_page_id: Option<String>,
+    /// 默认书签数据库 ID（`init-db` 后回填；缺省时由 `--db` 显式指定）。
+    #[serde(default)]
+    pub default_database_id: Option<String>,
+    /// 本地 provider 的 SQLite 文件路径（仅 `local`/`sqlite` provider 使用）。
+    /// 缺省时用 `~/.config/everyday/bookmark-<account>.db`。
+    #[serde(default)]
+    pub db_path: Option<String>,
+}
+
 // ---- 加载 / 保存 ----
 
 impl Config {
@@ -300,6 +344,21 @@ impl Config {
             .iter()
             .find(|a| a.name == name)
             .ok_or_else(|| AgentError::AccountNotFound(format!("todo account '{name}'")))
+    }
+
+    /// 解析书签账户。
+    pub fn bookmark_account(&self, override_name: Option<&str>) -> Result<&BookmarkAccount> {
+        let want = override_name.or(self.default_account.bookmark.as_deref());
+        let name = want.ok_or_else(|| {
+            AgentError::AccountNotFound(
+                "no bookmark account specified and no default set in [default_account]".into(),
+            )
+        })?;
+        self.bookmark
+            .accounts
+            .iter()
+            .find(|a| a.name == name)
+            .ok_or_else(|| AgentError::AccountNotFound(format!("bookmark account '{name}'")))
     }
 
     /// keyring 服务名约定：`everyday/<module>/<account>`。
@@ -559,5 +618,44 @@ provider = "notion"
         .unwrap();
         let acc = cfg.todo_account(None).unwrap();
         assert_eq!(acc.name, "personal");
+    }
+
+    #[test]
+    fn parses_bookmark_account_config() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+bookmark = "personal"
+
+[[bookmark.accounts]]
+name = "personal"
+provider = "notion"
+parent_page_id = "page_xyz"
+default_database_id = "db_abc"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.bookmark.accounts.len(), 1);
+        assert_eq!(cfg.bookmark.accounts[0].provider, "notion");
+        assert_eq!(
+            cfg.bookmark.accounts[0].parent_page_id.as_deref(),
+            Some("page_xyz")
+        );
+        assert_eq!(
+            cfg.bookmark.accounts[0].default_database_id.as_deref(),
+            Some("db_abc")
+        );
+    }
+
+    #[test]
+    fn bookmark_provider_defaults_to_local() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[bookmark.accounts]]
+name = "x"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.bookmark.accounts[0].provider, "local");
     }
 }

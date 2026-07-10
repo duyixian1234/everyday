@@ -462,6 +462,7 @@ mail = "work"
 calendar = "personal"
 note = "personal"
 todo = "personal"
+bookmark = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -513,6 +514,23 @@ provider = "local"
 # parent_page_id 为创建任务数据库时的父级页面（init-db 需要），
 # default_database_id 由 `everyday todo init-db` 成功后自动回填。
 # [[todo.accounts]]
+# name = "notion"
+# provider = "notion"
+# parent_page_id = "page_parent_..."
+
+# ---- 书签账户（默认本地 SQLite；可多个）----
+# provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，数据存本地 .db 文件，
+# db_path 可选，缺省为 ~/.config/everyday/bookmark-<account>.db。
+[[bookmark.accounts]]
+name = "personal"
+provider = "local"
+# db_path = "/absolute/path/to/bookmarks.db"   # 可选，覆盖默认路径
+
+# 如需改用 Notion：设 provider = "notion"，通过
+# `everyday bookmark login --account personal` 存入 keyring（service: everyday/bookmark/<account>）；
+# parent_page_id 为创建书签数据库时的父级页面（init-db 需要），
+# default_database_id 由 `everyday bookmark init-db` 成功后自动回填。
+# [[bookmark.accounts]]
 # name = "notion"
 # provider = "notion"
 # parent_page_id = "page_parent_..."
