@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), Notion note/knowledge-base (search, list, create, read, append, update, login), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, capture notes to Notion, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, login, init-db), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -26,7 +26,7 @@ Verify with `everyday --version`. Full install steps (per-platform extraction co
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `note` · `todo` · `config`
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `config`
 
 ## Rules (follow exactly)
 
@@ -36,7 +36,7 @@ Modules: `mail` · `cal` · `rss` · `note` · `todo` · `config`
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `note` (Notion), `todo` (Notion tasks), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
+4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
 
 ## First-time setup (only if config is missing)
 

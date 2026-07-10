@@ -59,3 +59,11 @@
 - `note` 模块接入 `src/notion_client.rs` 共享 `NotionClient`：删除其自建的 `build_client`/`notion_request`/`api_get`/`api_post`/`api_patch` 与 `NOTION_API`/`NOTION_VERSION` 常量，`fetch_all_blocks` 改为接收 `&NotionClient`，所有请求走 `get`/`post`/`patch` + 分页查询。行为不变（401/403→Auth、其它→Network、429 自动退避重试），`note read` 的 block 递归聚合改用 `&NotionClient`。
 - 消除原 ADR「note 暂不复用 notion_client（择机去重）」的偏差，mail/cal/rss 之外两个 Notion 模块现在共用同一底层 SDK。
 - 质量门禁：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 113 passed。
+
+### 2026-07-10 — bookmark 文档对齐（config / README / skills）
+- 补齐 bookmark 模块的文档，使其与代码（commit `79922f6`）一致：
+  - `config.example.toml`：`[default_account]` 加 `bookmark = "personal"`；新增 `[[bookmark.accounts]]`（local provider，注释给出 Notion 备选）。
+  - `README.md` + `README_ZH.md`：概览行、bookmark 小节（命令表 + 选项 + 标签解析说明 + local/Notion provider 说明）、配置示例、使用示例、目录树加 `bookmark.rs`、实现状态表加 bookmark 行。
+  - `skills/everyday-cli/references/COMMANDS.md`：实现状态表 + 完整 `## bookmark` 小节、配置示例、keyring service 命名行补 `everyday/bookmark/personal`。
+  - `skills/everyday-cli/SKILL.md`：frontmatter description、`Modules:` 列表、`Modules.` 描述三处均补 `bookmark`。
+- 纯文档改动；门禁仍全绿：build ✅ / clippy `-D warnings` 零警告 ✅ / 137 tests ✅。

@@ -4,7 +4,7 @@
 
 **语言 / Language:** **English** · [简体中文](README_ZH.md)
 
-`everyday` is a high-performance, memory-safe local CLI toolkit written in Rust. It acts as the "digital hands" of an AI Agent, offering a unified command structure that covers external-integration scenarios — email, calendar, RSS feeds, notes (local SQLite by default / optional Notion), and to-dos (local SQLite by default / optional Notion) — with dual Text / JSON output modes.
+`everyday` is a high-performance, memory-safe local CLI toolkit written in Rust. It acts as the "digital hands" of an AI Agent, offering a unified command structure that covers external-integration scenarios — email, calendar, RSS feeds, notes (local SQLite by default / optional Notion), to-dos (local SQLite by default / optional Notion), and bookmarks (local SQLite by default / optional Notion) — with dual Text / JSON output modes.
 
 ## Features
 
@@ -256,6 +256,34 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 > **Local provider (default)**: no setup needed — just run `everyday todo add` / `list`; the database file and tables are created automatically.
 > **Notion provider**: create an integration in Notion to get an `ntn_...` token → `everyday todo login` to store it in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday todo init-db` to create the task database and authorize the integration to access the parent page. Then `list` / `add` / `start` / `complete` are ready to use.
 
+### bookmark — bookmarks (local SQLite by default / optional Notion)
+
+**Uses the local SQLite provider by default (`provider = "local"`, alias `sqlite`)**: no credentials, no network, bookmarks stored at `~/.config/everyday/bookmark-<account>.db` (a `bookmarks` table plus a `bookmark_tags` relation table enabling precise per-tag filtering), tables auto-created per command, works out of the box. You can also set `provider = "notion"` to use a Notion database: low-level HTTP / token injection / 429 rate-limit retries are handled uniformly by the shared `notion-client`, while this module maps the clean domain model `BookmarkItem` (id / url / title / tags) to Notion's raw properties (Title / URL / Tags) with strong typing (the token lives only in the system keyring `everyday/bookmark/<account>`; non-secret metadata such as `database_id` may be stored in the config). Command usage is identical across both providers.
+
+| Command | Description | Usage |
+|------|------|------|
+| `login` | Interactively store the Notion token in the keyring (only needed for the `notion` provider) | `everyday bookmark login [--account NAME]` |
+| `init-db` | Init storage: local provider creates the SQLite tables; Notion provider creates the bookmark database (requires `parent_page_id`) and back-fills `database_id` | `everyday bookmark init-db [--account NAME] [--parent PAGE_ID]` |
+| `list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list [--tag TAG] [--db ID]` |
+| `add` | Add a bookmark | `everyday bookmark add --url U --title T [--tags a,b] [--db ID]` |
+
+**Option details**:
+
+| Option | Applies to | Description |
+|------|----------|------|
+| `--account NAME` | all | Specify the account |
+| `--parent PAGE_ID` | `init-db` | Parent page when creating the database; falls back to config `parent_page_id` |
+| `--db ID` | `list` / `add` | Target database ID (Notion only); falls back to config `default_database_id` (auto-filled after `init-db`) |
+| `--tag TAG` | `list` | Filter by a single tag (exact match); omit to list all |
+| `--url U` | `add` | Bookmark URL (required) |
+| `--title T` | `add` | Bookmark title (required) |
+| `--tags a,b` | `add` | Comma-separated tags (optional; e.g. `rust,cli`) |
+
+**Tag parsing**: `--tags "rust, cli , web"` is split on commas, trimmed, and empty entries dropped → `["rust", "cli", "web"]`.
+
+> **Local provider (default)**: no setup needed — just run `everyday bookmark add` / `list`; the database file and tables are created automatically.
+> **Notion provider**: create an integration in Notion to get an `ntn_...` token → `everyday bookmark login` to store it in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday bookmark init-db` to create the bookmark database and authorize the integration to access the parent page. Then `list` / `add` are ready to use.
+
 ## Output Modes
 
 ### Text mode (default)
@@ -299,6 +327,7 @@ Config file path: `~/.config/everyday/config.toml`
 mail = "work"
 calendar = "personal"
 note = "personal"
+bookmark = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -338,6 +367,11 @@ provider = "local"
 name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/todos.db"   # optional, defaults to ~/.config/everyday/todo-personal.db
+
+[[bookmark.accounts]]
+name = "personal"
+provider = "local"
+# db_path = "/absolute/path/to/bookmarks.db"   # optional, defaults to ~/.config/everyday/bookmark-personal.db
 
 # For Notion: switch the account to provider = "notion" and configure it per each module's "prerequisites"
 # [[note.accounts]]
@@ -467,6 +501,27 @@ everyday todo start <page_id>
 everyday todo complete <page_id>
 ```
 
+### Bookmarks (local SQLite by default)
+
+```bash
+# The local provider needs no login — just add / list (tables auto-created);
+# only provider = "notion" requires this one-time setup: store the token, create the bookmark database
+everyday bookmark login
+everyday bookmark init-db --parent "<page_id>"   # Notion only: authorize the integration to access the parent page
+
+# Add a bookmark with tags
+everyday bookmark add \
+  --url "https://www.rust-lang.org" \
+  --title "The Rust Programming Language" \
+  --tags "rust,lang"
+
+# List all bookmarks (JSON)
+everyday bookmark list --json
+
+# Filter by a single tag
+everyday bookmark list --tag rust
+```
+
 ## Project Structure
 
 ```
@@ -484,7 +539,8 @@ everyday/
 │       ├── calendar.rs  # Calendar (CalDAV)
 │       ├── rss.rs       # RSS/Atom
 │       ├── note.rs      # Notes & knowledge base (Notion API)
-│       └── todo.rs      # To-do tasks (Notion, based on notion_client)
+│       ├── todo.rs      # To-do tasks (Notion, based on notion_client)
+│       ├── bookmark.rs  # Bookmarks (Notion, based on notion_client)
 ├── skills/
 │   ├── README.md              # Concise project intro for Agent users
 │   └── everyday-cli/
@@ -542,6 +598,7 @@ Adding a module only takes: create a file + implement the trait + register one l
 | `rss` | ✅ Fully available | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Fully available | login / search / list / create / read / append / update (local SQLite by default, optional Notion API) |
 | `todo` | ✅ Fully available | login / init-db / list / add / start / complete (local SQLite by default, optional Notion API) |
+| `bookmark` | ✅ Fully available | login / init-db / list / add (local SQLite by default, optional Notion API) |
 
 ## License
 

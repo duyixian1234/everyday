@@ -22,6 +22,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Complete | Notion: login / search / list / create / read / append / update |
 | `todo` | ✅ Complete | Notion tasks (shared `notion-client` SDK): login / init-db / list / add / start / complete |
+| `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK): login / init-db / list / add |
 
 ---
 
@@ -241,6 +242,45 @@ Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate
 
 ---
 
+## bookmark — bookmarks (local SQLite by default / optional Notion)
+
+Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `BookmarkItem` (id / url / title / tags) to/from Notion page properties (Title / URL / Tags). Credentials: `everyday bookmark login` stores the Notion Integration Token (`ntn_...`) in the OS keyring (service `everyday/bookmark/<account>`); the token never touches disk. The **local SQLite provider is the default** (`provider = "local"`, alias `sqlite`): no credentials, no network, bookmarks stored at `~/.config/everyday/bookmark-<account>.db`. Command usage is identical across both providers.
+
+**Setup (Notion only):** create a Notion integration → `everyday bookmark login` → add `[[bookmark.accounts]]` with `parent_page_id` → `everyday bookmark init-db` (creates the Title/URL/Tags database and writes `database_id` back to config; the integration must be granted access to the parent page).
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `bookmark login` | Interactively enter Notion token into the OS keyring | `everyday bookmark login --account personal` |
+| `bookmark init-db` | Create the bookmark database (Notion needs `parent_page_id`); writes `database_id` back to config | `everyday bookmark init-db --parent "page_xyz"` |
+| `bookmark list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list --tag rust --json` |
+| `bookmark add` | Add a bookmark (`--url` and `--title` required; `--tags` optional, comma-separated) | `everyday bookmark add --url "https://..." --title "Rust" --tags "rust,cli" --json` |
+
+### bookmark options
+
+| Flag | Applies to | Description |
+|------|-----------|-------------|
+| `--account NAME` | all | Specify account (override default) |
+| `--parent PAGE_ID` | `init-db` | Parent page for the new database; falls back to config `parent_page_id` |
+| `--db ID` | `list` / `add` | Target database; falls back to config `default_database_id` (written by `init-db`, Notion only) |
+| `--tag TAG` | `list` | Filter by a single tag (exact match); omit to list all |
+| `--url U` | `add` | Bookmark URL (required) |
+| `--title T` | `add` | Bookmark title (required) |
+| `--tags a,b` | `add` | Comma-separated tags (optional, e.g. `rust,cli`); trimmed, empty entries dropped |
+
+### bookmark list — JSON output (array of BookmarkItem)
+
+```json
+[{"id":"b18c0f92234d6a12c","url":"https://www.rust-lang.org","title":"The Rust Programming Language","tags":["rust","lang"]}]
+```
+
+### bookmark add — JSON output (object)
+
+```json
+{"id":"b18c0f92234d6a12c","url":"https://www.rust-lang.org","title":"The Rust Programming Language","tags":["rust","lang"]}
+```
+
+---
+
 ## Config file format
 
 ```toml
@@ -249,6 +289,7 @@ mail = "work"
 calendar = "personal"
 note = "personal"
 todo = "personal"
+bookmark = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -283,9 +324,16 @@ provider = "notion"
 parent_page_id = "page_parent_..."     # init-db needs this
 # default_database_id is written back here automatically by `everyday todo init-db`
 # Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/todo/personal"
+
+[[bookmark.accounts]]
+name = "personal"
+provider = "notion"
+parent_page_id = "page_parent_..."     # init-db needs this
+# default_database_id is written back here automatically by `everyday bookmark init-db`
+# Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/bookmark/personal"
 ```
 
-**Keyring service-name convention:** `everyday/<module>/<account>` (e.g. `everyday/mail/work`, `everyday/note/personal`, `everyday/todo/personal`).
+**Keyring service-name convention:** `everyday/<module>/<account>` (e.g. `everyday/mail/work`, `everyday/note/personal`, `everyday/todo/personal`, `everyday/bookmark/personal`).
 
 ---
 

@@ -8,6 +8,7 @@ mail = "work"
 calendar = "personal"
 note = "personal"
 todo = "personal"
+bookmark = "personal"
 
 # ---- 邮件账户（可多个）----
 [[mail.accounts]]
@@ -91,3 +92,23 @@ provider = "local"
 # name = "notion"
 # provider = "notion"
 # parent_page_id = "page_parent_..."     # 例如：用于承载任务数据库的 Notion 页面
+
+# ---- 书签账户（默认本地 SQLite；可多个）----
+# provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，数据存本地 .db 文件。
+# db_path 可选，缺省为 ~/.config/everyday/bookmark-<account>.db。用法：
+#   everyday bookmark init-db      # 建表（首次可选，各命令会自动建表）
+#   everyday bookmark add --url "https://..." --title "标题" --tags "rust,cli"
+#   everyday bookmark list --tag rust
+[[bookmark.accounts]]
+name = "personal"
+provider = "local"
+# db_path = "/absolute/path/to/bookmarks.db"   # 可选，覆盖默认路径
+
+# 如需改用 Notion：设 provider = "notion"，通过
+# `everyday bookmark login --account NAME` 存入 keyring（service: everyday/bookmark/<account>），
+# parent_page_id 为创建书签数据库时的父级页面（init-db 需要），
+# default_database_id 由 `everyday bookmark init-db` 成功后自动回填。
+# [[bookmark.accounts]]
+# name = "notion"
+# provider = "notion"
+# parent_page_id = "page_parent_..."     # 例如：用于承载书签数据库的 Notion 页面

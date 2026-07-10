@@ -4,7 +4,7 @@
 
 **语言 / Language：** [English](README.md) · **简体中文**
 
-`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（默认本地 SQLite / 可选 Notion）、待办（默认本地 SQLite / 可选 Notion）等外部集成场景，支持 Text / JSON 双输出模式。
+`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（默认本地 SQLite / 可选 Notion）、待办（默认本地 SQLite / 可选 Notion）、书签（默认本地 SQLite / 可选 Notion）等外部集成场景，支持 Text / JSON 双输出模式。
 
 ## 特性
 
@@ -256,6 +256,34 @@ everyday config set default_account.mail personal
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday todo add` / `list` 即可，数据库文件与表自动创建。
 > **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday todo login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday todo init-db` 创建任务数据库并授权该 integration 访问父级页面。之后 `list` / `add` / `start` / `complete` 即可使用。
 
+### bookmark — 书签（默认本地 SQLite / 可选 Notion）
+
+**默认使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，书签存于 `~/.config/everyday/bookmark-<account>.db`（主表 `bookmarks` + 关联表 `bookmark_tags`，支持按标签精确过滤），各命令自动建表，开箱即用。也可设 `provider = "notion"` 改用 Notion 数据库：底层 HTTP / Token 注入 / 429 限流重试由共享 `notion-client` 统一处理，本模块把干净的领域模型 `BookmarkItem`（id / url / title / tags）与 Notion 原始属性（Title / URL / Tags）做强类型映射（Token 仅存系统密钥环 `everyday/bookmark/<account>`，`database_id` 等非机密元数据可落盘 config）。命令用法在两种 provider 下一致。
+
+| 命令 | 说明 | 用法 |
+|------|------|------|
+| `login` | 交互式存储 Notion Token 到密钥环（仅 `notion` provider 需要） | `everyday bookmark login [--account NAME]` |
+| `init-db` | 初始化存储：本地 provider 建 SQLite 表；Notion provider 创建书签数据库（需 `parent_page_id`）并回填 `database_id` | `everyday bookmark init-db [--account NAME] [--parent PAGE_ID]` |
+| `list` | 列出书签（`--tag` 按单个标签过滤） | `everyday bookmark list [--tag TAG] [--db ID]` |
+| `add` | 新增书签 | `everyday bookmark add --url U --title T [--tags a,b] [--db ID]` |
+
+**选项说明**：
+
+| 选项 | 适用命令 | 说明 |
+|------|----------|------|
+| `--account NAME` | 全部 | 指定账户 |
+| `--parent PAGE_ID` | `init-db` | 创建数据库时的父级页面；未指定则读取配置 `parent_page_id` |
+| `--db ID` | `list` / `add` | 目标数据库 ID（仅 Notion）；未指定则读取配置 `default_database_id`（`init-db` 后自动回填） |
+| `--tag TAG` | `list` | 按单个标签过滤（精确匹配）；不指定则列出全部 |
+| `--url U` | `add` | 书签 URL（必填） |
+| `--title T` | `add` | 书签标题（必填） |
+| `--tags a,b` | `add` | 逗号分隔的标签（可选，如 `rust,cli`） |
+
+**标签解析**：`--tags "rust, cli , web"` 按逗号拆分、去空白、丢弃空项 → `["rust", "cli", "web"]`。
+
+> **本地 provider（默认）**：无需任何前置步骤，直接 `everyday bookmark add` / `list` 即可，数据库文件与表自动创建。
+> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday bookmark login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday bookmark init-db` 创建书签数据库并授权该 integration 访问父级页面。之后 `list` / `add` 即可使用。
+
 ## 输出模式
 
 ### Text 模式（默认）
@@ -299,6 +327,7 @@ JSON 模式下错误格式：
 mail = "work"
 calendar = "personal"
 note = "personal"
+bookmark = "personal"
 
 [[mail.accounts]]
 name = "work"
@@ -338,6 +367,11 @@ provider = "local"
 name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/todos.db"   # 可选，缺省 ~/.config/everyday/todo-personal.db
+
+[[bookmark.accounts]]
+name = "personal"
+provider = "local"
+# db_path = "/absolute/path/to/bookmarks.db"   # 可选，缺省 ~/.config/everyday/bookmark-personal.db
 
 # 如需 Notion：把对应账户改为 provider = "notion"，并按各模块「前置」说明配置
 # [[note.accounts]]
@@ -467,6 +501,27 @@ everyday todo start <page_id>
 everyday todo complete <page_id>
 ```
 
+### 书签（默认本地 SQLite）
+
+```bash
+# 本地 provider 无需登录，直接 add / list 即可（表自动创建）；
+# 仅 provider = "notion" 时才需以下一次性配置：存 Token、创建书签数据库
+everyday bookmark login
+everyday bookmark init-db --parent "<page_id>"   # 仅 Notion：需在 Notion 把父页面授权给该 integration
+
+# 新增带标签的书签
+everyday bookmark add \
+  --url "https://www.rust-lang.org" \
+  --title "The Rust Programming Language" \
+  --tags "rust,lang"
+
+# 列出全部书签（JSON）
+everyday bookmark list --json
+
+# 按单个标签过滤
+everyday bookmark list --tag rust
+```
+
 ## 项目结构
 
 ```
@@ -484,7 +539,8 @@ everyday/
 │       ├── calendar.rs  # 日历（CalDAV）
 │       ├── rss.rs       # RSS/Atom
 │       ├── note.rs      # 笔记与知识库（Notion API）
-│       └── todo.rs      # 待办任务（Notion，基于 notion_client）
+│       ├── todo.rs      # 待办任务（Notion，基于 notion_client）
+│       └── bookmark.rs  # 书签（Notion，基于 notion_client）
 ├── skills/
 │   ├── README.md              # 面向 Agent 用户的精简项目介绍
 │   └── everyday-cli/
@@ -542,6 +598,7 @@ pub trait Executor: Send + Sync {
 | `rss` | ✅ 完整可用 | follow / list / unfollow / digest / fetch |
 | `note` | ✅ 完整可用 | login / search / list / create / read / append / update（默认本地 SQLite，可选 Notion API） |
 | `todo` | ✅ 完整可用 | login / init-db / list / add / start / complete（默认本地 SQLite，可选 Notion API） |
+| `bookmark` | ✅ 完整可用 | login / init-db / list / add（默认本地 SQLite，可选 Notion API） |
 
 ## 许可证
 
