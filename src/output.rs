@@ -70,7 +70,7 @@ impl Output {
     }
 }
 
-/// 将错误渲染为输出字符串。JSON 模式输出 PRD 规定格式。
+/// 将错误渲染为输出字符串。JSON 模式输出 `agents.md` 规定格式。
 pub fn render_error(err: &AgentError, mode: RenderMode) -> String {
     match mode {
         RenderMode::Json => serde_json::to_string(err).unwrap_or_else(|_| {
@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[test]
-    fn error_renders_prd_json_format() {
+    fn error_renders_spec_json_format() {
         let err = AgentError::Network("timeout".into());
         let s = render_error(&err, RenderMode::Json);
         let v: Value = serde_json::from_str(&s).unwrap();

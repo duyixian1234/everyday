@@ -477,7 +477,6 @@ everyday/
 │           └── COMMANDS.md    # 完整命令参考（按需加载）
 ├── Cargo.toml
 ├── config.example.toml
-├── PRD.md
 └── agents.md            # AI Agent 协作规范
 ```
 

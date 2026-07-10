@@ -1,6 +1,6 @@
 //! 统一错误类型 `AgentError`。
 //!
-//! JSON 模式下序列化为 PRD 规定的格式：
+//! JSON 模式下序列化为 `agents.md` 规定的格式：
 //! `{"error": "ErrorType", "message": "Details..."}`
 
 use serde::ser::SerializeStruct;
@@ -117,7 +117,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn json_error_format_matches_prd() {
+    fn json_error_format_matches_spec() {
         let err = AgentError::AccountNotFound("work".into());
         let json = serde_json::to_value(&err).unwrap();
         assert_eq!(json["error"], "AccountNotFound");

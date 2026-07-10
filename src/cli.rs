@@ -1,6 +1,6 @@
 //! CLI 参数定义（clap derive）。
 //!
-//! 采用扁平结构 + `trailing_var_arg`，精确匹配 PRD 的
+//! 采用扁平结构 + `trailing_var_arg`，精确匹配 `agents.md` 的
 //! `everyday <module> <action> [options]` 形态：
 //! - `module` / `action` 为位置参数
 //! - `args` 捕获剩余参数，交给模块自行解析

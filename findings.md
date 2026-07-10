@@ -179,7 +179,7 @@ _(持续更新)_
 - 移除 `src/modules/fs.rs` 与 `src/modules/network.rs`，注销 `ModuleRegistry` 注册，更新 `cli.rs` / `agents.md` / `README.md` / skill 文档。
 - `src/modules/system.rs` 整体移除（`sys` 不保留）。`sys status` 输出的 CPU/内存/磁盘信息代理可经系统工具直接获取，无差异化价值，与"外部集成接口"定位不符。
 - `Cargo.toml` 移除仅 fs/net/sys 使用的依赖：`scraper`、`ignore`、`walkdir`、`arboard`、`sysinfo`、`notify`；保留 `reqwest`（rss 复用）。
-- `PRD.md` 按项目约定为只读，不在本次修改；定位变更以 `agents.md`「范围与定位」节为权威说明。
+- `PRD.md` 当时按项目约定为只读，未在本轮修改；定位变更以 `agents.md`「范围与定位」节为权威说明。该文件已于后续移除。
 
 ## 笔记(note)模块实现（2026-07-10，基于 Notion API）
 

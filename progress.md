@@ -362,7 +362,7 @@ _(暂无)_
 
 ### 下一步
 - Phase 7 全量构建/测试/文档
-- 剩余历史文档（PRD.md 按约定只读不改）定位与 agents.md 口径一致
+- 历史文档口径：原 PRD.md 已移除，范围以 `agents.md`「范围与定位」节为权威说明
 
 ---
 
@@ -456,4 +456,24 @@ _(暂无)_
 ### 下一步
 - 真实 Notion 联调（提供 Integration Token + parent_page_id，并授予 integration 访问权限）。
 - 视反馈为 `list` 增加 `--filter`/`--sort` 自定义，或将 note 迁移到共享 `notion_client` 去重。
+
+---
+
+## Session 2026-07-10 (移除过时的 PRD.md)
+
+### 需求
+用户指出 PRD.md 已过时（仍描述已移除的 `fs`/`net`/`sys`/剪贴板模块），要求移除。
+
+### 已完成
+- `git rm PRD.md`：删除过时文档（原本约定只读，但定位早已收窄为"外部集成接口"，文档与现实脱节）。
+- 清理指向 PRD.md 的引用：
+  - `agents.md`：概述去掉"详见 PRD.md"，改指「范围与定位」节；目录树删除 PRD.md 行。
+  - `README.md`：目录树删除 PRD.md 行。
+  - `task_plan.md`：头部 `**PRD：**` 改为指向 `agents.md`「范围与定位」节并标注已移除。
+  - `progress.md` / `findings.md`：将"PRD.md 按约定只读"的历史记录更新为"已移除"。
+  - `src/cli.rs` / `src/error.rs` / `src/output.rs`：注释与测试名中的 "PRD" 改为 "agents.md"，避免指向已删文档。
+
+### 测试结果
+- `cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 113 passed。
+- 确认全仓不再有指向 `PRD.md` 文件路径的活跃引用（仅剩历史记录中的"已移除"说明）。
 

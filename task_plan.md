@@ -1,7 +1,7 @@
 # Everyday 开发计划
 
 **项目：** Everyday — The Rust-powered hands for your AI Agent
-**PRD：** ./PRD.md
+**范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
 **目标：** 按 PRD V2.0 构建 CLI 工具集，先完成基础架构（agents.md / config / Executor trait / Output），再逐步填充模块。
 
