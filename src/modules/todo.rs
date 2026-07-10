@@ -77,11 +77,14 @@ struct TextWrapper {
 }
 #[derive(Debug, Deserialize)]
 struct StatusProperty {
-    status: StatusDetail,
-}
-#[derive(Debug, Deserialize)]
-struct StatusDetail {
-    name: String,
+    /// Notion 有两种状态属性类型：`select`（init-db 创建的类型）与 `status`
+    /// （Notion 新版状态属性）。API 响应里分别以 `select` / `status` 为键返回，
+    /// 这里两个都收，读哪个用哪个，保证与 init-db 创建的 `select` 数据库兼容，
+    /// 也能兼容手动建成的 `status` 属性数据库。
+    #[serde(default)]
+    select: Option<SelectDetail>,
+    #[serde(default)]
+    status: Option<SelectDetail>,
 }
 #[derive(Debug, Deserialize)]
 struct DateProperty {
@@ -119,7 +122,13 @@ impl From<NotionPage> for TodoItem {
                 .first()
                 .map(|t| t.plain_text.clone())
                 .unwrap_or_default(),
-            status: page.properties.status.status.name,
+            status: page
+                .properties
+                .status
+                .select
+                .or(page.properties.status.status)
+                .map(|d| d.name)
+                .unwrap_or_default(),
             due: page.properties.due.and_then(|d| d.date).map(|d| d.start),
             priority: page
                 .properties
@@ -334,7 +343,7 @@ async fn todo_list(account: &TodoAccount, flags: &HashMap<String, String>) -> Re
     if !show_all {
         body["filter"] = json!({
             "property": "Status",
-            "status": { "does_not_equal": "Done" }
+            "select": { "does_not_equal": "Done" }
         });
     }
 
@@ -403,7 +412,7 @@ async fn todo_add(account: &TodoAccount, flags: &HashMap<String, String>) -> Res
 
     let mut props = json!({
         "Task": { "title": [{ "text": { "content": title } }] },
-        "Status": { "status": { "name": STATUS_TODO } }
+        "Status": { "select": { "name": STATUS_TODO } }
     });
     if let Some(due) = flags.get("due") {
         props["Due"] = json!({ "date": { "start": due } });
@@ -450,7 +459,7 @@ async fn todo_set_status(
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    let body = json!({ "properties": { "Status": { "status": { "name": status } } } });
+    let body = json!({ "properties": { "Status": { "select": { "name": status } } } });
     let updated: Value = client.patch(&format!("/pages/{page_id}"), &body).await?;
     let id = updated
         .get("id")
@@ -566,13 +575,14 @@ mod tests {
     use super::*;
 
     /// 构造一个 NotionPage 原始 JSON，验证 From 转换。
+    /// init-db 创建的 Status 为 `select` 类型，这里用 select 键。
     #[test]
     fn notion_page_to_todo_item() {
         let page = json!({
             "id": "page_123",
             "properties": {
                 "Task": { "title": [{ "plain_text": "写文档" }] },
-                "Status": { "status": { "name": "In Progress" } },
+                "Status": { "select": { "name": "In Progress" } },
                 "Due": { "date": { "start": "2026-07-15" } },
                 "Priority": { "select": { "name": "P0" } }
             }
@@ -586,6 +596,21 @@ mod tests {
         assert_eq!(item.priority.as_deref(), Some("P0"));
     }
 
+    /// 兼容手动建成的 `status` 类型属性（新版 Notion 状态属性）。
+    #[test]
+    fn notion_page_status_property_fallback() {
+        let page = json!({
+            "id": "p_status",
+            "properties": {
+                "Task": { "title": [{ "plain_text": "状态属性任务" }] },
+                "Status": { "status": { "name": "Done" } }
+            }
+        });
+        let np: NotionPage = serde_json::from_value(page).unwrap();
+        let item = TodoItem::from(np);
+        assert_eq!(item.status, "Done");
+    }
+
     /// 缺失 Due / Priority 时应为 None。
     #[test]
     fn notion_page_without_optional_fields() {
@@ -593,7 +618,7 @@ mod tests {
             "id": "p2",
             "properties": {
                 "Task": { "title": [{ "plain_text": "裸任务" }] },
-                "Status": { "status": { "name": "Todo" } }
+                "Status": { "select": { "name": "Todo" } }
             }
         });
         let np: NotionPage = serde_json::from_value(page).unwrap();
