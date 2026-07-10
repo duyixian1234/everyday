@@ -4,9 +4,9 @@
 
 ## 当前状态（2026-07-10）
 
-- **v0.2.0 已发布**：tag `v0.2.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
-- **模块**：5 个外部集成模块 **mail / cal / rss / note / todo** + `config` 均可用；初版 `fs` / `net` / `sys` 已整体移除。
-- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 113 passed；CI（ubuntu/macos/windows + aarch64 mac）全绿。
+- **v0.3.0 已发布**：tag `v0.3.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
+- **模块**：5 个外部集成模块 **mail / cal / rss / note / todo** + `config` 均可用；note/todo 支持本地 SQLite provider，**默认 local**；初版 `fs` / `net` / `sys` 已整体移除。
+- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 126 passed；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
 
 ## 核心决策时间线（ADR）
@@ -41,6 +41,11 @@
 ### 2026-07-10 — 发布 v0.2.0
 - 自 v0.1.0 以来的增量：`feat(todo)` Notion 待办模块 + 共享 notion-client SDK（commit `a721f5c`）、`fix(todo)` Status 改为 select 修复 Notion 过滤、`ci` 增加 aarch64-apple-darwin 到 CI + release 矩阵、移除过时 PRD.md、精简 progress/findings/task_plan 历史。
 - 版本号 `0.1.0 → 0.2.0`（Cargo.toml + Cargo.lock 由 cargo 自动更新）；tag `v0.2.0` 触发 release workflow 构建三平台 + aarch64 macOS 预编译二进制。
+
+### 2026-07-10 — 发布 v0.3.0
+- 自 v0.2.0 以来的增量：`feat(note,todo)` 新增本地 SQLite provider（sqlx，`provider = "local"`/`sqlite`）、`feat(note,todo)` **默认 provider 由 notion 改为 local**（config init/示例/文档同步；显式 `provider = "notion"` 旧配置向后兼容）。
+- 版本号 `0.2.0 → 0.3.0`（Cargo.toml + Cargo.lock 由 cargo 自动更新）；tag `v0.3.0` 触发 release workflow 构建三平台 + aarch64 macOS 预编译二进制。
+- 质量门禁：build ✅ / clippy `-D warnings` 零警告 ✅ / `cargo test` 126 passed ✅。
 
 ### 2026-07-10 — 重构：清理 dead_code + note 接入共享 notion-client
 - 移除 `main.rs` 的 crate 级 `#![allow(dead_code)]`（该抑制原本为「预留公共 API」而加，现模块已齐备会掩盖死代码），恢复 clippy 对死代码的正常检查。
