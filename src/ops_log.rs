@@ -10,6 +10,7 @@
 
 use std::path::PathBuf;
 
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
@@ -37,7 +38,7 @@ const LOGGED_MODULES: &[&str] = &["todo", "note", "bookmark"];
 const LOGGED_ACTIONS: &[&str] = &["add", "start", "complete", "delete", "create", "update"];
 
 /// 解析 ops-log.db 路径。
-fn ops_log_path() -> Result<PathBuf> {
+pub(crate) fn ops_log_path() -> Result<PathBuf> {
     let dir = dirs::config_dir().ok_or_else(|| {
         crate::error::AgentError::Config("cannot determine config directory".into())
     })?;
@@ -45,7 +46,7 @@ fn ops_log_path() -> Result<PathBuf> {
 }
 
 /// 打开（必要时创建）ops-log.db 连接池。
-async fn open() -> Result<SqlitePool> {
+pub(crate) async fn open() -> Result<SqlitePool> {
     let path = ops_log_path()?;
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -229,6 +230,118 @@ fn extract_from_output(
     };
 
     Ok((ref_id, title, metadata))
+}
+
+// ============ 读取（用于 timeline 投影） ============
+
+/// ops-log 行投影供 timeline 使用的形态。
+#[derive(Debug, Clone)]
+#[allow(dead_code)] // module 已通过 source 暴露给 timeline,保留供未来过滤
+pub struct OpsLogEntry {
+    /// 模块名（`todo` / `note` / `bookmark`），同时作为 timeline source。
+    pub module: String,
+    pub account: String,
+    /// 操作类型（`add` / `create` / `update` / `complete` / `start` / `delete`），
+    /// 作为 timeline `event_type`。
+    pub action: String,
+    pub ref_id: String,
+    pub title: String,
+    pub metadata: Value,
+    /// RFC3339 字符串，timeline 端 parse 为 UTC DateTime。
+    pub occurred_at: String,
+}
+
+/// 读取 ops-log.db 中指定 module 在 `[from, to]` 窗口内的所有条目。
+///
+/// - `module`：`todo` / `note` / `bookmark` 之一。
+/// - `from`：UTC 时间，inclusive；entries with `occurred_at >= from`。
+/// - `to`：UTC 时间，inclusive（None = 不设上限）。
+///
+/// 用于 [`OpsLogProvider`] 在每次 sync 时把 ops-log 行投影到 timeline events 表。
+/// DB 不存在时返回 `Ok(vec![])`（不报错），让 `--sync` 在新用户环境也能用。
+pub async fn fetch_ops_log_for_timeline(
+    module: &str,
+    from: DateTime<Utc>,
+    to: Option<DateTime<Utc>>,
+) -> Result<Vec<OpsLogEntry>> {
+    use chrono::{DateTime, Utc};
+
+    let path = ops_log_path()?;
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let pool = open().await?;
+    let from_str = from.to_rfc3339();
+    let to_str = to.map(|t: DateTime<Utc>| t.to_rfc3339());
+
+    // 动态 SQL：`to` 可能是 None。
+    let rows = if let Some(ref to_s) = to_str {
+        sqlx::query_as::<_, OpsRow>(
+            "SELECT module, account, action, ref_id, title, metadata, occurred_at \
+             FROM ops_log \
+             WHERE module = ?1 AND occurred_at >= ?2 AND occurred_at <= ?3 \
+             ORDER BY occurred_at ASC",
+        )
+        .bind(module)
+        .bind(&from_str)
+        .bind(to_s)
+        .fetch_all(&pool)
+        .await?
+    } else {
+        sqlx::query_as::<_, OpsRow>(
+            "SELECT module, account, action, ref_id, title, metadata, occurred_at \
+             FROM ops_log \
+             WHERE module = ?1 AND occurred_at >= ?2 \
+             ORDER BY occurred_at ASC",
+        )
+        .bind(module)
+        .bind(&from_str)
+        .fetch_all(&pool)
+        .await?
+    };
+
+    Ok(rows.into_iter().map(Into::into).collect())
+}
+
+/// sqlx 行中间结构（手写 FromRow 避免依赖 sqlx macros feature）。
+struct OpsRow {
+    module: String,
+    account: String,
+    action: String,
+    ref_id: String,
+    title: String,
+    metadata: String,
+    occurred_at: String,
+}
+
+impl<'r> sqlx::FromRow<'r, sqlx::sqlite::SqliteRow> for OpsRow {
+    fn from_row(row: &'r sqlx::sqlite::SqliteRow) -> sqlx::Result<Self> {
+        use sqlx::Row;
+        Ok(Self {
+            module: row.try_get("module")?,
+            account: row.try_get("account")?,
+            action: row.try_get("action")?,
+            ref_id: row.try_get("ref_id")?,
+            title: row.try_get("title")?,
+            metadata: row.try_get("metadata")?,
+            occurred_at: row.try_get("occurred_at")?,
+        })
+    }
+}
+
+impl From<OpsRow> for OpsLogEntry {
+    fn from(r: OpsRow) -> Self {
+        let metadata = serde_json::from_str(&r.metadata).unwrap_or(Value::Null);
+        Self {
+            module: r.module,
+            account: r.account,
+            action: r.action,
+            ref_id: r.ref_id,
+            title: r.title,
+            metadata,
+            occurred_at: r.occurred_at,
+        }
+    }
 }
 
 #[cfg(test)]

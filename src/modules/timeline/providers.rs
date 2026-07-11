@@ -397,6 +397,63 @@ impl TimelineProvider for BookmarkProvider {
     }
 }
 
+// ============ Ops-log Provider ============
+
+/// 把 ops-log.db 中某 module 的行投影为 TimelineEvent。
+///
+/// 由 notion 账户的 todo/note/bookmark 写入路径（AOP hook）→ ops-log。
+/// 这里把 ops-log 转成 timeline events,使这些操作能在 `timeline list` 中可见。
+///
+/// ADR 0007 不查 notion API，timeline 通过此 provider 看本地 ops-log。
+pub struct OpsLogProvider {
+    module: &'static str,
+}
+
+impl OpsLogProvider {
+    pub fn new(module: &'static str) -> Self {
+        debug_assert!(
+            matches!(module, "todo" | "note" | "bookmark"),
+            "OpsLogProvider only supports logged modules"
+        );
+        Self { module }
+    }
+}
+
+#[async_trait]
+impl TimelineProvider for OpsLogProvider {
+    fn source(&self) -> &'static str {
+        self.module
+    }
+    fn account(&self) -> Option<&str> {
+        // ops-log 单 provider 覆盖该 module 的所有 account，
+        // 通过事件自身的 `account` 字段区分；sync_state 行 account = ""。
+        None
+    }
+
+    async fn sync(&self, window: &TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
+        let entries =
+            crate::ops_log::fetch_ops_log_for_timeline(self.module, window.from, Some(window.to))
+                .await?;
+        let events: Vec<TimelineEvent> = entries
+            .iter()
+            .filter_map(|e| {
+                let timestamp = parse_rfc3339(&e.occurred_at)?;
+                Some(TimelineEvent::new(
+                    self.module,
+                    Some(&e.account),
+                    &e.action,
+                    timestamp,
+                    &e.title,
+                    "",
+                    &e.ref_id,
+                    e.metadata.clone(),
+                ))
+            })
+            .collect();
+        Ok((events, SyncMode::Append))
+    }
+}
+
 // ============ 辅助 ============
 
 /// 解析 RFC3339 时间字符串。
@@ -413,7 +470,11 @@ fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
 /// - Mail：每个 mail 账户一个 MailProvider。
 /// - Cal：每个 calendar 账户一个 CalProvider。
 /// - RSS：单个 RssProvider（无账户概念）。
-/// - Todo/Note/Bookmark：仅 local provider 账户（notion 账户跳过，走 ops-log）。
+/// - Todo/Note/Bookmark：
+///   - local provider 账户 → 单独的 XxxProvider（直拉 SQLite）。
+///   - notion provider 账户 → 注册 [`OpsLogProvider`]（投影 ops-log.db）。
+///
+/// 两者可共存（不同账户不同 provider）。
 pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
     let mut providers: Vec<Box<dyn TimelineProvider>> = Vec::new();
 
@@ -435,25 +496,49 @@ pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
         providers.push(Box::new(RssProvider::new(config.clone())));
     }
 
-    // Todo（仅 local provider）
+    // Todo：local 账户走直拉，notion 账户走 ops-log 投影。
+    let has_notion_todo = config
+        .todo
+        .accounts
+        .iter()
+        .any(|a| !crate::modules::local::is_local_provider(&a.provider));
     for acc in &config.todo.accounts {
         if crate::modules::local::is_local_provider(&acc.provider) {
             providers.push(Box::new(TodoProvider::new(acc.clone())));
         }
     }
+    if has_notion_todo {
+        providers.push(Box::new(OpsLogProvider::new("todo")));
+    }
 
-    // Note（仅 local provider）
+    // Note：同上。
+    let has_notion_note = config
+        .note
+        .accounts
+        .iter()
+        .any(|a| !crate::modules::local::is_local_provider(&a.provider));
     for acc in &config.note.accounts {
         if crate::modules::local::is_local_provider(&acc.provider) {
             providers.push(Box::new(NoteProvider::new(acc.clone())));
         }
     }
+    if has_notion_note {
+        providers.push(Box::new(OpsLogProvider::new("note")));
+    }
 
-    // Bookmark（仅 local provider）
+    // Bookmark：同上。
+    let has_notion_bookmark = config
+        .bookmark
+        .accounts
+        .iter()
+        .any(|a| !crate::modules::local::is_local_provider(&a.provider));
     for acc in &config.bookmark.accounts {
         if crate::modules::local::is_local_provider(&acc.provider) {
             providers.push(Box::new(BookmarkProvider::new(acc.clone())));
         }
+    }
+    if has_notion_bookmark {
+        providers.push(Box::new(OpsLogProvider::new("bookmark")));
     }
 
     providers
