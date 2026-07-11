@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.4.0 已发布；6 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline`（commit `2ce5055`）+ config 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local；`cargo build` / `cargo clippy --all-targets -- -D warnings` / `cargo test` 全绿（173 passed）。
+**当前状态：** v0.5.0 待发版（4 处 timeline 修补 + 文档齐备，181 tests / clippy 零警告 / fmt clean）；6 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline`（commit `2ce5055` + 修复 `045afa6` `9a3ef49` `8de8f26` `32f67c1`）+ config 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local，timeline 通过 ops-log AOP 捕获 notion 写操作后通过 OpsLogProvider 投影到 timeline.events。
 
 ---
 

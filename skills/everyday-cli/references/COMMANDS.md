@@ -21,8 +21,9 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Complete | Notion: login / search / list / create / read / append / update |
-| `todo` | ✅ Complete | Notion tasks (shared `notion-client` SDK): login / init-db / list / add / start / complete |
-| `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK): login / init-db / list / add |
+| `todo` | ✅ Complete | Notion/local tasks (shared `notion-client` SDK for notion): login / init-db / list / add / start / complete / **delete** |
+| `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK for notion): login / init-db / list / add |
+| `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + ops-log AOP trace. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`) |
 
 ---
 
@@ -278,6 +279,90 @@ Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate
 ```json
 {"id":"b18c0f92234d6a12c","url":"https://www.rust-lang.org","title":"The Rust Programming Language","tags":["rust","lang"]}
 ```
+
+---
+
+## timeline — unified event log ✅ (v0.5.0)
+
+Append-only event log aggregating `mail` / `cal` / `rss` + the `ops-log` AOP trace of Notion-backed `note` / `todo` / `bookmark` writes. Storage is a separate SQLite at `~/.config/everyday/timeline.db` (does not touch provider DBs).
+
+### timeline actions
+
+| Action | Description | Usage |
+|--------|-------------|-------|
+| `today` | Local-time today's window | `everyday timeline today [--source S] [--account A] [--limit N] [--sync] [--since ...]` |
+| `yesterday` | Local-time yesterday | `everyday timeline yesterday [...]` |
+| `week` | Monday–Sunday of the current ISO week | `everyday timeline week [...]` |
+| `month` | Calendar month so far | `everyday timeline month [...]` |
+| `sync` | Pull from all (or `--source`-filtered) providers; idempotent, watermark-based | `everyday timeline sync [--source mail,cal,todo] [--since 2026-01-01]` |
+
+### timeline options
+
+| Option | Description |
+|--------|-------------|
+| `--json` | Switch to JSON output (recommended for agents) |
+| `--source S[,S2]` | Comma-separated source filter; accepted values are `mail`, `cal`, `rss`, `note_local`, `todo_local`, `bookmark_local`, `note`, `todo`, `bookmark` |
+| `--account A` | Filter to one account name |
+| `--limit N` | Cap event count (default 100) |
+| `--since DUR_OR_DATE` | Sliding-window start. `30m` / `2h` / `1d` / `7d` are relative to now; `YYYY-MM-DD` is start-of-day local. `to` is `now()`. |
+| `--from F`, `--to T` | Absolute window, both `YYYY-MM-DD`. Overrides preset; takes precedence over `--since`. |
+| `--sync` | Run `sync` first, then query (atomic, single CLI call) |
+
+### timeline sync — JSON output
+
+```json
+{ "synced": 6, "total_events": 83, "providers": [
+  { "source": "mail", "account": "personal", "events": 60, "status": "Ok" },
+  { "source": "cal", "account": "personal", "events": 9, "status": "Ok" },
+  { "source": "rss", "account": null, "events": 7, "status": "Ok" },
+  { "source": "todo", "account": null, "events": 7, "status": "Ok" },
+  { "source": "note", "account": null, "events": 0, "status": "Ok" },
+  { "source": "bookmark", "account": null, "events": 0, "status": "Ok" }
+] }
+```
+
+### timeline today / yesterday / week / month — JSON output (array of TimelineEvent)
+
+```json
+[
+  {
+    "id": "ev18c12dc5be4ae670-0",
+    "source": "todo",
+    "account": "personal",
+    "event_type": "add",
+    "timestamp": "2026-07-11T08:01:34+00:00",
+    "title": "B2-test-text-mode-add",
+    "summary": "",
+    "ref_id": "39a961d0-46a4-81e2-acc8-f37de2d1158c",
+    "metadata": { "status": null, "action": "add" }
+  },
+  {
+    "id": "ev...",
+    "source": "mail",
+    "account": "personal",
+    "event_type": "received",
+    "timestamp": "2026-07-11T07:04:13+00:00",
+    "title": "Your workspace is waiting",
+    "summary": "From: ...\nFolder: INBOX",
+    "ref_id": "personal:12345",
+    "metadata": { "from": "...", "folder": "INBOX" }
+  }
+]
+```
+
+`source` values:
+- `mail` / `cal` / `rss` — pulled from the network providers during `sync`.
+- `todo` / `note` / `bookmark` — projected from `~/.config/everyday/ops-log.db` via `OpsLogProvider` (the result of AOP records of CLI writes).
+- `*_local` suffix is **not** produced; local providers are projected under their module name (`todo`, `note`, `bookmark`).
+
+`timestamp` is RFC3339 UTC. Display formatting is the consumer's job (the CLI's Text renderer formats it in the user's local timezone).
+
+### Design constraints (do not expect otherwise)
+
+- **Append-only.** Re-running `sync` does not duplicate rows — natural key `(source, account, ref_id, event_type, timestamp)` is upserted with `INSERT OR IGNORE`.
+- **Cal is the only window-refresh provider.** Each `sync` rewrites the cal window `[last_sync, now+7d]`, so cancelled events disappear. Other providers are purely append.
+- **No `--from` / `--to` and no `--since` together.** `--from` / `--to` win; `--since` wins over preset; preset is the fallback. The combinations `today + --since 2026-07-09` widen `from` while keeping `to` at `now()` (useful for "today's window expanded to start earlier").
+- **Notion writes never hit the Notion API during sync.** They are inferred from `~/.config/everyday/ops-log.db`. Add `--sync` to ensure a recent write has been AOP-recorded (writes are recorded synchronously by the CLI, so this is rarely needed, but it helps when scripting).
 
 ---
 

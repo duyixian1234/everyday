@@ -284,6 +284,55 @@ everyday config set default_account.mail personal
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday bookmark add` / `list` 即可，数据库文件与表自动创建。
 > **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday bookmark login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday bookmark init-db` 创建书签数据库并授权该 integration 访问父级页面。之后 `list` / `add` 即可使用。
 
+### timeline — 统一事件流（v0.5.0 新增）
+
+将 **mail · cal · rss** 三类网络 provider 以及 Notion 账户 `note` / `todo` / `bookmark` 写操作（通过 `ops-log` AOP 审计）聚合到一个 append-only 事件流。每个 source 对应一个 `TimelineProvider` adapter，sync 在 source 间并行、在 source 内串行（对 rate-limit 友好）。存储为独立 SQLite：`~/.config/everyday/timeline.db`。
+
+**为什么需要**：避免 Agent 分别轮询 7 个模块，单条 query 就拿到跨全部集成的时间有序事件流。
+
+| 命令 | 说明 | 用法 |
+|------|------|------|
+| `today` / `yesterday` / `week` / `month` | 预设窗口查询（week 是 Mon–Sun，month 是日历月） | `everyday timeline today [--source S] [--account A] [--limit N] [--since 时长或日期]` |
+| `sync` | 从所有（或 `--source` 过滤后的）provider 拉到 `timeline.db`；幂等,用水位控制 | `everyday timeline sync [--source mail,cal,todo] [--since 2026-01-01]` |
+
+**常用 flag**：
+
+| Flag | 适用 | 说明 |
+|------|------|------|
+| `--json` | 全部 | 切到 JSON 输出（Agent 推荐用） |
+| `--source S[,S2]` | 全部 | 逗号分隔过滤,例如 `mail,cal` 或 `todo` |
+| `--account A` | 全部 | 限定单个账户名（如 `personal`） |
+| `--limit N` | query | 限制事件条数,默认 100 |
+| `--since 时长或日期` | 全部 | 滑动窗口起点。`30m` / `2h` / `1d` / `7d` 相对 now,`YYYY-MM-DD` 当日 00:00 本地。to 一律是 `now()`。也支持 `--from` / `--to` 绝对窗口。 |
+| `--sync` | query | 先 sync 再 query（原子） |
+
+**示例**:
+
+```bash
+# 今天全部事件,JSON 输出
+everyday timeline today --json | jq '.[].title'
+
+# 仅 sync 邮件与日历,再查本周
+everyday timeline sync --source mail,cal
+everyday timeline week --json
+
+# 最近 30 分钟内事件(sub-day 精度)
+everyday timeline today --since 30m --json
+
+# Notion 端的 todo/note/bookmark 写操作通过 ops-log 自动投影,
+# 每次 add/update/delete 后 timeline 自动可见
+everyday timeline today --source todo --json
+```
+
+**设计要点**：
+
+- **Append-only**：事件以自然键 `(source, account, ref_id, event_type, timestamp)` 唯一（`INSERT OR IGNORE`），重跑 sync 安全。
+- **UTC 存储 + 本地显示**：时间戳在 DB 内统一 UTC，渲染时按本地时区。
+- **Cal 是窗口刷新**：除 mail / rss / ops-log 是 append-only，cal 在每次 sync 时重写自己的窗口 `[last_sync, now+7d]`，这样取消的事件会真正消失。
+- **Notion 走 ops-log，不走 API**：见 `CONTEXT.md` 用户隐私立场，Agent 不主动扫描 Notion 工作区,只显示 AOP 记录的写入。本地 provider（如有）走自己的 `TimelineProvider`。
+
+完整设计依据见 `docs/CONTEXT.md` 与 `docs/adr/0001`–`0009`。
+
 ## 输出模式
 
 ### Text 模式（默认）

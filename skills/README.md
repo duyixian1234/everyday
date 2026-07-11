@@ -1,6 +1,6 @@
 # everyday — Getting Started for Agent Users
 
-`everyday` is a local CLI toolkit written in Rust that acts as the "digital hands" of an AI Agent. It offers a unified command structure covering external-integration scenarios: email (IMAP/SMTP), calendar (CalDAV), RSS feeds, notes (local SQLite / optional Notion), to-dos (local SQLite / optional Notion), and configuration.
+`everyday` is a local CLI toolkit written in Rust that acts as the "digital hands" of an AI Agent. It offers a unified command structure covering external-integration scenarios: email (IMAP/SMTP), calendar (CalDAV), RSS feeds, notes (local SQLite / optional Notion), to-dos (local SQLite / optional Notion), bookmarks (local SQLite / optional Notion), and an aggregated **timeline** event log that unifies them.
 
 ```
 everyday <module> <action> [options] [--json] [--account NAME]
@@ -12,17 +12,19 @@ everyday <module> <action> [options] [--json] [--account NAME]
 - **The full command table, options, and output schema** live in `everyday-cli/references/COMMANDS.md`; read it on demand.
 - **Always add `--json`** for interaction and process the structured data — an AI should not parse human-readable tables.
 - **Credentials go through the system keyring** (`everyday/<module>/<account>`); passwords are never stored in the config file nor passed as command-line arguments.
+- **For "what happened recently across everything?"**: run `everyday timeline today --json` — it is one of the cheapest ways to get an aggregated activity snapshot across all integrations.
 
 ## Module Status
 
 | Module | Status |
 |------|------|
-| `config` · `mail` · `cal` · `rss` · `note` · `todo` | ✅ Available |
+| `config` · `mail` · `cal` · `rss` · `note` · `todo` · `bookmark` | ✅ Available |
+| `timeline` (v0.5.0) | ✅ Available — unified event log aggregating the modules above |
 
 > This file is a concise intro for Agent users. The full human-readable documentation is in the repository root `README.md` (`README_ZH.md` for Chinese), and collaboration guidelines are in `agents.md`.
 
 ## Installing everyday
 
-- **Prebuilt binaries** (Linux / macOS / Windows x86_64): [GitHub Releases](https://github.com/duyixian1234/everyday/releases), published automatically on every `v*` tag — download, extract, and add `everyday` to your `PATH`.
+- **Prebuilt binaries** (Linux / macOS / Windows x86_64 + macOS aarch64): [GitHub Releases](https://github.com/duyixian1234/everyday/releases), published automatically on every `v*` tag — download, extract, and add `everyday` to your `PATH`.
 - **From source**: `cargo install --git https://github.com/duyixian1234/everyday.git`, or `git clone` then `cargo build --release`.
 - Verify: `everyday --version`. Full install steps are in the repository root `README.md`.

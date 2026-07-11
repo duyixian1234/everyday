@@ -284,6 +284,55 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 > **Local provider (default)**: no setup needed — just run `everyday bookmark add` / `list`; the database file and tables are created automatically.
 > **Notion provider**: create an integration in Notion to get an `ntn_...` token → `everyday bookmark login` to store it in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday bookmark init-db` to create the bookmark database and authorize the integration to access the parent page. Then `list` / `add` are ready to use.
 
+### timeline — unified event timeline (NEW in v0.5.0)
+
+A single, append-only event log that aggregates events from **mail · cal · rss** plus the `ops-log` audit trail of Notion-backed `note` / `todo` / `bookmark` writes. Each source has a `TimelineProvider` adapter; sync is parallel across sources but serial within a source (rate-limit friendly). Storage is SQLite at `~/.config/everyday/timeline.db` (separate from the provider DBs).
+
+**Why**: instead of polling each module separately, the agent issues one query and gets a unified, time-ordered feed across all integrations.
+
+| Command | Description | Usage |
+|------|------|------|
+| `today` / `yesterday` / `week` / `month` | Query a preset window (Mon–Sun for week, calendar month for month) | `everyday timeline today [--source S] [--account A] [--limit N] [--since DURATION_OR_DATE]` |
+| `sync` | Pull from all configured providers (or a `--source`-filtered subset) into `timeline.db`; idempotent, watermark-based | `everyday timeline sync [--source mail,cal,todo] [--since 2026-01-01]` |
+
+**Common flags**:
+
+| Flag | Applies to | Description |
+|------|------|------|
+| `--json` | all | Switch to JSON output (recommended for agents) |
+| `--source S[,S2]` | all | Comma-separated filter, e.g. `mail,cal` or `todo` |
+| `--account A` | all | Filter to one account name (e.g. `personal`) |
+| `--limit N` | query | Cap event count, default 100 |
+| `--since DUR_OR_DATE` | all | Sliding window start. `30m` / `2h` / `1d` / `7d` relative to now, or `YYYY-MM-DD` for start-of-day. `to` is `now()`. (Implicit `--from`/`--to` is also accepted for absolute windows.) |
+| `--sync` | query | Run `sync` first, then query (atomic) |
+
+**Example**:
+
+```bash
+# Today's events across all sources, JSON output
+everyday timeline today --json | jq '.[].title'
+
+# Sync only mail and cal, then show this week
+everyday timeline sync --source mail,cal
+everyday timeline week --json
+
+# Anything since 30 minutes ago (sub-day precision)
+everyday timeline today --since 30m --json
+
+# Notion todo / note / bookmark writes are visible via the ops-log provider,
+# so deltas show up automatically after each `add` / `update` / `delete`.
+everyday timeline today --source todo --json
+```
+
+**Design notes**:
+
+- **Append-only**: events have a natural unique key `(source, account, ref_id, event_type, timestamp)` (`INSERT OR IGNORE`), so re-running `sync` is safe.
+- **UTC storage, local display**: timestamps are stored in UTC and rendered in the local timezone.
+- **Cal is window-refresh**: unlike the append-only mail / rss / ops-log providers, `cal` rewrites its window (`[last_sync, now+7d]`) so cancelled events actually disappear.
+- **Notion via ops-log, not via Notion API**: respect the user privacy posture in `CONTEXT.md`; the agent never programmatically browses the Notion workspace — only AOP-recorded writes show up. Local providers, when used, still go through their own `TimelineProvider`.
+
+See `docs/CONTEXT.md` + `docs/adr/0001`–`0009` for the full design rationale.
+
 ## Output Modes
 
 ### Text mode (default)

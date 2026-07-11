@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, login, init-db), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, login, init-db, delete), unified event timeline (today, yesterday, week, month, sync), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, query an aggregated timeline of recent activity, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -26,7 +26,7 @@ Verify with `everyday --version`. Full install steps (per-platform extraction co
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `config`
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `config`
 
 ## Rules (follow exactly)
 
@@ -36,7 +36,8 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `config`
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
+4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks + `delete`), `timeline` (unified event log: `today` / `yesterday` / `week` / `month` / `sync`), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
+5. **`timeline today --json` is the aggregated activity snapshot.** It is one of the cheapest ways to answer "what's happened recently across all my integrations?". Always prefer it over per-module polling unless the user explicitly asks for a specific module.
 
 ## First-time setup (only if config is missing)
 
@@ -151,6 +152,30 @@ everyday todo list --all --json                # include Done
 everyday todo add --title "写周报" --due 2026-07-15 --priority P1
 everyday todo start <page_id>                  # → In Progress
 everyday todo complete <page_id>               # → Done
+everyday todo delete <page_id>                 # archive (Notion) / physical delete (local)
+```
+
+**Query the unified timeline (mail + cal + rss + notion writes):**
+
+```bash
+# All events in the last 24 hours, top sources
+everyday timeline today --json
+
+# Filter to one source / one account
+everyday timeline today --source todo --account personal --json
+
+# Sub-day sliding window (preserves minute precision)
+everyday timeline today --since 30m --json         # 30 minutes ago
+everyday timeline today --since 12h --json         # 12 hours ago
+
+# Explicit absolute window
+everyday timeline --from 2026-07-09 --to 2026-07-11 --json
+
+# Sync first, then query (atomic). Without --sync, query hits the cached timeline.db.
+everyday timeline today --sync --json
+
+# Targeted sync (only refresh mail and rss)
+everyday timeline sync --source mail,rss --json
 ```
 
 First-time todo setup: `everyday todo login` (token in keyring, service `everyday/todo/<account>`), then add `[[todo.accounts]]` with `parent_page_id` and run `everyday todo init-db` (the integration must be granted access to the parent page). `--db` defaults to the `default_database_id` written by `init-db`.
