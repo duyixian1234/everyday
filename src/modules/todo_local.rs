@@ -205,6 +205,44 @@ pub async fn set_status(
     }
 }
 
+/// `todo delete <id>`（本地）：物理删除任务。
+///
+/// 先 SELECT 取出标题,再 DELETE;rows_affected == 0 视为 "id 不存在" 报错。
+/// 多一次读换取 ops-log 上 delete 事件带标题,Notion 版已对齐同一规约。
+pub async fn delete(account: &TodoAccount, id: Option<&String>) -> Result<Output> {
+    let id = id.ok_or_else(|| AgentError::InvalidArgument("`delete` requires <id>".into()))?;
+    let pool = open(account).await?;
+    let row = sqlx::query("SELECT title FROM todos WHERE id = ?1")
+        .bind(id)
+        .fetch_optional(&pool)
+        .await?;
+    let row = row.ok_or_else(|| {
+        AgentError::InvalidArgument(format!("no todo with id '{id}' in local database"))
+    })?;
+    let title: String = row.try_get("title").unwrap_or_default();
+    let title = if title.is_empty() {
+        format!("(untitled) {id}")
+    } else {
+        title
+    };
+    let res = sqlx::query("DELETE FROM todos WHERE id = ?1")
+        .bind(id)
+        .execute(&pool)
+        .await?;
+    if res.rows_affected() == 0 {
+        return Err(AgentError::InvalidArgument(format!(
+            "no todo with id '{id}' in local database"
+        )));
+    }
+    if mode_json() {
+        Ok(Output::Json(
+            json!({ "id": id, "title": title, "status": "deleted" }),
+        ))
+    } else {
+        Ok(Output::text(format!("deleted todo '{title}' (id={id})")))
+    }
+}
+
 // ============ Timeline 数据拉取 ============
 
 /// Timeline 拉取用：todo 条目原始数据。

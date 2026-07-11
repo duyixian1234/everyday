@@ -159,7 +159,7 @@ impl Executor for TodoModule {
     }
 
     fn description(&self) -> &'static str {
-        "Todo tasks (Notion or local sqlite): login, init-db, list, add, start, complete."
+        "Todo tasks (Notion or local sqlite): login, init-db, list, add, start, complete, delete."
     }
 
     fn actions(&self) -> Vec<ActionDoc> {
@@ -194,6 +194,11 @@ impl Executor for TodoModule {
                 "Mark a todo as Done",
                 "everyday todo complete <page_id>",
             ),
+            ActionDoc::new(
+                "delete",
+                "Delete a todo (Notion: archive; local: physical delete)",
+                "everyday todo delete <page_id>",
+            ),
         ]
     }
 
@@ -217,6 +222,7 @@ impl Executor for TodoModule {
                 "complete" => {
                     local::set_status(account, positional.first(), local::STATUS_DONE).await
                 }
+                "delete" => local::delete(account, positional.first()).await,
                 other => Err(AgentError::UnknownAction(format!("todo {other}"))),
             };
         }
@@ -228,6 +234,7 @@ impl Executor for TodoModule {
             "add" => todo_add(account, &flags).await,
             "start" => todo_set_status(account, positional.first(), STATUS_IN_PROGRESS).await,
             "complete" => todo_set_status(account, positional.first(), STATUS_DONE).await,
+            "delete" => todo_delete(account, positional.first()).await,
             other => Err(AgentError::UnknownAction(format!("todo {other}"))),
         }
     }
@@ -496,6 +503,54 @@ async fn todo_set_status(
         Ok(Output::text(format!(
             "set todo {} -> status '{}'\n{}",
             id, status, url
+        )))
+    }
+}
+
+// ============ delete ============
+
+/// `todo delete <page_id>`（Notion）：归档（archive）页面。
+///
+/// Notion 没有真正的删除 API,设置 `archived: true` 即从 UI 隐藏并软删除。
+/// 与 `start`/`complete` 走同一类错误路径(`InvalidArgument` for missing id)。
+///
+/// 归档前先 GET 页面标题,让 ops-log + timeline 上的 delete 事件带标题而非空白。
+/// 多一次 API 调用换取 audit 可读性,删除路径不属性能热点。
+async fn todo_delete(account: &TodoAccount, page_id: Option<&String>) -> Result<Output> {
+    let page_id =
+        page_id.ok_or_else(|| AgentError::InvalidArgument("`delete` requires <page_id>".into()))?;
+    let token = get_token(account)?;
+    let client = NotionClient::new(token)?;
+
+    // 1. 先读标题(让 ops-log 有意义)。
+    let page: Value = client.get(&format!("/pages/{page_id}")).await?;
+    let title = page
+        .get("properties")
+        .and_then(|props| props.get("Task"))
+        .and_then(|t| t.get("title"))
+        .and_then(|arr| arr.as_array())
+        .and_then(|arr| arr.first())
+        .and_then(|t| t.get("plain_text"))
+        .and_then(|s| s.as_str())
+        .unwrap_or("")
+        .to_string();
+    // 标题为空不是错误(可能被外部清空),给个占位让 timeline 渲染不空。
+    let title = if title.is_empty() {
+        format!("(untitled) {page_id}")
+    } else {
+        title
+    };
+
+    // 2. 归档(软删除)。
+    let body = json!({ "archived": true });
+    let _: Value = client.patch(&format!("/pages/{page_id}"), &body).await?;
+
+    let json_out = json!({ "id": page_id, "title": title, "status": "deleted", "archived": true });
+    if mode_json() {
+        Ok(Output::Json(json_out))
+    } else {
+        Ok(Output::text(format!(
+            "deleted todo '{title}' (id={page_id})"
         )))
     }
 }
