@@ -50,13 +50,17 @@ impl Output {
     }
 
     /// 按指定模式渲染为字符串。
+    ///
+    /// JSON 序列化失败不再静默回退为 `Value::Display` 字符串（破坏 `--json` 契约，
+    /// 让下游 Agent 解析失败）。失败时改回退为带错误标记的 JSON 对象。
     pub fn render(self, mode: RenderMode) -> String {
         match (self, mode) {
             (Output::Text(s), _) => s,
             (Output::Json(v), RenderMode::Json) => compact_json(&v),
-            (Output::Json(v), RenderMode::Text) => {
-                serde_json::to_string_pretty(&v).unwrap_or_else(|_| v.to_string())
-            }
+            (Output::Json(v), RenderMode::Text) => match serde_json::to_string_pretty(&v) {
+                Ok(s) => s,
+                Err(e) => fallback_json(&format!("serialize json value: {e}")),
+            },
             (Output::Records { headers, rows }, RenderMode::Text) => render_table(&headers, &rows),
             (Output::Records { headers, rows }, RenderMode::Json) => {
                 records_to_json(&headers, &rows)
@@ -68,15 +72,17 @@ impl Output {
 /// 将错误渲染为输出字符串。JSON 模式输出 `agents.md` 规定格式。
 pub fn render_error(err: &AgentError, mode: RenderMode) -> String {
     match mode {
-        RenderMode::Json => serde_json::to_string(err).unwrap_or_else(|_| {
-            json!({
-                "error": err.type_name(),
-                "message": err.message()
-            })
-            .to_string()
-        }),
+        RenderMode::Json => match serde_json::to_string(err) {
+            Ok(s) => s,
+            Err(e) => fallback_json(&format!("serialize error envelope: {e}")),
+        },
         RenderMode::Text => format!("error[{}]: {}", err.type_name(), err.message()),
     }
+}
+
+/// 序列化失败的兜底：返回带 `_error` 字段的 JSON 对象，让下游仍能识别为 JSON。
+fn fallback_json(msg: &str) -> String {
+    json!({ "_error": "serialize_failed", "message": msg }).to_string()
 }
 
 /// 解析渲染模式（从 `--json` flag）。
@@ -98,7 +104,11 @@ pub fn finalize(result: Result<Output>, mode: RenderMode) -> (i32, String) {
 
 fn compact_json(v: &Value) -> String {
     // 紧凑 JSON，无多余空白 —— AI 解析友好。
-    serde_json::to_string(v).unwrap_or_else(|_| v.to_string())
+    // 失败时不再回退为非 JSON 字符串（破坏契约），改走 fallback_json。
+    match serde_json::to_string(v) {
+        Ok(s) => s,
+        Err(e) => fallback_json(&format!("serialize json value: {e}")),
+    }
 }
 
 fn records_to_json(headers: &[String], rows: &[Vec<String>]) -> String {
