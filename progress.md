@@ -4,11 +4,23 @@
 
 ## 当前状态（2026-07-11）
 
-- **v0.5.0 已发布**：tag `v0.5.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
-- **v0.6.0 待发版**：Mail Cache（envelope 缓存 + 并发 sync）实施完成，196 tests 全绿；待 bump 版本 + tag + push。
+- **v0.6.0 已发布**：tag `v0.6.0`，Mail Cache（envelope 缓存 + 并发 sync）实施完成。
+- **代码全量 Review + 修复进行中**：基于 2026-07-11 的 caveman-style 全量 review（详见 commit history），按 🔴→🟡→🔵 顺序逐项修复并独立提交；每修一项必须 `cargo build` + `cargo clippy -D warnings` + `cargo test` + `cargo fmt --check` 全绿。
 - **模块**：**7 个**外部集成模块 **mail / cal / rss / note / todo / bookmark / timeline** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；timeline 统一事件层（commit `2ce5055` + 修补 `045afa6` `9a3ef49` `8de8f26` `32f67c1`）；`mail list` v0.6.0 起走本地 envelope 缓存（`mail_cache.db`），staleness=15min 自动 sync，`--sync` 强制。
-- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ **196 passed**（v0.5.0 181 + mail cache 15）；CI（ubuntu/macos/windows + aarch64 mac）全绿。
+- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ **200 passed**（v0.6.0 196 + review 期间新增 4 单测）；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
+
+### 2026-07-11 — 全量代码 Review 修补流水（caveman-style）
+
+按严重度逐项修复，每项独立 commit：
+
+1. `fix(mail): PoolGuard::session returns Result instead of panicking` — 移除生产路径 `expect()` panic。
+2. `fix(mail): PoolGuard Drop no longer panics when tokio runtime is down` — `Handle::try_current()` 探测。
+3. `fix(timeline): eliminate double-unwrap on DST-boundary date parsing` — `.earliest()/.latest()` 替代 `.unwrap()`。
+4. `fix(timeline): CalProvider::sync honors the window argument` — 修正 ADR 0002 契约。
+5. `fix(output): JSON serialize failure no longer breaks --json contract` — `fallback_json` 兜底。
+6. `fix(util): is_json() no longer scans std::env::args()` — 改用线程局部变量。
+7. `fix(args): parse_simple_args no longer misclassifies negative numbers` — 负数 / 单破折号值保留为 flag 值。
 
 ## 核心决策时间线（ADR）
 
