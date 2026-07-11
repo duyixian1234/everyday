@@ -258,27 +258,10 @@ fn get_token(account: &TodoAccount) -> Result<String> {
 }
 
 /// 交互式输入 Token 并存入密钥环。
+/// 见 `crate::modules::local::login_notion` —— 与 note/bookmark 共享实现。
 async fn todo_login(account: &TodoAccount) -> Result<Output> {
-    let service = crate::config::Config::keyring_service("todo", &account.name);
-    let entry = keyring::Entry::new(&service, KEYRING_USER)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
     let account_name = account.name.clone();
-    let prompt =
-        format!("Paste Notion Integration Token (ntn_...) for todo account '{account_name}': ");
-    // rpassword 为同步 API，放进 spawn_blocking 避免阻塞运行时。
-    let password = tokio::task::spawn_blocking(move || rpassword::prompt_password(prompt))
-        .await
-        .map_err(|e| AgentError::Other(format!("join token prompt: {e}")))?
-        .map_err(|e| AgentError::Other(format!("read token: {e}")))?;
-    let token = password.trim().to_string();
-    if token.is_empty() {
-        return Err(AgentError::InvalidArgument(
-            "token must not be empty".into(),
-        ));
-    }
-    entry
-        .set_password(&token)
-        .map_err(|e| AgentError::Auth(format!("keyring set: {e}")))?;
+    crate::modules::local::login_notion("todo", &account_name).await?;
     Ok(Output::text(format!(
         "Notion token stored for todo account '{account_name}'"
     )))

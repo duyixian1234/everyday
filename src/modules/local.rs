@@ -87,6 +87,42 @@ pub fn parse_tags(raw: Option<&String>) -> Vec<String> {
     }
 }
 
+/// Notion 模块统一的交互式 login 流程：
+/// 1. 打开 keyring entry（service = `everyday/<module>/<account>`，user = `KEYRING_USER`）。
+/// 2. spawn_blocking 调 rpassword 提示用户粘贴 Notion Integration Token。
+/// 3. trim 后非空校验。
+/// 4. 写入 keyring。
+/// 5. 返回成功消息。
+///
+/// 之前 note.rs / todo.rs / bookmark.rs 各有一份约 25 行逐字复制
+/// （仅 module 名 + 成功消息文案不同），集中到此处。
+///
+/// 区别于 mail/cal 的 password login：mail/cal 用「Password for X」普通密码 prompt，
+/// 而 notion 用 Notion Integration Token 文案，token 形态不同。
+pub async fn login_notion(module: &str, account_name: &str) -> Result<()> {
+    use crate::keyring_user::KEYRING_USER;
+
+    let service = crate::config::Config::keyring_service(module, account_name);
+    let entry = keyring::Entry::new(&service, KEYRING_USER)
+        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
+    let prompt = format!(
+        "Paste Notion Integration Token (ntn_...) for {module} account '{account_name}': "
+    );
+    // rpassword 为同步 API，放进 spawn_blocking 避免阻塞运行时。
+    let password = tokio::task::spawn_blocking(move || rpassword::prompt_password(prompt))
+        .await
+        .map_err(|e| AgentError::Other(format!("join token prompt: {e}")))?
+        .map_err(|e| AgentError::Other(format!("read token: {e}")))?;
+    let token = password.trim().to_string();
+    if token.is_empty() {
+        return Err(AgentError::InvalidArgument("token must not be empty".into()));
+    }
+    entry
+        .set_password(&token)
+        .map_err(|e| AgentError::Auth(format!("keyring set: {e}")))?;
+    Ok(())
+}
+
 /// 在 config 的 `<module>.accounts[]` 中找到 `name` 匹配的账户，
 /// 写入 `default_database_id = db_id`。
 ///
