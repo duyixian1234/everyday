@@ -49,6 +49,10 @@ async fn main() {
     let json_flag = cli.json || raw_args.iter().any(|a| a == "--json");
     let mode = mode_from_json_flag(json_flag);
 
+    // 把 JSON 模式同步到线程局部变量，供模块深层辅助函数（如 note_local 的
+    // 渲染分支）查询。避免它们再次扫描 std::env::args()（会被宿主进程污染）。
+    crate::util::json_mode::set_json_mode(json_flag);
+
     let (code, output) = run(cli, mode).await;
     println!("{output}");
     std::process::exit(code);
