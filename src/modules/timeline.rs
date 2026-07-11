@@ -245,13 +245,33 @@ impl TimelineModule {
         let (from_utc, to_utc) = if let (Some(f), Some(t)) = (flags.get("from"), flags.get("to")) {
             let f_d = parse_date_str(f)?;
             let t_d = parse_date_str(t)?;
-            (local_to_utc_start(f_d), local_to_utc_end(t_d))
+            let from = local_to_utc_start(f_d).ok_or_else(|| {
+                AgentError::InvalidArgument(format!(
+                    "--from {f} falls in DST spring-forward gap in local timezone"
+                ))
+            })?;
+            let to = local_to_utc_end(t_d).ok_or_else(|| {
+                AgentError::InvalidArgument(format!(
+                    "--to {t} falls in DST spring-forward gap in local timezone"
+                ))
+            })?;
+            (from, to)
         } else if let Some(s) = flags.get("since") {
             let from = parse_since_utc(s)?;
             (from, Utc::now())
         } else {
             let (f_l, t_l) = resolve_preset(preset)?;
-            (local_to_utc_start(f_l), local_to_utc_end(t_l))
+            let from = local_to_utc_start(f_l).ok_or_else(|| {
+                AgentError::InvalidArgument(format!(
+                    "preset '{preset}' start falls in DST spring-forward gap"
+                ))
+            })?;
+            let to = local_to_utc_end(t_l).ok_or_else(|| {
+                AgentError::InvalidArgument(format!(
+                    "preset '{preset}' end falls in DST spring-forward gap"
+                ))
+            })?;
+            (from, to)
         };
 
         // 构造查询参数。
@@ -311,28 +331,34 @@ fn parse_date_str(s: &str) -> Result<NaiveDate> {
 }
 
 /// 把本地日期的 00:00:00 转为 UTC DateTime。
-fn local_to_utc_start(date: NaiveDate) -> chrono::DateTime<Utc> {
-    let local_dt = Local
-        .from_local_datetime(&date.and_hms_opt(0, 0, 0).unwrap())
-        .unwrap();
-    local_dt.with_timezone(&Utc)
+///
+/// 在 DST 模糊/不存在区间返回 None（调用方应决定如何兜底，
+/// 而不是 panic）。`and_hms_opt(0,0,0)` 在普通日期上始终 Some，
+/// 但 `from_local_datetime` 在春令时 gap 上是 None。
+fn local_to_utc_start(date: NaiveDate) -> Option<chrono::DateTime<Utc>> {
+    let ndt = date.and_hms_opt(0, 0, 0)?;
+    Local
+        .from_local_datetime(&ndt)
+        .earliest()
+        .map(|dt| dt.with_timezone(&Utc))
 }
 
 /// 把本地日期的 23:59:59 转为 UTC DateTime。
-fn local_to_utc_end(date: NaiveDate) -> chrono::DateTime<Utc> {
-    let local_dt = Local
-        .from_local_datetime(&date.and_hms_opt(23, 59, 59).unwrap())
-        .unwrap();
-    local_dt.with_timezone(&Utc)
+fn local_to_utc_end(date: NaiveDate) -> Option<chrono::DateTime<Utc>> {
+    let ndt = date.and_hms_opt(23, 59, 59)?;
+    Local
+        .from_local_datetime(&ndt)
+        .latest()
+        .map(|dt| dt.with_timezone(&Utc))
 }
 
 /// 把 `--since YYYY-MM-DD` 解析为 UTC DateTime（该日期 00:00 本地 → UTC）。
 fn parse_date_to_utc(s: &str, end_of_day: bool) -> Option<chrono::DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
     if end_of_day {
-        Some(local_to_utc_end(date))
+        local_to_utc_end(date)
     } else {
-        Some(local_to_utc_start(date))
+        local_to_utc_start(date)
     }
 }
 
@@ -347,7 +373,9 @@ fn parse_since_utc(s: &str) -> Result<chrono::DateTime<Utc>> {
     let s = s.trim();
     // 1. 日期
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return Ok(local_to_utc_start(d));
+        return local_to_utc_start(d).ok_or_else(|| {
+            AgentError::InvalidArgument(format!("invalid --since '{s}': DST gap on date"))
+        });
     }
     // 2. 相对时长
     if s.len() >= 2 {

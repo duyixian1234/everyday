@@ -136,6 +136,9 @@ impl TimelineProvider for CalProvider {
 
 /// 解析 NaiveDateTime 字符串（如 "2026-07-11 14:00:00"）为 UTC DateTime。
 /// 假设本地时区（CalDAV 返回的时间多为本地浮动时间）。
+///
+/// 在 DST 边界（spring-forward gap / fall-back ambiguous）返回 None，
+/// 之前用 .unwrap() 会 panic。
 fn parse_naive_dt(s: &str) -> Option<DateTime<Utc>> {
     // 尝试 RFC3339 解析（带时区的情况）。
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
@@ -145,21 +148,19 @@ fn parse_naive_dt(s: &str) -> Option<DateTime<Utc>> {
     let formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
     for fmt in &formats {
         if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
-            return Some(
-                chrono::Local
-                    .from_local_datetime(&ndt)
-                    .unwrap()
-                    .with_timezone(&Utc),
-            );
+            // earliest() 处理 DST ambiguous（取较早的 offset）。
+            // None 仅发生在 spring-forward gap —— 该 NaiveDateTime 在本地不存在。
+            return chrono::Local
+                .from_local_datetime(&ndt)
+                .earliest()
+                .map(|dt| dt.with_timezone(&Utc));
         }
         if let Ok(nd) = chrono::NaiveDate::parse_from_str(s, fmt) {
             let ndt = nd.and_hms_opt(0, 0, 0)?;
-            return Some(
-                chrono::Local
-                    .from_local_datetime(&ndt)
-                    .unwrap()
-                    .with_timezone(&Utc),
-            );
+            return chrono::Local
+                .from_local_datetime(&ndt)
+                .earliest()
+                .map(|dt| dt.with_timezone(&Utc));
         }
     }
     None
