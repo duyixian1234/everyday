@@ -525,18 +525,8 @@ pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
     }
 
     // Todo / Note / Bookmark：local/notion 双 provider 模式。
-    add_dual_providers!(
-        providers,
-        "todo",
-        &config.todo.accounts,
-        TodoProvider::new
-    );
-    add_dual_providers!(
-        providers,
-        "note",
-        &config.note.accounts,
-        NoteProvider::new
-    );
+    add_dual_providers!(providers, "todo", &config.todo.accounts, TodoProvider::new);
+    add_dual_providers!(providers, "note", &config.note.accounts, NoteProvider::new);
     add_dual_providers!(
         providers,
         "bookmark",

@@ -105,9 +105,8 @@ pub async fn login_notion(module: &str, account_name: &str) -> Result<()> {
     let service = crate::config::Config::keyring_service(module, account_name);
     let entry = keyring::Entry::new(&service, KEYRING_USER)
         .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    let prompt = format!(
-        "Paste Notion Integration Token (ntn_...) for {module} account '{account_name}': "
-    );
+    let prompt =
+        format!("Paste Notion Integration Token (ntn_...) for {module} account '{account_name}': ");
     // rpassword 为同步 API，放进 spawn_blocking 避免阻塞运行时。
     let password = tokio::task::spawn_blocking(move || rpassword::prompt_password(prompt))
         .await
@@ -115,7 +114,9 @@ pub async fn login_notion(module: &str, account_name: &str) -> Result<()> {
         .map_err(|e| AgentError::Other(format!("read token: {e}")))?;
     let token = password.trim().to_string();
     if token.is_empty() {
-        return Err(AgentError::InvalidArgument("token must not be empty".into()));
+        return Err(AgentError::InvalidArgument(
+            "token must not be empty".into(),
+        ));
     }
     entry
         .set_password(&token)
@@ -155,9 +156,7 @@ pub fn set_module_database_id(
     for acc in arr.iter_mut() {
         if acc.get("name").and_then(|n| n.as_str()) == Some(account_name) {
             acc.as_table_mut()
-                .ok_or_else(|| {
-                    AgentError::Config(format!("{module} account is not a table"))
-                })?
+                .ok_or_else(|| AgentError::Config(format!("{module} account is not a table")))?
                 .insert(
                     "default_database_id".into(),
                     toml::Value::String(db_id.to_string()),
@@ -242,9 +241,11 @@ default_database_id = "old_b"
 
         // t1 应被更新；t2 / b1 / default_account 不动。
         let todo_accounts = root.get("todo").unwrap().get("accounts").unwrap();
-        let t1 = todo_accounts.as_array().unwrap().iter().find(|a| {
-            a.get("name").and_then(|n| n.as_str()) == Some("t1")
-        });
+        let t1 = todo_accounts
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a.get("name").and_then(|n| n.as_str()) == Some("t1"));
         assert_eq!(
             t1.unwrap().get("default_database_id").unwrap().as_str(),
             Some("new_t")

@@ -262,7 +262,10 @@ mod tests {
         fn account(&self) -> Option<&str> {
             self.account_name
         }
-        async fn sync(&self, _w: &crate::modules::timeline::TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
+        async fn sync(
+            &self,
+            _w: &crate::modules::timeline::TimeWindow,
+        ) -> Result<(Vec<TimelineEvent>, SyncMode)> {
             Ok((vec![], SyncMode::Append))
         }
     }

@@ -33,9 +33,7 @@ macro_rules! impl_account_lookup {
                 .accounts
                 .iter()
                 .find(|a| a.name == name)
-                .ok_or_else(|| {
-                    AgentError::AccountNotFound(format!("{} account '{name}'", $module))
-                })
+                .ok_or_else(|| AgentError::AccountNotFound(format!("{} account '{name}'", $module)))
         }
     };
 }
