@@ -6,6 +6,7 @@
 
 - **v0.4.0 已发布**：tag `v0.4.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
 - **模块**：**7 个**外部集成模块 **mail / cal / rss / note / todo / bookmark / timeline** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；timeline 统一事件层（commit `2ce5055`）按 `CONTEXT.md` + 9 个 ADR 实现；初版 `fs` / `net` / `sys` 已整体移除。
+- **timeline 修补（commit `045afa6` `9a3ef49` `8de8f26` `32f67c1`）**：初版 timeline 在终端实测发现 4 类缺陷，已在发布 v0.5.0 前修掉，详见下文 2026-07-11 Timeline 修补 ADR。
 - **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ **173 passed**（v0.4.0 137 + timeline 36）；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
 
@@ -89,4 +90,22 @@
   2. `query_events` LIMIT 占位符缺 `?` 前缀导致 `LIMIT {idx}` 当字面（测试期望 2 行返回 1 行）——改字面整数。
   3. `idx += 1` 死赋值（clippy `unused_assignments`）—— 删。
 - 质量门禁：build ✅ / clippy `-D warnings` 零警告 ✅ / `cargo test` 173 passed（+36 全为 timeline）✅ / `cargo fmt --check` clean ✅。
-- **未发版**：待按 runbook bump `0.4.0 → 0.5.0` + tag + 推 origin。
+
+### 2026-07-11 — Timeline 4 处修补（同时清理 3 条 Notion 测试残留）
+
+发布 v0.5.0 前对 timeline 做端到端实测,发现 4 类缺陷(全部提交修掉):
+
+| Commit | 修补 | 问题 |
+|---|---|---|
+| `045afa6` | 新增 `OpsLogProvider` | notion todo/note/bookmark 写入只入 ops-log,从未进入 timeline.events,`timeline list` 看不到 |
+| `9a3ef49` | ops-log 解析 `Output::Text` | 默认文本模式 AOP 完全不触发,只有 `--json` 才落 ops-log |
+| `8de8f26` | `--since` 在 query 路径生效(支持日期与 30m/2h/1d 相对时长,保留 sub-day 精度) | help 写有,但 query 路径 silent 忽略 |
+| `32f67c1` | todo 加 `delete` action(notion + local;归档前 GET 标题,让 ops-log delete 行带 title) | 没有 CLI 删除路径,只能 Notion UI |
+
+清理:Notion 上 3 条 opslog-test / timeline-opslog-test / textmode-test-after-fix 已通过 `everyday todo delete` 归档。  
+ops-log.db 留 3 条历史 delete 行(标题空,归档前为空记录,无影响)。  
+timeline.db 重 sync 后 6/6 providers,75 events(mail 60 + cal 9 + rss 7 - 重叠去重 - 配 0;opslog todo 6 + opslog note 0 + opslog bookmark 0)。
+
+最终质量门禁:build ✅ / clippy `-D warnings` 零警告 ✅ / `cargo test` **181 passed**(+8 新单测)/ `cargo fmt --check` clean ✅。
+
+**可以按 runbook 发版 v0.5.0**:`Cargo.toml` 0.4.0 → 0.5.0 + 当前状态行 + Phase 9 → `progress.md` 当前状态行 + ADR → `chore: release v0.5.0` → tag `v0.5.0` → `git push origin master && git push origin v0.5.0`(推 GitHub,绝不推 cnb 镜像)。
