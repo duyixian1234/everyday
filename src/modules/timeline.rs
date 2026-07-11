@@ -235,16 +235,24 @@ impl TimelineModule {
         }
 
         // 解析时间范围。
-        let (from_local, to_local) =
-            if let (Some(f), Some(t)) = (flags.get("from"), flags.get("to")) {
-                (parse_date_str(f)?, parse_date_str(t)?)
-            } else {
-                resolve_preset(preset)?
-            };
-
-        // 本地日期 → UTC 边界。
-        let from_utc = local_to_utc_start(from_local);
-        let to_utc = local_to_utc_end(to_local);
+        // 优先级:`--from` + `--to` > `--since` > preset。
+        //
+        // 三种独立路径:
+        // - `--from` + `--to` 同时给:用它们 (NaiveDate 粒度,unambiguous)
+        // - `--since` 单给:`parse_since_utc` 拿 UTC 起点,保留 sub-day 精度;
+        //   to = now() (相对时长的自然终点)
+        // - 都缺:纯 preset
+        let (from_utc, to_utc) = if let (Some(f), Some(t)) = (flags.get("from"), flags.get("to")) {
+            let f_d = parse_date_str(f)?;
+            let t_d = parse_date_str(t)?;
+            (local_to_utc_start(f_d), local_to_utc_end(t_d))
+        } else if let Some(s) = flags.get("since") {
+            let from = parse_since_utc(s)?;
+            (from, Utc::now())
+        } else {
+            let (f_l, t_l) = resolve_preset(preset)?;
+            (local_to_utc_start(f_l), local_to_utc_end(t_l))
+        };
 
         // 构造查询参数。
         let sources = parse_source_filter(flags.get("source"));
@@ -326,6 +334,42 @@ fn parse_date_to_utc(s: &str, end_of_day: bool) -> Option<chrono::DateTime<Utc>>
     } else {
         Some(local_to_utc_start(date))
     }
+}
+
+/// 把 `--since` 解析为 UTC DateTime（query 路径专用，**保留 sub-day 精度**）。
+///
+/// 接受：
+/// - `YYYY-MM-DD` 日期：该日 00:00 本地 = UTC 起点（粒度 1 天）。
+/// - 相对时长 `30m` / `2h` / `1d` / `7d`：当前本地时间 - 时长,转 UTC（粒度 1 分钟）。
+///
+/// 这样 `timeline today --since 30m` 真正只回 30 分钟内事件,而不是全天。
+fn parse_since_utc(s: &str) -> Result<chrono::DateTime<Utc>> {
+    let s = s.trim();
+    // 1. 日期
+    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
+        return Ok(local_to_utc_start(d));
+    }
+    // 2. 相对时长
+    if s.len() >= 2 {
+        let (num, unit) = s.split_at(s.len() - 1);
+        if let Ok(n) = num.parse::<u64>() {
+            let now_local = Local::now();
+            let dt = match unit {
+                "m" => now_local - chrono::Duration::minutes(n as i64),
+                "h" => now_local - chrono::Duration::hours(n as i64),
+                "d" => now_local - chrono::Duration::days(n as i64),
+                _ => {
+                    return Err(AgentError::InvalidArgument(format!(
+                        "invalid --since '{s}', expected YYYY-MM-DD or 30m/2h/1d"
+                    )));
+                }
+            };
+            return Ok(dt.with_timezone(&Utc));
+        }
+    }
+    Err(AgentError::InvalidArgument(format!(
+        "invalid --since '{s}', expected YYYY-MM-DD or 30m/2h/1d"
+    )))
 }
 
 /// 解析预设时间范围 → (from_local, to_local) 本地日期。
@@ -430,6 +474,41 @@ mod tests {
     #[test]
     fn parse_date_str_invalid() {
         assert!(parse_date_str("not a date").is_err());
+    }
+
+    #[test]
+    fn parse_since_date_form_returns_utc() {
+        let dt = parse_since_utc("2026-07-11").unwrap();
+        // 该日 00:00 本地 → UTC,本地基准下应早于当前 UTC。
+        let now = Utc::now();
+        assert!(dt < now, "date-form since must be in the past");
+        assert!(dt < now + chrono::Duration::days(1));
+    }
+
+    #[test]
+    fn parse_since_duration_days_subtracts() {
+        // 1d：now - 1d 转 UTC,必须 [now - 2d, now] 之间
+        let now = Utc::now();
+        let dt = parse_since_utc("1d").unwrap();
+        assert!(dt < now);
+        assert!(dt > now - chrono::Duration::days(2));
+    }
+
+    #[test]
+    fn parse_since_duration_minutes_subtracts() {
+        let now = Utc::now();
+        let dt = parse_since_utc("30m").unwrap();
+        // 30m ago ≈ now - 30min,允许 1 分钟漂移
+        let diff = now - dt;
+        assert!(diff >= chrono::Duration::minutes(29));
+        assert!(diff <= chrono::Duration::minutes(31));
+    }
+
+    #[test]
+    fn parse_since_invalid_errors() {
+        assert!(parse_since_utc("30x").is_err());
+        assert!(parse_since_utc("not-a-thing").is_err());
+        assert!(parse_since_utc("2026/07/11").is_err()); // 错格式
     }
 
     #[test]
