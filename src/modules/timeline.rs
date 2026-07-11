@@ -214,7 +214,7 @@ impl Executor for TimelineModule {
 impl TimelineModule {
     /// 执行 sync 子命令。
     async fn do_sync(&self, flags: &std::collections::HashMap<String, String>) -> Result<Output> {
-        let sources = parse_source_filter(flags.get("source"));
+        let sources = parse_source_filter(flags.get("source"))?;
         let since = flags.get("since").and_then(|s| parse_date_to_utc(s, false));
 
         let output = orchestrator::run_sync(&self.config, &sources, since).await?;
@@ -232,7 +232,7 @@ impl TimelineModule {
         // sync 失败不再 `let _ =` 静默吞（之前会让用户拿到旧数据却不知道 sync 挂了）。
         // 这里让 sync 错误冒泡到 do_query，最终由 main.rs 的 finalize 渲染为错误输出。
         if flags.contains_key("sync") {
-            let sources = parse_source_filter(flags.get("source"));
+            let sources = parse_source_filter(flags.get("source"))?;
             orchestrator::run_sync(&self.config, &sources, None).await?;
         }
 
@@ -277,12 +277,18 @@ impl TimelineModule {
         };
 
         // 构造查询参数。
-        let sources = parse_source_filter(flags.get("source"));
+        let sources = parse_source_filter(flags.get("source"))?;
         let account = flags.get("account").cloned();
-        let limit: usize = flags
-            .get("limit")
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(100);
+        // --limit 解析失败之前静默回退 100（看似 100 行结果其实是 parse 失败）。
+        // 改为显式报错，避免"我请求 -1 行却拿到 100 行"这类无声 bug。
+        let limit: usize = match flags.get("limit") {
+            Some(s) => s.parse().map_err(|_| {
+                AgentError::InvalidArgument(format!(
+                    "invalid --limit '{s}', expected non-negative integer"
+                ))
+            })?,
+            None => 100,
+        };
 
         let pool = store::open().await?;
         let params = store::QueryParams {
@@ -314,15 +320,28 @@ impl TimelineModule {
 // ============ 时间工具 ============
 
 /// 解析 `--source mail,cal` 为 `["mail", "cal"]`。
-fn parse_source_filter(raw: Option<&String>) -> Vec<String> {
-    match raw {
-        None => Vec::new(),
-        Some(s) => s
-            .split(',')
-            .map(|s| s.trim().to_string())
-            .filter(|s| !s.is_empty())
-            .collect(),
+/// 已知 source ID 列表（ADR 0001-0009）。
+///
+/// `--source` 解析时校验；未知 source 之前被静默丢弃（`events` 表 SQL
+/// `source IN (...)` 自然返空），用户看到"0 events"以为是数据问题。
+/// 现在显式报错。
+const KNOWN_SOURCES: &[&str] = &["mail", "cal", "rss", "todo", "note", "bookmark"];
+
+fn parse_source_filter(raw: Option<&String>) -> Result<Vec<String>> {
+    let Some(s) = raw else {
+        return Ok(Vec::new());
+    };
+    let mut out = Vec::new();
+    for token in s.split(',').map(str::trim).filter(|s| !s.is_empty()) {
+        if !KNOWN_SOURCES.contains(&token) {
+            return Err(AgentError::InvalidArgument(format!(
+                "unknown --source '{token}', expected one of: {}",
+                KNOWN_SOURCES.join(", ")
+            )));
+        }
+        out.push(token.to_string());
     }
+    Ok(out)
 }
 
 /// 解析日期字符串 `YYYY-MM-DD` 为 NaiveDate。
@@ -487,13 +506,31 @@ mod tests {
 
     #[test]
     fn parse_source_filter_splits_commas() {
-        let result = parse_source_filter(Some(&"mail, cal , rss".to_string()));
+        let result =
+            parse_source_filter(Some(&"mail, cal , rss".to_string())).expect("known sources");
         assert_eq!(result, vec!["mail", "cal", "rss"]);
     }
 
     #[test]
     fn parse_source_filter_none() {
-        assert!(parse_source_filter(None).is_empty());
+        assert!(parse_source_filter(None).expect("none is empty").is_empty());
+    }
+
+    #[test]
+    fn parse_source_filter_rejects_unknown() {
+        // 修复前：`--source bogus` 静默返空 list，SQL `source IN ()` 返 0 行，
+        // 用户看到 "no events" 以为是数据问题。
+        // 现在显式报 UnknownSource 错误。
+        let err = parse_source_filter(Some(&"bogus".to_string())).unwrap_err();
+        assert!(err.message().contains("bogus"));
+        assert!(err.message().contains("mail")); // 错误里列出合法 source
+    }
+
+    #[test]
+    fn parse_source_filter_rejects_one_bad_among_good() {
+        // 逗号分隔的 source 列表中只要有一个未知，整个列表拒绝。
+        let err = parse_source_filter(Some(&"mail,bogus,rss".to_string())).unwrap_err();
+        assert!(err.message().contains("bogus"));
     }
 
     #[test]
