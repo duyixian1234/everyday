@@ -856,6 +856,118 @@ async fn select_folder(session: &mut ImapSession, folder: &str) -> Result<()> {
     )))
 }
 
+// ============ Timeline 数据拉取 ============
+
+/// Timeline 拉取用：邮件条目原始数据。
+pub struct MailTimelineEntry {
+    pub uid: u32,
+    pub folder: String,
+    pub date: String,
+    pub from: String,
+    pub subject: String,
+}
+
+/// Timeline 增量拉取：IMAP SEARCH SINCE <from_date>，跨所有文件夹，
+/// 返回窗口内收到的邮件。
+///
+/// IMAP SEARCH SINCE 只支持日期（无时间），客户端侧按精确 timestamp 过滤。
+/// 需要从 keyring 读取密码。
+pub async fn fetch_for_timeline(
+    account: &MailAccount,
+    from: chrono::DateTime<chrono::Utc>,
+    _to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<MailTimelineEntry>> {
+    let password = get_password(account)?;
+    let mut session = imap_connect(account, &password).await?;
+    let folders = list_all_folders(&mut session).await?;
+
+    let from_date = chrono::DateTime::parse_from_rfc3339(&from.to_rfc3339())
+        .map(|dt| dt.date_naive())
+        .unwrap_or_else(|_| chrono::Utc::now().date_naive());
+
+    let mut all_entries: Vec<MailTimelineEntry> = Vec::new();
+
+    for folder in &folders {
+        if select_folder(&mut session, folder).await.is_err() {
+            continue;
+        }
+        // IMAP SEARCH SINCE <date>（date-only，返回当天及以后的邮件）
+        let search = format!("SINCE {from_date}");
+        let uids = match search_uids(&mut session, &search).await {
+            Ok(u) => u,
+            Err(_) => continue,
+        };
+        let display_folder = decode_imap_utf7(folder);
+        let entries = fetch_timeline_summaries(&mut session, uids, &display_folder).await?;
+        all_entries.extend(entries);
+    }
+    session.logout().await.ok();
+    Ok(all_entries)
+}
+
+/// 按 UID 批量 fetch 摘要（timeline 用），只取 envelope 字段。
+async fn fetch_timeline_summaries(
+    session: &mut ImapSession,
+    mut uids: Vec<u32>,
+    folder: &str,
+) -> Result<Vec<MailTimelineEntry>> {
+    uids.truncate(500); // 防止过大 fetch
+    if uids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let uid_set = uids
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let fetches: Vec<async_imap::types::Fetch> = session
+        .uid_fetch(uid_set, "(UID ENVELOPE)")
+        .await
+        .map_err(|e| AgentError::Network(format!("fetch: {e}")))?
+        .try_collect()
+        .await
+        .map_err(|e| AgentError::Network(format!("fetch collect: {e}")))?;
+
+    let mut entries = Vec::with_capacity(fetches.len());
+    for f in &fetches {
+        let uid = f.uid.unwrap_or(0);
+        if uid == 0 {
+            continue;
+        }
+        let env = f.envelope();
+        let date = env
+            .and_then(|e| e.date.as_deref())
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default();
+        let subject = env
+            .and_then(|e| e.subject.as_deref())
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default();
+        let from = env
+            .and_then(|e| e.from.as_ref().and_then(|a| a.first()))
+            .map(|a| {
+                let m = a
+                    .mailbox
+                    .as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned());
+                let h = a
+                    .host
+                    .as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned());
+                format_mailbox(m.as_deref(), h.as_deref())
+            })
+            .unwrap_or_default();
+        entries.push(MailTimelineEntry {
+            uid,
+            folder: folder.to_string(),
+            date: decode_mime_header(&date),
+            from,
+            subject: decode_mime_header(&subject),
+        });
+    }
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

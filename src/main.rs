@@ -5,6 +5,7 @@
 
 mod cli;
 mod modules;
+mod ops_log;
 mod shared;
 mod util;
 
@@ -75,7 +76,7 @@ async fn run(cli: Cli, mode: RenderMode) -> (i32, String) {
     };
 
     // 构建注册表。
-    let registry = match ModuleRegistry::build(config, cli.account.as_deref()) {
+    let registry = match ModuleRegistry::build(config.clone(), cli.account.as_deref()) {
         Ok(r) => r,
         Err(e) => return (1, render_error(&e, mode)),
     };
@@ -97,6 +98,14 @@ async fn run(cli: Cli, mode: RenderMode) -> (i32, String) {
     }
     full_args.extend(cli.args.iter().cloned());
     let result = module.execute(action, &full_args).await;
+
+    // Ops-log AOP hook：成功执行后，若是 notion 账户的写操作，记录到 ops-log。
+    // 失败不阻断用户命令。
+    if let Ok(ref output) = result {
+        let _ = ops_log::maybe_log_op(&cli.module, action, cli.account.as_deref(), &config, output)
+            .await;
+    }
+
     finalize(result, mode)
 }
 

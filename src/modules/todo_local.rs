@@ -22,20 +22,33 @@ const STATUS_TODO: &str = "Todo";
 pub const STATUS_IN_PROGRESS: &str = "In Progress";
 pub const STATUS_DONE: &str = "Done";
 
-/// 建表语句：任务表。
+/// 建表语句：任务表（含 updated_at 列，timeline 增量拉取用）。
 const CREATE_SQL: &str = "CREATE TABLE IF NOT EXISTS todos (\
     id TEXT PRIMARY KEY, \
     title TEXT NOT NULL, \
     status TEXT NOT NULL, \
     due TEXT, \
     priority TEXT, \
-    created_at TEXT NOT NULL)";
+    created_at TEXT NOT NULL, \
+    updated_at TEXT NOT NULL DEFAULT '')";
 
-/// 打开连接并确保表存在。
+/// 打开连接并确保表存在（含 updated_at 列迁移）。
 async fn open(account: &TodoAccount) -> Result<sqlx::SqlitePool> {
     let path = resolve_db_path("todo", &account.name, account.db_path.as_deref())?;
     let pool = connect(&path).await?;
     sqlx::query(CREATE_SQL).execute(&pool).await?;
+    // 迁移：旧版表无 updated_at 列，幂等添加。
+    let has_col: Option<(i64,)> =
+        sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('todos') WHERE name='updated_at'")
+            .fetch_optional(&pool)
+            .await?;
+    if let Some((count,)) = has_col
+        && count == 0
+    {
+        sqlx::query("ALTER TABLE todos ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
+            .execute(&pool)
+            .await?;
+    }
     Ok(pool)
 }
 
@@ -144,8 +157,8 @@ pub async fn add(account: &TodoAccount, flags: &HashMap<String, String>) -> Resu
     let created_at = chrono::Utc::now().to_rfc3339();
 
     sqlx::query(
-        "INSERT INTO todos (id, title, status, due, priority, created_at) \
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO todos (id, title, status, due, priority, created_at, updated_at) \
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)",
     )
     .bind(&id)
     .bind(title)
@@ -173,8 +186,10 @@ pub async fn set_status(
 ) -> Result<Output> {
     let id = id.ok_or_else(|| AgentError::InvalidArgument(format!("`{status}` requires <id>")))?;
     let pool = open(account).await?;
-    let res = sqlx::query("UPDATE todos SET status = ?1 WHERE id = ?2")
+    let now = chrono::Utc::now().to_rfc3339();
+    let res = sqlx::query("UPDATE todos SET status = ?1, updated_at = ?2 WHERE id = ?3")
         .bind(status)
+        .bind(&now)
         .bind(id)
         .execute(&pool)
         .await?;
@@ -188,6 +203,59 @@ pub async fn set_status(
     } else {
         Ok(Output::text(format!("set todo {id} -> status '{status}'")))
     }
+}
+
+// ============ Timeline 数据拉取 ============
+
+/// Timeline 拉取用：todo 条目原始数据。
+pub struct TodoTimelineEntry {
+    pub id: String,
+    pub title: String,
+    pub status: String,
+    pub due: Option<String>,
+    pub priority: Option<String>,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Timeline 增量拉取：返回 `created_at` 或 `updated_at` 落在窗口内的 todo。
+///
+/// 本地 provider 降级语义：从当前态快照拉取，非完整转移历史。
+/// - 新增 todo → `created` 事件
+/// - 状态变化的 todo → 当前状态映射的事件（如 `completed`）
+pub async fn fetch_for_timeline(
+    account: &TodoAccount,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<TodoTimelineEntry>> {
+    let pool = open(account).await?;
+    let from_str = from.to_rfc3339();
+    let to_str = to.to_rfc3339();
+    // created_at 在窗口内（新创建）或 updated_at 在窗口内（状态变化）。
+    let rows = sqlx::query(
+        "SELECT id, title, status, due, priority, created_at, updated_at FROM todos \
+         WHERE (created_at >= ?1 AND created_at <= ?2) \
+            OR (updated_at >= ?1 AND updated_at <= ?2 AND updated_at != '') \
+         ORDER BY created_at ASC",
+    )
+    .bind(&from_str)
+    .bind(&to_str)
+    .fetch_all(&pool)
+    .await?;
+
+    let entries: Vec<TodoTimelineEntry> = rows
+        .iter()
+        .map(|r| TodoTimelineEntry {
+            id: r.get("id"),
+            title: r.get("title"),
+            status: r.get("status"),
+            due: r.get("due"),
+            priority: r.get("priority"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        })
+        .collect();
+    Ok(entries)
 }
 
 #[cfg(test)]

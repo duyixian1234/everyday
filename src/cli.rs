@@ -14,7 +14,7 @@ use clap::Parser;
     name = "everyday",
     version,
     about = "The Rust-powered hands for your AI Agent",
-    long_about = "Unified CLI: everyday <module> <action> [options].\nModules: mail, cal, rss, note, todo, bookmark, config."
+    long_about = "Unified CLI: everyday <module> <action> [options].\nModules: mail, cal, rss, note, todo, bookmark, timeline, config."
 )]
 pub struct Cli {
     /// 输出纯净 JSON（AI Agent 交互主模式）。
@@ -25,7 +25,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub account: Option<String>,
 
-    /// 模块名：mail | cal | rss | note | todo | config
+    /// 模块名：mail | cal | rss | note | todo | bookmark | timeline | config
     #[arg(required = true)]
     pub module: String,
 

@@ -646,6 +646,72 @@ fn event_filename() -> String {
     format!("{nanos:x}")
 }
 
+// ============ Timeline 数据拉取 ============
+
+/// Timeline 拉取用：日历事件原始数据。
+pub struct CalTimelineEntry {
+    pub href: String,
+    pub uid: String,
+    pub summary: String,
+    pub location: String,
+    pub start: String,
+    pub end: String,
+}
+
+/// Timeline 拉取：CalDAV 全量获取所有日历事件。
+///
+/// Cal 使用窗口刷新模式（WindowRefresh），故拉取时返回当前快照，
+/// 编排器负责删除窗口内旧行再插入。
+pub async fn fetch_for_timeline(
+    account: &CalendarAccount,
+    ignored: &[String],
+) -> Result<Vec<CalTimelineEntry>> {
+    let password = get_password(account)?;
+    let caldav = build_client(account, &password).await?;
+    let calendars = list_all_calendars(&caldav, ignored).await?;
+
+    let mut entries = Vec::new();
+    for cal in &calendars {
+        let resp = match caldav.request(GetCalendarResources::new(&cal.href)).await {
+            Ok(r) => r,
+            Err(_) => continue,
+        };
+        for res in resp.resources {
+            let content = match res.content {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            if let Ok(parsed) = content.data.parse::<Calendar>() {
+                for event in parsed.events() {
+                    let start_dpt = match event.get_start() {
+                        Some(s) => s,
+                        None => continue,
+                    };
+                    let start_str = format_date_perhaps_time(&start_dpt);
+                    let end_str = event
+                        .get_end()
+                        .as_ref()
+                        .map(format_date_perhaps_time)
+                        .unwrap_or_default();
+                    let summary = event.get_summary().unwrap_or("").to_string();
+                    let location = event.get_location().unwrap_or("").to_string();
+                    // VEVENT UID 作为 ref_id（iCalendar 标准）。
+                    let uid = event.get_uid().unwrap_or(&res.href).to_string();
+                    entries.push(CalTimelineEntry {
+                        href: res.href.clone(),
+                        uid,
+                        summary,
+                        location,
+                        start: start_str,
+                        end: end_str,
+                    });
+                }
+            }
+        }
+    }
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

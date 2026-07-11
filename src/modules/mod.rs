@@ -97,6 +97,12 @@ impl ModuleRegistry {
                 config.clone(),
             )),
         );
+        modules.insert(
+            "timeline",
+            Box::new(crate::modules::timeline::TimelineModule::new(
+                config.clone(),
+            )),
+        );
 
         let _ = account_override; // 各模块按需通过 config 自行解析；此处保留参数以便未来扩展
         Ok(Self { modules })
@@ -120,6 +126,7 @@ pub mod local;
 pub mod note;
 pub mod note_local;
 pub mod rss;
+pub mod timeline;
 pub mod todo;
 pub mod todo_local;
 

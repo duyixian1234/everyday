@@ -377,6 +377,50 @@ pub async fn update(
     }
 }
 
+// ============ Timeline 数据拉取 ============
+
+/// Timeline 拉取用：note 条目原始数据。
+pub struct NoteTimelineEntry {
+    pub id: String,
+    pub title: String,
+    pub created_at: String,
+    pub updated_at: String,
+}
+
+/// Timeline 增量拉取：返回 `created_at` 或 `updated_at` 落在窗口内的 note。
+///
+/// 本地 provider 降级语义：多次更新合并为一条 `updated` 事件（取最新 updated_at）。
+pub async fn fetch_for_timeline(
+    account: &NoteAccount,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<NoteTimelineEntry>> {
+    let pool = open(account).await?;
+    let from_str = from.to_rfc3339();
+    let to_str = to.to_rfc3339();
+    let rows = sqlx::query(
+        "SELECT id, title, created_at, updated_at FROM notes \
+         WHERE (created_at >= ?1 AND created_at <= ?2) \
+            OR (updated_at >= ?1 AND updated_at <= ?2) \
+         ORDER BY created_at ASC",
+    )
+    .bind(&from_str)
+    .bind(&to_str)
+    .fetch_all(&pool)
+    .await?;
+
+    let entries: Vec<NoteTimelineEntry> = rows
+        .iter()
+        .map(|r| NoteTimelineEntry {
+            id: r.get("id"),
+            title: r.get("title"),
+            created_at: r.get("created_at"),
+            updated_at: r.get("updated_at"),
+        })
+        .collect();
+    Ok(entries)
+}
+
 // ============ helpers ============
 
 /// 把 `("prop", "K:V")` 列表拆成 `(K, V)`。

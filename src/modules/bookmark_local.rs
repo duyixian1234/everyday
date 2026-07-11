@@ -179,6 +179,59 @@ pub async fn list(account: &BookmarkAccount, flags: &HashMap<String, String>) ->
     }
 }
 
+// ============ Timeline 数据拉取 ============
+
+/// Timeline 拉取用：bookmark 条目原始数据。
+pub struct BookmarkTimelineEntry {
+    pub id: String,
+    pub title: String,
+    pub url: String,
+    pub tags: Vec<String>,
+    pub created_at: String,
+}
+
+/// Timeline 增量拉取：返回 `created_at` 落在窗口内的 bookmark。
+pub async fn fetch_for_timeline(
+    account: &BookmarkAccount,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<BookmarkTimelineEntry>> {
+    let pool = open(account).await?;
+    let from_str = from.to_rfc3339();
+    let to_str = to.to_rfc3339();
+    let rows = sqlx::query(
+        "SELECT id, url, title, created_at FROM bookmarks \
+         WHERE created_at >= ?1 AND created_at <= ?2 \
+         ORDER BY created_at ASC",
+    )
+    .bind(&from_str)
+    .bind(&to_str)
+    .fetch_all(&pool)
+    .await?;
+
+    let mut entries = Vec::with_capacity(rows.len());
+    for r in &rows {
+        let id: String = r.get("id");
+        let tag_rows =
+            sqlx::query("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?1 ORDER BY tag")
+                .bind(&id)
+                .fetch_all(&pool)
+                .await?;
+        let tags: Vec<String> = tag_rows
+            .iter()
+            .map(|tr| tr.get::<String, _>("tag"))
+            .collect();
+        entries.push(BookmarkTimelineEntry {
+            id,
+            url: r.get("url"),
+            title: r.get("title"),
+            tags,
+            created_at: r.get("created_at"),
+        });
+    }
+    Ok(entries)
+}
+
 // ============ 小工具 ============
 
 /// 把 `--tags "rust,cli"` 解析为清洗后的标签向量（逗号分隔、去空白、去空项）。

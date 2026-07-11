@@ -479,6 +479,102 @@ fn cmp_opt_dt_desc(a: &Option<DateTime<Utc>>, b: &Option<DateTime<Utc>>) -> std:
     }
 }
 
+// ============ Timeline 数据拉取 ============
+
+/// Timeline 拉取用：RSS 条目原始数据。
+pub struct RssTimelineEntry {
+    pub feed_name: String,
+    pub feed_url: String,
+    pub title: String,
+    pub summary: String,
+    pub link: String,
+    pub author: String,
+    pub published: Option<DateTime<Utc>>,
+    pub guid: String,
+}
+
+/// Timeline 增量拉取：抓取所有 feed，返回发布时间在窗口内的条目。
+pub async fn fetch_for_timeline(
+    config: &Config,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+) -> Result<Vec<RssTimelineEntry>> {
+    if config.rss.feeds.is_empty() {
+        return Ok(Vec::new());
+    }
+    let client = build_client()?;
+    let tasks: Vec<_> = config
+        .rss
+        .feeds
+        .iter()
+        .map(|f| fetch_one(&client, f))
+        .collect();
+    let results = join_all(tasks).await;
+
+    let mut entries = Vec::new();
+    for r in &results {
+        if let Some(f) = &r.feed {
+            for e in &f.entries {
+                let published = e.published;
+                // 过滤：发布时间在窗口内（无发布时间的跳过）。
+                if let Some(pub_dt) = published
+                    && (pub_dt < from || pub_dt > to)
+                {
+                    continue;
+                }
+                let title = e
+                    .title
+                    .as_ref()
+                    .map(|t| t.content.clone())
+                    .unwrap_or_default();
+                let summary = e
+                    .summary
+                    .as_ref()
+                    .map(|s| {
+                        let content = s.content.as_str();
+                        if content.len() > 200 {
+                            format!("{}...", &content[..200])
+                        } else {
+                            content.to_string()
+                        }
+                    })
+                    .unwrap_or_default();
+                let author = e
+                    .authors
+                    .first()
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                let link = pick_link(&e.links);
+                let guid = if !e.id.is_empty() {
+                    e.id.clone()
+                } else if !link.is_empty() {
+                    link.clone()
+                } else {
+                    String::new()
+                };
+                let feed_url = config
+                    .rss
+                    .feeds
+                    .iter()
+                    .find(|f| f.name == r.name)
+                    .map(|f| f.url.clone())
+                    .unwrap_or_default();
+                entries.push(RssTimelineEntry {
+                    feed_name: r.name.clone(),
+                    feed_url,
+                    title,
+                    summary,
+                    link,
+                    author,
+                    published,
+                    guid,
+                });
+            }
+        }
+    }
+    Ok(entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
