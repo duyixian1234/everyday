@@ -576,45 +576,69 @@ async fn fetch_summaries(
 
     let mut rows: Vec<(u32, Vec<String>)> = Vec::with_capacity(fetches.len());
     for f in &fetches {
-        let uid = f.uid.unwrap_or(0);
-        let env = f.envelope();
-        // Envelope 字段是 Option<Cow<[u8]>>（IMAP 返回原始字节），需转 String。
-        let date = env
-            .and_then(|e| e.date.as_deref())
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .unwrap_or_default();
-        let subject = env
-            .and_then(|e| e.subject.as_deref())
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .unwrap_or_default();
-        let from = env
-            .and_then(|e| e.from.as_ref().and_then(|a| a.first()))
-            .map(|a| {
-                let m = a
-                    .mailbox
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                let h = a
-                    .host
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                format_mailbox(m.as_deref(), h.as_deref())
-            })
-            .unwrap_or_default();
+        // 没 uid 或没 envelope 的 fetch 跳过（之前是 `let env = f.envelope(); ... continue`）
+        let Some(fields) = extract_envelope_fields(f) else {
+            continue;
+        };
         rows.push((
-            uid,
+            fields.uid,
             vec![
-                uid.to_string(),
+                fields.uid.to_string(),
                 folder.to_string(),
-                decode_mime_header(&date),
-                from,
-                decode_mime_header(&subject),
+                decode_mime_header(&fields.date),
+                fields.from,
+                decode_mime_header(&fields.subject),
             ],
         ));
     }
     // 按 UID 降序排列（fetch 顺序不保证）
     rows.sort_by_key(|r| Reverse(r.0));
     Ok(rows.into_iter().map(|(_, r)| r).collect())
+}
+
+/// IMAP `Envelope` 字段的统一提取。
+///
+/// date / subject / from / to / message_id 都是 `Option<Cow<[u8]>>`，需要
+/// `from_utf8_lossy` 转 String；from/to 还要按"取首个 address + 拼 mailbox@host"。
+///
+/// 之前三个 fetch 函数（`fetch_summaries` / `fetch_envelopes_for_cache` /
+/// `fetch_timeline_summaries`）每处都重新写一遍这套 ~25 行模板。
+/// 集中到此处，三处调用即可。
+struct EnvelopeFields {
+    uid: u32,
+    date: String,
+    subject: String,
+    from: String,
+    to: String,
+    message_id: Option<String>,
+}
+
+fn extract_envelope_fields(f: &async_imap::types::Fetch) -> Option<EnvelopeFields> {
+    let uid = f.uid.unwrap_or(0);
+    if uid == 0 {
+        return None;
+    }
+    let env = f.envelope();
+    let decode = |b: &[u8]| String::from_utf8_lossy(b).into_owned();
+    let first_addr = |addrs: &Option<Vec<async_imap::imap_proto::Address>>| {
+        addrs
+            .as_ref()
+            .and_then(|a| a.first())
+            .map(|a| {
+                let m = a.mailbox.as_deref().map(decode);
+                let h = a.host.as_deref().map(decode);
+                format_mailbox(m.as_deref(), h.as_deref())
+            })
+            .unwrap_or_default()
+    };
+    Some(EnvelopeFields {
+        uid,
+        date: env.as_ref().and_then(|e| e.date.as_deref()).map(decode).unwrap_or_default(),
+        subject: env.as_ref().and_then(|e| e.subject.as_deref()).map(decode).unwrap_or_default(),
+        from: env.as_ref().map(|e| first_addr(&e.from)).unwrap_or_default(),
+        to: env.as_ref().map(|e| first_addr(&e.to)).unwrap_or_default(),
+        message_id: env.as_ref().and_then(|e| e.message_id.as_deref()).map(decode),
+    })
 }
 
 /// 格式化邮箱地址为 `mailbox@host`。
@@ -992,64 +1016,27 @@ async fn fetch_envelopes_for_cache(
 
     let mut envelopes = Vec::with_capacity(fetches.len());
     for f in &fetches {
-        let uid = f.uid.unwrap_or(0);
-        if uid == 0 {
+        let Some(fields) = extract_envelope_fields(f) else {
             continue;
-        }
-        let env = f.envelope();
-        let raw_date = env
-            .and_then(|e| e.date.as_deref())
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .unwrap_or_default();
-        let raw_subject = env
-            .and_then(|e| e.subject.as_deref())
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .unwrap_or_default();
-        let from = env
-            .and_then(|e| e.from.as_ref().and_then(|a| a.first()))
-            .map(|a| {
-                let m = a
-                    .mailbox
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                let h = a
-                    .host
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                format_mailbox(m.as_deref(), h.as_deref())
-            })
-            .unwrap_or_default();
-        let to = env
-            .and_then(|e| e.to.as_ref().and_then(|a| a.first()))
-            .map(|a| {
-                let m = a
-                    .mailbox
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                let h = a
-                    .host
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                format_mailbox(m.as_deref(), h.as_deref())
-            })
-            .unwrap_or_default();
-        let message_id = env
-            .and_then(|e| e.message_id.as_deref())
-            .map(|b| String::from_utf8_lossy(b).into_owned());
+        };
         let size = f.size.map(|s| s as i64);
         let flags = format_imap_flags(f.flags());
 
         envelopes.push(crate::modules::email_cache::CachedEnvelope {
             account: String::new(), // 由 sync_one_folder 填
             folder: folder.to_string(),
-            uid,
-            date: parse_envelope_date_utc(&decode_mime_header(&raw_date)),
-            from_addr: from,
-            subject: decode_mime_header(&raw_subject),
+            uid: fields.uid,
+            date: parse_envelope_date_utc(&decode_mime_header(&fields.date)),
+            from_addr: fields.from,
+            subject: decode_mime_header(&fields.subject),
             flags,
-            message_id,
+            message_id: fields.message_id,
             size,
-            to_addr: if to.is_empty() { None } else { Some(to) },
+            to_addr: if fields.to.is_empty() {
+                None
+            } else {
+                Some(fields.to)
+            },
             fetched_at: String::new(), // 由 upsert_envelopes 填
         });
     }
@@ -1236,39 +1223,15 @@ async fn fetch_timeline_summaries(
 
     let mut entries = Vec::with_capacity(fetches.len());
     for f in &fetches {
-        let uid = f.uid.unwrap_or(0);
-        if uid == 0 {
+        let Some(fields) = extract_envelope_fields(f) else {
             continue;
-        }
-        let env = f.envelope();
-        let date = env
-            .and_then(|e| e.date.as_deref())
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .unwrap_or_default();
-        let subject = env
-            .and_then(|e| e.subject.as_deref())
-            .map(|b| String::from_utf8_lossy(b).into_owned())
-            .unwrap_or_default();
-        let from = env
-            .and_then(|e| e.from.as_ref().and_then(|a| a.first()))
-            .map(|a| {
-                let m = a
-                    .mailbox
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                let h = a
-                    .host
-                    .as_deref()
-                    .map(|b| String::from_utf8_lossy(b).into_owned());
-                format_mailbox(m.as_deref(), h.as_deref())
-            })
-            .unwrap_or_default();
+        };
         entries.push(MailTimelineEntry {
-            uid,
+            uid: fields.uid,
             folder: folder.to_string(),
-            date: decode_mime_header(&date),
-            from,
-            subject: decode_mime_header(&subject),
+            date: decode_mime_header(&fields.date),
+            from: fields.from,
+            subject: decode_mime_header(&fields.subject),
         });
     }
     Ok(entries)
