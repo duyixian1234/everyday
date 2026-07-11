@@ -30,7 +30,6 @@
 
 ### 2026-07-10 — note / todo 模块 + 共享 notion-client
 - `note`（Notion 笔记）六动作 + `list`；`todo`（Notion 待办）六动作；底层共享 `notion-client`（429 退避重试）。
-- 与官方设计的有意偏差（核心 ADR）：**不新增 `AgentError` 变体**（复用 Auth/Network/Config，避免分裂错误分类）、**禁 `unwrap()`**（`NotionClient::new` 返回 `Result`）、**不引入 `toml_edit`**（用 `toml::Value` 局部编辑）、**note 暂不复用 `notion_client`**（避免回归，择机去重）。详见 `findings.md`「待办(todo)模块实现」。
 
 ### 2026-07-10 — CI / Release / v0.1.0
 - `.github/workflows/ci.yml`（三平台 + aarch64 macOS，clippy `-D warnings` + `cargo fmt --check`）、`release.yml`（tag `v*` 触发，三平台 + aarch64 二进制）；发布 v0.1.0。
