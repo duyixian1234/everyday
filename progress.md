@@ -5,7 +5,7 @@
 ## 当前状态（2026-07-11）
 
 - **v0.6.0 已发布**：tag `v0.6.0`，Mail Cache（envelope 缓存 + 并发 sync）实施完成。
-- **代码全量 Review + 修复进行中**：基于 2026-07-11 的 caveman-style 全量 review（详见 commit history），按 🔴→🟡→🔵 顺序逐项修复并独立提交；每修一项必须 `cargo build` + `cargo clippy -D warnings` + `cargo test` + `cargo fmt --check` 全绿。
+- **代码全量 Review + 修复进行中**：基于 2026-07-11 的 caveman-style 全量 review，按 🔴→🟡→🔵 顺序逐项修复并独立提交。已修 11/26 项，每项 `cargo build` + `cargo clippy -D warnings` + `cargo test` + `cargo fmt --check` 全绿。
 - **模块**：**7 个**外部集成模块 **mail / cal / rss / note / todo / bookmark / timeline** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；timeline 统一事件层（commit `2ce5055` + 修补 `045afa6` `9a3ef49` `8de8f26` `32f67c1`）；`mail list` v0.6.0 起走本地 envelope 缓存（`mail_cache.db`），staleness=15min 自动 sync，`--sync` 强制。
 - **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ **200 passed**（v0.6.0 196 + review 期间新增 4 单测）；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
@@ -14,13 +14,28 @@
 
 按严重度逐项修复，每项独立 commit：
 
-1. `fix(mail): PoolGuard::session returns Result instead of panicking` — 移除生产路径 `expect()` panic。
-2. `fix(mail): PoolGuard Drop no longer panics when tokio runtime is down` — `Handle::try_current()` 探测。
-3. `fix(timeline): eliminate double-unwrap on DST-boundary date parsing` — `.earliest()/.latest()` 替代 `.unwrap()`。
-4. `fix(timeline): CalProvider::sync honors the window argument` — 修正 ADR 0002 契约。
-5. `fix(output): JSON serialize failure no longer breaks --json contract` — `fallback_json` 兜底。
-6. `fix(util): is_json() no longer scans std::env::args()` — 改用线程局部变量。
-7. `fix(args): parse_simple_args no longer misclassifies negative numbers` — 负数 / 单破折号值保留为 flag 值。
+| # | commit | 文件 | 类别 |
+|---|---|---|---|
+| 1 | `fix(mail): PoolGuard::session returns Result instead of panicking` | email_pool.rs / email.rs | 🔴 panic |
+| 2 | `fix(mail): PoolGuard Drop no longer panics when tokio runtime is down` | email_pool.rs | 🔴 panic |
+| 3 | `fix(timeline): eliminate double-unwrap on DST-boundary date parsing` | timeline.rs / providers.rs | 🔴 panic |
+| 4 | `fix(timeline): CalProvider::sync honors the window argument` | providers.rs | 🔴 契约 |
+| 5 | `fix(output): JSON serialize failure no longer breaks --json contract` | output.rs | 🔴 契约 |
+| 6 | `fix(util): is_json() no longer scans std::env::args()` | json_mode.rs / main.rs | 🟡 risk |
+| 7 | `fix(args): parse_simple_args no longer misclassifies negative numbers` | args.rs | 🟡 risk |
+| 8 | `fix(ops-log): surface write failures to user (was let _ = silently)` | main.rs | 🟡 risk |
+| 9 | `fix(timeline): surface sync and DB write failures (were let _ = ...)` | timeline.rs / orchestrator.rs | 🟡 risk |
+| 10 | (含在 #9 内) insert_events 失败 → ProviderStatus::Failed | orchestrator.rs | 🟡 risk |
+| 11 | `refactor(config): collapse 5 X_account() lookups into a single macro` | config.rs | 🔵 抽象 |
+
+未修（剩 15 项，按优先级排序）：
+
+- **Dup #2-#9**：login_flow / set_module_database_id / parse_tags / select_folder_mailbox / envelope_to_record / parse_rfc3339 / build_providers 公共逻辑 / TodoAccount 合并。
+- **Special #1**：config 模块走 Executor trait（main.rs 3 处特殊分支）。
+- **Refactor #1-#2**：clap 子命令化 / 删 module_help 重建 registry。
+- **Risk**：timeline `--source bogus` / `--from 2026-07-99` / `--limit -1` 静默 fallback（已知 0.5.1/0.5.2 待修）。
+- **Nit #1-#3**：合并 KEYRING_USER 常量 / parse_rfc3339 失败回退 now 改 `?` / SELECT * 改 GLOB。
+- **Test #1**：补 timeline orchestrator group_by_source 测试体。
 
 ## 核心决策时间线（ADR）
 
