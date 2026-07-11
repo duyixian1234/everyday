@@ -109,12 +109,23 @@ impl PoolGuard {
 impl Drop for PoolGuard {
     fn drop(&mut self) {
         if let Some(session) = self.session.take() {
-            // 归还 session 到空闲队列
-            let pool = Arc::clone(&self.pool);
-            tokio::spawn(async move {
-                let mut sessions = pool.sessions.lock().await;
-                sessions.push_back(session);
-            });
+            // 归还 session 到空闲队列。
+            // 若当前不在 tokio runtime 内（runtime 关闭中 / 测试 teardown / 单线程同步上下文），
+            // tokio::spawn 会 panic，session 永久丢失、池容量漏出。
+            // 用 Handle::try_current 探测，runtime 不可用时直接 drop session（接受泄漏，
+            // 因为这种情况只会发生在进程退出路径）。
+            match tokio::runtime::Handle::try_current() {
+                Ok(handle) => {
+                    let pool = Arc::clone(&self.pool);
+                    handle.spawn(async move {
+                        let mut sessions = pool.sessions.lock().await;
+                        sessions.push_back(session);
+                    });
+                }
+                Err(_) => {
+                    // runtime 已关：放弃归还。permit 仍随 OwnedSemaphorePermit drop 释放。
+                }
+            }
         }
         // permit 在 OwnedSemaphorePermit drop 时自动释放 → 并发槽 +1
     }
