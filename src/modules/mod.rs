@@ -17,7 +17,7 @@ use crate::output::Output;
 /// 模块执行器 trait。
 ///
 /// 模块自身持有配置（构造时注入对应账户配置）。
-/// 主程序通过 [`ModuleRegistry`] 按 name 查找 trait object 并调用 [`Executor::execute`]。
+/// 主程序通过 [`ModuleRegistry`] 按 name 查找 trait object 并调用 [`Executor::execute`].
 #[async_trait]
 pub trait Executor: Send + Sync {
     /// 模块名（对应 CLI 的 `<module>`，如 `mail`、`cal`）。

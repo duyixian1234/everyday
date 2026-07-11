@@ -245,12 +245,68 @@ impl SyncOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::timeline::{SyncMode, TimelineEvent, TimelineProvider};
+    use async_trait::async_trait;
+
+    /// Mock provider，用于测 group_by_source 的分组逻辑。
+    struct MockProvider {
+        source_id: &'static str,
+        account_name: Option<&'static str>,
+    }
+
+    #[async_trait]
+    impl TimelineProvider for MockProvider {
+        fn source(&self) -> &'static str {
+            self.source_id
+        }
+        fn account(&self) -> Option<&str> {
+            self.account_name
+        }
+        async fn sync(&self, _w: &crate::modules::timeline::TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
+            Ok((vec![], SyncMode::Append))
+        }
+    }
 
     #[test]
     fn group_by_source_separates_sources() {
-        // 用 mock provider 测试分组逻辑不可行（trait object），
-        // 这里测试 group_by_source 的基本逻辑。
-        // 实际行为由集成测试覆盖。
+        let providers: Vec<Box<dyn TimelineProvider>> = vec![
+            Box::new(MockProvider {
+                source_id: "todo",
+                account_name: Some("personal"),
+            }),
+            Box::new(MockProvider {
+                source_id: "todo",
+                account_name: Some("work"),
+            }),
+            Box::new(MockProvider {
+                source_id: "note",
+                account_name: Some("personal"),
+            }),
+            Box::new(MockProvider {
+                source_id: "rss",
+                account_name: None,
+            }),
+        ];
+        let groups = group_by_source(providers);
+
+        // 4 个 providers 应分成 3 组（todo/note/rss）。
+        assert_eq!(groups.len(), 3, "expected 3 groups");
+
+        // 每组内 providers 数：todo=2, note=1, rss=1。
+        let sizes: Vec<usize> = groups.iter().map(|g| g.len()).collect();
+        let mut sizes_sorted = sizes.clone();
+        sizes_sorted.sort_unstable();
+        assert_eq!(sizes_sorted, vec![1, 1, 2]);
+
+        // 验证 todo 组含 2 个 accounts。
+        let todo_group = groups
+            .iter()
+            .find(|g| g[0].source() == "todo")
+            .expect("todo group must exist");
+        assert_eq!(todo_group.len(), 2);
+        let mut accounts: Vec<&str> = todo_group.iter().map(|p| p.account().unwrap()).collect();
+        accounts.sort_unstable();
+        assert_eq!(accounts, vec!["personal", "work"]);
     }
 
     #[test]
