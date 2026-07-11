@@ -62,10 +62,29 @@ pub async fn connect(path: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// 探测当前渲染模式是否为 JSON（与 note/todo 模块保持一致：以进程参数中的
-/// `--json` 为准）。
+/// 探测当前渲染模式是否为 JSON（与 note/todo 模块保持一致：以线程局部
+/// `is_json()` 为准，由 main.rs 在启动时设置）。
 pub fn mode_json() -> bool {
     crate::util::json_mode::is_json()
+}
+
+/// 把逗号分隔的标签字符串解析为清洗后的 `Vec<String>`。
+///
+/// - 去每项首尾空白；
+/// - 过滤空项（避免 `"rust, ,cli"` 产生空 tag）；
+/// - `None` 输入返空 Vec。
+///
+/// 之前 bookmark.rs 与 bookmark_local.rs 各有一份相同的实现（`parse_tags`
+/// 与 `parse_tags_local_splits`），集中到此处。
+pub fn parse_tags(raw: Option<&String>) -> Vec<String> {
+    match raw {
+        None => Vec::new(),
+        Some(s) => s
+            .split(',')
+            .map(|t| t.trim().to_string())
+            .filter(|t| !t.is_empty())
+            .collect(),
+    }
 }
 
 #[cfg(test)]
@@ -92,5 +111,22 @@ mod tests {
         let s = p.to_string_lossy();
         assert!(s.contains("todo-work.db"));
         assert!(s.contains("everyday"));
+    }
+
+    #[test]
+    fn parse_tags_none_is_empty() {
+        assert!(parse_tags(None).is_empty());
+    }
+
+    #[test]
+    fn parse_tags_splits_trims_drops_empty() {
+        let raw = "  rust , cli , ,  timeline  ".to_string();
+        assert_eq!(parse_tags(Some(&raw)), vec!["rust", "cli", "timeline"]);
+    }
+
+    #[test]
+    fn parse_tags_single_token() {
+        let raw = "rust".to_string();
+        assert_eq!(parse_tags(Some(&raw)), vec!["rust"]);
     }
 }

@@ -187,17 +187,7 @@ impl Executor for BookmarkModule {
 
 // ============ 标签解析 ============
 
-/// 把 `--tags "rust,cli"` 解析为清洗后的标签向量（逗号分隔、去空白、去空项）。
-fn parse_tags(raw: Option<&String>) -> Vec<String> {
-    match raw {
-        None => Vec::new(),
-        Some(s) => s
-            .split(',')
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect(),
-    }
-}
+// 见 `crate::modules::local::parse_tags` —— 两个 bookmark provider 共享同一实现。
 
 // ============ 凭证（keyring） ============
 
@@ -315,7 +305,7 @@ async fn bookmark_add(
     let title = flags
         .get("title")
         .ok_or_else(|| AgentError::InvalidArgument("add requires --title <title>".into()))?;
-    let tags = parse_tags(flags.get("tags"));
+    let tags = crate::modules::local::parse_tags(flags.get("tags"));
     let db_id = resolve_db_id(account, flags)?;
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
@@ -508,12 +498,15 @@ mod tests {
 
     #[test]
     fn parse_tags_splits_and_trims() {
-        assert_eq!(parse_tags(None), Vec::<String>::new());
+        // 共享 helper 的回归测试在 local.rs 那边；这里只验证 alias 路径也调到了。
         assert_eq!(
-            parse_tags(Some(&"rust, cli ,  web ".to_string())),
+            crate::modules::local::parse_tags(None),
+            Vec::<String>::new()
+        );
+        assert_eq!(
+            crate::modules::local::parse_tags(Some(&"rust, cli ,  web ".to_string())),
             vec!["rust", "cli", "web"]
         );
-        assert_eq!(parse_tags(Some(&",,".to_string())), Vec::<String>::new());
     }
 
     #[test]

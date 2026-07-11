@@ -82,7 +82,7 @@ pub async fn add(account: &BookmarkAccount, flags: &HashMap<String, String>) -> 
     let title = flags
         .get("title")
         .ok_or_else(|| AgentError::InvalidArgument("add requires --title <title>".into()))?;
-    let tags = parse_tags(flags.get("tags"));
+    let tags = crate::modules::local::parse_tags(flags.get("tags"));
     let pool = open(account).await?;
     let id = gen_id();
     let created_at = chrono::Utc::now().to_rfc3339();
@@ -234,17 +234,7 @@ pub async fn fetch_for_timeline(
 
 // ============ 小工具 ============
 
-/// 把 `--tags "rust,cli"` 解析为清洗后的标签向量（逗号分隔、去空白、去空项）。
-fn parse_tags(raw: Option<&String>) -> Vec<String> {
-    match raw {
-        None => Vec::new(),
-        Some(s) => s
-            .split(',')
-            .map(|t| t.trim().to_string())
-            .filter(|t| !t.is_empty())
-            .collect(),
-    }
-}
+// parse_tags 见 `crate::modules::local::parse_tags` —— 两处 bookmark provider 共享。
 
 #[cfg(test)]
 mod tests {
@@ -352,10 +342,10 @@ mod tests {
 
     #[test]
     fn parse_tags_local_splits() {
+        // 共享 helper 的完整测试在 local.rs；这里只验证 alias 调用。
         assert_eq!(
-            parse_tags(Some(&"a, b ,c".to_string())),
+            crate::modules::local::parse_tags(Some(&"a, b ,c".to_string())),
             vec!["a", "b", "c"]
         );
-        assert_eq!(parse_tags(None), Vec::<String>::new());
     }
 }
