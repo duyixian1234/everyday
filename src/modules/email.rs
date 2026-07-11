@@ -902,29 +902,10 @@ fn parse_mail_date(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
 
 /// 选中文件夹：先直接尝试（INBOX / ASCII / 原始编码名），
 /// 失败则遍历所有文件夹匹配解码后的中文名。兼容用户输入中文或原始名。
-async fn select_folder(session: &mut ImapSession, folder: &str) -> Result<()> {
-    if session.select(folder).await.is_ok() {
-        return Ok(());
-    }
-    let all = list_all_folders(session).await?;
-    for f in &all {
-        if decode_imap_utf7(f) == folder {
-            session
-                .select(f)
-                .await
-                .map_err(|e| AgentError::Network(format!("select '{f}': {e}")))?;
-            return Ok(());
-        }
-    }
-    Err(AgentError::Other(format!(
-        "folder '{folder}' not found (tried direct select and decoded-name match)"
-    )))
-}
-
-// ============ Mail Cache sync 辅助 ============
-
-/// 同 `select_folder` 但返回 `Mailbox`（拿 `uid_validity` 用于 sync 比对）。
-async fn select_folder_mailbox(
+///
+/// IMAP `SELECT` 始终返回 `Mailbox`（含 `uid_validity` 等元数据），
+/// 一并返回。多数调用方不需要 Mailbox，用 `select_folder()` 包装即可。
+async fn select_folder_inner(
     session: &mut ImapSession,
     folder: &str,
 ) -> Result<async_imap::types::Mailbox> {
@@ -934,16 +915,20 @@ async fn select_folder_mailbox(
     let all = list_all_folders(session).await?;
     for f in &all {
         if decode_imap_utf7(f) == folder {
-            let mb = session
+            return session
                 .select(f)
                 .await
-                .map_err(|e| AgentError::Network(format!("select '{f}': {e}")))?;
-            return Ok(mb);
+                .map_err(|e| AgentError::Network(format!("select '{f}': {e}")));
         }
     }
     Err(AgentError::Other(format!(
         "folder '{folder}' not found (tried direct select and decoded-name match)"
     )))
+}
+
+/// `select_folder_inner` 的 `Result<()>` 版本，丢弃 Mailbox 元数据。
+async fn select_folder(session: &mut ImapSession, folder: &str) -> Result<()> {
+    select_folder_inner(session, folder).await.map(|_| ())
 }
 
 /// 把 `Flag` 迭代器格式化为 IMAP 风格的空格分隔字符串（如 `\Seen \Answered`）。
@@ -1094,7 +1079,7 @@ async fn sync_one_folder(
     let session = guard.session()?;
 
     // SELECT folder → uid_validity
-    let mailbox = match select_folder_mailbox(session, folder).await {
+    let mailbox = match select_folder_inner(session, folder).await {
         Ok(mb) => mb,
         Err(e) => {
             guard.invalidate();
