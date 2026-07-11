@@ -104,10 +104,28 @@ async fn run(cli: Cli, mode: RenderMode) -> (i32, String) {
     let result = module.execute(action, &full_args).await;
 
     // Ops-log AOP hook：成功执行后，若是 notion 账户的写操作，记录到 ops-log。
-    // 失败不阻断用户命令。
-    if let Ok(ref output) = result {
-        let _ = ops_log::maybe_log_op(&cli.module, action, cli.account.as_deref(), &config, output)
-            .await;
+    // 失败不阻断用户命令，但 ops-log 写失败不应静默 —— 之前用 `let _ =`
+    // 完全吞掉 DB 错误，导致 timeline 永远静默缺失 notion 写记录，调试黑洞。
+    // 现在按模式分流：
+    // - --json：返回结构化错误字段，Agent 可观测。
+    // - 文本模式：eprintln! 到 stderr，避免污染主输出（stdout）。
+    if let Ok(ref output) = result
+        && let Err(e) =
+            ops_log::maybe_log_op(&cli.module, action, cli.account.as_deref(), &config, output)
+                .await
+    {
+        match mode {
+            RenderMode::Json => {
+                eprintln!(
+                    "{{\"_warning\":\"ops_log_failed\",\"module\":\"{}\",\"message\":\"{}\"}}",
+                    cli.module,
+                    e.message().replace('"', "'")
+                );
+            }
+            RenderMode::Text => {
+                eprintln!("warning: ops-log write failed: {}", e.message());
+            }
+        }
     }
 
     finalize(result, mode)
