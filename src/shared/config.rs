@@ -223,15 +223,14 @@ pub struct TodoConfig {
     pub accounts: Vec<TodoAccount>,
 }
 
-/// 单个待办账户。
+/// 单个 notion+local provider 账户的公共字段。
 ///
-/// `provider` 字段支持 `local`/`sqlite`（本地 SQLite，**默认**）与 `notion`
-/// （远程 Notion）。
-/// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/todo/<account>`）。
-/// `parent_page_id` 用于 `init-db` 创建数据库时的父级页面；`default_database_id`
-/// 由 `init-db` 成功后在本地 config 中回填（非机密元数据，可落盘）。
+/// `TodoAccount` 与 `BookmarkAccount` 之前是逐字复制的关系（5 个字段完全一致）；
+/// 共享此 struct + type alias。`NoteAccount` 暂保留独立类型，因为它有
+/// `default_page_id` 字段（"新笔记写到哪个页面"），与 todo/bookmark 的
+/// `parent_page_id`（"init-db 时把数据库建在哪个页面下"）语义不同。
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TodoAccount {
+pub struct NotionLocalAccount {
     /// 账户名（如 `personal`、`work`）。
     pub name: String,
     /// 后端提供方：`local`/`sqlite`（本地 SQLite，默认）或 `notion`（远程 Notion）。
@@ -240,14 +239,20 @@ pub struct TodoAccount {
     /// 创建数据库时的父级页面 ID（非机密，可落盘）。
     #[serde(default)]
     pub parent_page_id: Option<String>,
-    /// 默认任务数据库 ID（`init-db` 后回填；缺省时由 `--db` 显式指定）。
+    /// 默认数据库 ID（`init-db` 后回填；缺省时由 `--db` 显式指定）。
     #[serde(default)]
     pub default_database_id: Option<String>,
     /// 本地 provider 的 SQLite 文件路径（仅 `local`/`sqlite` provider 使用）。
-    /// 缺省时用 `~/.config/everyday/todo-<account>.db`。
+    /// 缺省时用 `~/.config/everyday/<module>-<account>.db`。
     #[serde(default)]
     pub db_path: Option<String>,
 }
+
+/// 单个待办账户。
+///
+/// 共享 `NotionLocalAccount` 字段；type alias 保留向后兼容（构造代码用
+/// `TodoAccount { .. }` 仍可工作 —— 通过 Default 实现填充零值）。
+pub type TodoAccount = NotionLocalAccount;
 
 // ---- 书签 (bookmark) ----
 
@@ -261,29 +266,8 @@ pub struct BookmarkConfig {
 
 /// 单个书签账户。
 ///
-/// `provider` 字段支持 `local`/`sqlite`（本地 SQLite，**默认**）与 `notion`
-/// （远程 Notion）。
-/// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/bookmark/<account>`）。
-/// `parent_page_id` 用于 `init-db` 创建数据库时的父级页面；`default_database_id`
-/// 由 `init-db` 成功后在本地 config 中回填（非机密元数据，可落盘）。
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BookmarkAccount {
-    /// 账户名（如 `personal`、`work`）。
-    pub name: String,
-    /// 后端提供方：`local`/`sqlite`（本地 SQLite，默认）或 `notion`（远程 Notion）。
-    #[serde(default = "default_provider")]
-    pub provider: String,
-    /// 创建数据库时的父级页面 ID（仅 notion provider，非机密，可落盘）。
-    #[serde(default)]
-    pub parent_page_id: Option<String>,
-    /// 默认书签数据库 ID（`init-db` 后回填；缺省时由 `--db` 显式指定）。
-    #[serde(default)]
-    pub default_database_id: Option<String>,
-    /// 本地 provider 的 SQLite 文件路径（仅 `local`/`sqlite` provider 使用）。
-    /// 缺省时用 `~/.config/everyday/bookmark-<account>.db`。
-    #[serde(default)]
-    pub db_path: Option<String>,
-}
+/// 共享 `NotionLocalAccount` 字段；type alias 保留向后兼容。
+pub type BookmarkAccount = NotionLocalAccount;
 
 // ---- 加载 / 保存 ----
 
