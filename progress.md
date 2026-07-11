@@ -2,17 +2,48 @@
 
 > 本文件仅保留**当前状态 + 核心决策（ADR）**。逐次会话的「已完成 / 测试结果 / 下一步」流水账已压缩；技术踩坑与 API 细节见 `findings.md`。
 
-## 当前状态（2026-07-11）
+## 当前状态（2026-07-12）
 
 - **v0.6.0 已发布**：tag `v0.6.0`，Mail Cache（envelope 缓存 + 并发 sync）实施完成。
-- **代码全量 Review + 修复进行中**：基于 2026-07-11 的 caveman-style 全量 review，按 🔴→🟡→🔵 顺序逐项修复并独立提交。已修 11/26 项，每项 `cargo build` + `cargo clippy -D warnings` + `cargo test` + `cargo fmt --check` 全绿。
-- **模块**：**7 个**外部集成模块 **mail / cal / rss / note / todo / bookmark / timeline** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；timeline 统一事件层（commit `2ce5055` + 修补 `045afa6` `9a3ef49` `8de8f26` `32f67c1`）；`mail list` v0.6.0 起走本地 envelope 缓存（`mail_cache.db`），staleness=15min 自动 sync，`--sync` 强制。
-- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ **200 passed**（v0.6.0 196 + review 期间新增 4 单测）；CI（ubuntu/macos/windows + aarch64 mac）全绿。
+- **代码全量 Review + 修复完成**：基于 2026-07-11/12 的 caveman-style 全量 review，按 🔴→🟡→🔵 顺序逐项修复并独立提交。共修 23/26 项（2 项推迟：clap 子命令化代价过大；module_help 重建性能成本低不值得改），每项 `cargo build` + `cargo clippy -D warnings` + `cargo test` + `cargo fmt --check` 全绿。
+- **模块**：**7 个**外部集成模块 **mail / cal / rss / note / todo / bookmark / timeline** + **`config` 现走 Executor trait**（与其它模块统一通过 ModuleRegistry 分发）均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；timeline 统一事件层（commit `2ce5055` + 修补 `045afa6` `9a3ef49` `8de8f26` `32f67c1`）；`mail list` v0.6.0 起走本地 envelope 缓存（`mail_cache.db`），staleness=15min 自动 sync，`--sync` 强制。
+- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ **214 passed**（v0.6.0 196 + review 期间 +18 单测）；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
 
-### 2026-07-11 — 全量代码 Review 修补流水（caveman-style）
+### 2026-07-11/12 — 全量代码 Review 修补流水（caveman-style）
 
-按严重度逐项修复，每项独立 commit：
+按严重度逐项修复，每项独立 commit。完整列表（按 commit 时间）：
+
+| # | commit | 类别 | 摘要 |
+|---|---|---|---|
+| 1 | `8c6bdd9` | 🔴 panic | PoolGuard::session 改返 Result |
+| 2 | `7a30cd5` | 🔴 panic | PoolGuard::Drop 用 Handle::try_current |
+| 3 | `18c3840` | 🔴 panic | DST 边界 .unwrap() 改 .earliest()/.latest() |
+| 4 | `b124048` | 🔴 契约 | CalProvider::sync 实现 window 过滤 |
+| 5 | `0d1b954` | 🔴 契约 | output JSON 失败不再破坏契约 |
+| 6 | `f80c5f4` | 🟡 risk | is_json() 改线程局部变量 |
+| 7 | `265f902` | 🟡 risk | parse_simple_args 负数不再误判 |
+| 8 | `79739cd` | 🟡 risk | ops_log 写失败 stderr 暴露 |
+| 9 | `5b20ce1` | 🟡 risk | run_sync / insert_events 错误不再吞 |
+| 10 | `67a9b76` | 🔵 抽象 | 5 个 Config::X_account() 用宏合并 |
+| 11 | `873a496` | 🔵 nit | KEYRING_USER 三处合并 |
+| 12 | `ffe63cb` | 🔵 nit | parse_rfc3339 三处合并 + 移除 Utc::now() 兜底 |
+| 13 | `3d77bb5` | 🔵 nit | LIKE 改 GLOB（flags 边界） |
+| 14 | `aa131b1` | 🔵 抽象 | select_folder_mailbox 合并 |
+| 15 | `b52d6f9` | 🟡 risk | timeline --source/--limit 显式报错 |
+| 16 | `0d99aa7` | 🔵 抽象 | parse_tags 两处合并 |
+| 17 | `3cd4397` | 🔵 抽象 | set_module_database_id 合并 |
+| 18 | `a2cbf74` | 🔵 抽象 | login_flow 三处合并 |
+| 19 | `9f8b4f3` | 🔵 test | group_by_source 测试体补完 |
+| 20 | `2a27dd7` | 🔵 抽象 | envelope_to_record 合并 |
+| 21 | `62d81f7` | 🔵 抽象 | build_providers 三模块用宏合并 |
+| 22 | `9524f12` | 🔵 抽象 | TodoAccount/BookmarkAccount 合并 |
+| 23 | `fa31601` | 🔵 抽象 | ConfigModule 走 Executor trait |
+
+未修（2 项推迟）：
+
+- **Refactor #1**：clap 子命令化（需要为每个模块写 arg 结构，改动面太广，单独 PR 跟进）。
+- **Refactor #2**：删 `module_help` 重建 registry（性能成本很小，构造器只存 Arc<Config>；架构气味不强，先保持现状）。
 
 | # | commit | 文件 | 类别 |
 |---|---|---|---|
