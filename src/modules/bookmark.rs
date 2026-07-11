@@ -26,7 +26,8 @@ use crate::notion_client::NotionClient;
 use crate::output::Output;
 
 /// 密钥环中存放 token 的条目用户名（同 service 下唯一）。
-const KEYRING_USER: &str = "token";
+/// 见 `crate::keyring_user` —— 三个 notion 模块共享同一常量。
+pub(crate) use crate::keyring_user::KEYRING_USER;
 
 /// 干净的领域模型（输出给 Agent / 终端）。
 #[derive(Debug, Clone, Serialize, Deserialize)]

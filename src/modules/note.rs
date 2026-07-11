@@ -29,7 +29,8 @@ use crate::notion_client::NotionClient;
 use crate::output::Output;
 
 /// 密钥环中存放 token 的条目用户名（与账户名无关，同 service 下唯一）。
-const KEYRING_USER: &str = "token";
+/// 见 `crate::keyring_user` —— 三个 notion 模块共享同一常量。
+pub(crate) use crate::keyring_user::KEYRING_USER;
 
 /// 递归渲染 block 的最大深度，防止异常数据导致无限展开。
 const MAX_BLOCK_DEPTH: usize = 12;

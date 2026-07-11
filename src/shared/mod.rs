@@ -9,5 +9,6 @@
 
 pub mod config;
 pub mod error;
+pub mod keyring_user;
 pub mod notion_client;
 pub mod output;
