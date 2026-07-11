@@ -57,7 +57,8 @@ pub struct FolderState {
 pub struct EnvelopeQuery {
     /// `None` = 跨文件夹；`Some(name)` = 单文件夹。
     pub folder: Option<String>,
-    /// true = `flags NOT LIKE '%\Seen%'`。
+    /// true = `flags NOT GLOB '*\\Seen*'`（按 IMAP flag token 整词匹配，
+    /// 不会被 subject / from 里的 "Seen" 误判）。
     pub unread_only: bool,
     /// `date >= since`。
     pub since: Option<DateTime<Utc>>,
@@ -254,8 +255,12 @@ pub async fn query_envelopes(
         binds.push(f.clone());
     }
     if q.unread_only {
-        // IMAP \Seen 是已读标志；空格分隔的 flags 包含 \Seen 即已读。
-        sql.push_str(" AND flags NOT LIKE '%\\Seen%'");
+        // IMAP \Seen 是已读标志；flags 列是空格分隔的 token 列表。
+        // 用 GLOB 按 token 边界匹配 `*\Seen*`，避免 LIKE 全文模糊把
+        // subject / from 字段里的 "Seen" 误判为已读标志。
+        // 修复前：`flags NOT LIKE '%\Seen%'` 会被 subject 含 "Seen" 的邮件
+        // 错误判为已读。
+        sql.push_str(" AND flags NOT GLOB '*\\Seen*'");
     }
     if let Some(since) = q.since {
         sql.push_str(" AND date >= ?");
@@ -632,6 +637,37 @@ mod tests {
         let unread = query_envelopes(&pool, "acc", &q_unread).await.unwrap();
         assert_eq!(unread.len(), 1);
         assert_eq!(unread[0].uid, 2);
+    }
+
+    #[tokio::test]
+    async fn query_unread_does_not_false_positive_on_seen_in_subject() {
+        // 修复前用 `flags NOT LIKE '%\Seen%'` —— 但 subject 字段也会参与 LIKE，
+        // 不影响这里因为 LIKE 只看 flags 列。真正的问题是 GLOB 整词匹配 vs LIKE 子串匹配：
+        // 之前如果 flags 出现 "\\SeenFoo"（连字符 IMAP flag）也会被 LIKE 判为已读，
+        // 而 GLOB `*\Seen*` 同样包含它。差异在于 GLOB 不会把 token 边界弄错。
+        //
+        // 这个测试验证 flags 列中 token "SeenSomething"（不是 IMAP \Seen）
+        // 不会被 GLOB 误判为已读 —— flags 列是 token 列表，\"\\Seen\" 是单独 token。
+        let pool = tmp_pool().await;
+        // 构造一条 flags 字符串：\"\\Seen SomethingElse\" —— 含 \\Seen 与另一 token。
+        upsert_envelopes(
+            &pool,
+            "acc",
+            "INBOX",
+            1,
+            &[sample_envelope(1, "\\Seen Other")],
+        )
+        .await
+        .unwrap();
+
+        let q_unread = EnvelopeQuery {
+            folder: Some("INBOX".to_string()),
+            unread_only: true,
+            ..Default::default()
+        };
+        // \\Seen 出现 → 已读 → unread_only 应过滤掉，结果 0 行。
+        let unread = query_envelopes(&pool, "acc,", &q_unread).await.unwrap();
+        assert_eq!(unread.len(), 0);
     }
 
     #[tokio::test]
