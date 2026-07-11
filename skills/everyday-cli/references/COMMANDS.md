@@ -17,13 +17,13 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | Module | Status | Notes |
 |--------|--------|-------|
 | `config` | ✅ Complete | path / list / get / set / init |
-| `mail` | ✅ Complete (v0.6.0) | IMAP receive + SMTP send + keyring credentials + local envelope cache (`mail list` reads from `~/.config/everyday/mail_cache.db`, auto-syncs if stale > 15min, `--sync` to force) |
+| `mail` | ✅ Complete (v0.6.1) | IMAP receive + SMTP send + keyring credentials + local envelope cache (`mail list` reads from `~/.config/everyday/mail_cache.db`, auto-syncs if stale > 15min, `--sync` to force) |
 | `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Complete | Notion: login / search / list / create / read / append / update |
 | `todo` | ✅ Complete | Notion/local tasks (shared `notion-client` SDK for notion): login / init-db / list / add / start / complete / **delete** |
 | `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK for notion): login / init-db / list / add |
-| `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + ops-log AOP trace. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`) |
+| `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + ops-log AOP trace. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`). v0.6.1 修复 `--from` 单独给定被静默回退 preset 的问题 |
 
 ---
 
