@@ -4,7 +4,7 @@
 
 ## 当前状态（2026-07-10）
 
-- **v0.3.0 已发布**：tag `v0.3.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
+- **v0.4.0 已发布**：tag `v0.4.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
 - **模块**：6 个外部集成模块 **mail / cal / rss / note / todo / bookmark** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；初版 `fs` / `net` / `sys` 已整体移除。
 - **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 137 passed；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
@@ -67,3 +67,12 @@
   - `skills/everyday-cli/references/COMMANDS.md`：实现状态表 + 完整 `## bookmark` 小节、配置示例、keyring service 命名行补 `everyday/bookmark/personal`。
   - `skills/everyday-cli/SKILL.md`：frontmatter description、`Modules:` 列表、`Modules.` 描述三处均补 `bookmark`。
 - 纯文档改动；门禁仍全绿：build ✅ / clippy `-D warnings` 零警告 ✅ / 137 tests ✅。
+
+### 2026-07-11 — 发布 v0.4.0
+- 自 v0.3.0 以来的增量：
+  - `feat(bookmark)`：新增 bookmark 模块，双 provider（local SQLite 默认 + Notion），commit `79922f6`。
+  - `docs(bookmark)`：配置示例 / README(中英文) / skills 文档对齐，commit `ca40fbe`。
+  - 模块分层 `modules` / `shared` / `util` 去重（`d532f3d`）；新增 `Justfile` 开发流程（`3a1412a` + `ea59506` + `92f8a83`）；README 国际化英文为默认（`5944c8f`）；CI 加 `cargo fmt --check` 门槛（`1a5704e`）。
+- 版本号 `0.3.0 → 0.4.0`（Cargo.toml；Cargo.lock 由 `cargo build` 自动同步）。
+- 质量门禁：build ✅ / clippy `--all-targets -D warnings` 零警告 ✅ / `cargo test` 137 passed ✅。
+- release commit `ca40fbe` 之后 bump 版本并打 tag `v0.4.0`，推送 `origin`（GitHub）触发 release workflow 构建三平台 + aarch64 macOS 预编译二进制。cnb 镜像不推。
