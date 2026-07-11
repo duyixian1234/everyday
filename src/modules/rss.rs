@@ -20,7 +20,7 @@ use futures::future::join_all;
 
 use crate::config::{Config, RssFeed};
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
 
 /// 单条聚合条目的展示行 + 排序键。
@@ -53,38 +53,101 @@ impl RssModule {
 
 #[async_trait]
 impl Executor for RssModule {
-    fn name(&self) -> &'static str {
-        "rss"
-    }
-
     fn description(&self) -> &'static str {
         "RSS/Atom feed reader: follow, list, unfollow, aggregate (digest), fetch."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "follow",
-                "Add a feed to config",
-                "everyday rss follow --name N --url URL [--category C]",
-            ),
-            ActionDoc::new("list", "List followed feeds", "everyday rss list"),
-            ActionDoc::new(
-                "unfollow",
-                "Remove a feed from config",
-                "everyday rss unfollow --name N",
-            ),
-            ActionDoc::new(
-                "digest",
-                "Aggregate recent entries from all/selected feeds",
-                "everyday rss digest [--limit N] [--name FEED] [--category C]",
-            ),
-            ActionDoc::new(
-                "fetch",
-                "Fetch a single feed and list its entries",
-                "everyday rss fetch --name N [--limit N]",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "follow",
+                description: "关注一个 RSS/Atom feed",
+                usage: "everyday rss follow --name N --url URL [--category C]",
+                args: &[
+                    ArgSpec {
+                        name: "name",
+                        help: "feed 名称",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "url",
+                        help: "feed URL（http/https）",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "category",
+                        help: "分类",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "list",
+                description: "列出已关注的 feed",
+                usage: "everyday rss list",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "unfollow",
+                description: "取消关注",
+                usage: "everyday rss unfollow --name N",
+                args: &[ArgSpec {
+                    name: "name",
+                    help: "feed 名称",
+                    kind: ArgKind::Value,
+                }],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "digest",
+                description: "生成今日早报摘要",
+                usage: "everyday rss digest [--limit N] [--name FEED] [--category C]",
+                args: &[
+                    ArgSpec {
+                        name: "limit",
+                        help: "条数上限",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "name",
+                        help: "按 feed 名过滤",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "category",
+                        help: "按分类过滤",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "fetch",
+                description: "抓取并展示某个 feed 的文章",
+                usage: "everyday rss fetch --name N [--limit N]",
+                args: &[
+                    ArgSpec {
+                        name: "name",
+                        help: "feed 名称",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "limit",
+                        help: "条数上限",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "rss",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {

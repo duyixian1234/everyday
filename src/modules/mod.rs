@@ -20,14 +20,14 @@ use crate::output::Output;
 /// 主程序通过 [`ModuleRegistry`] 按 name 查找 trait object 并调用 [`Executor::execute`].
 #[async_trait]
 pub trait Executor: Send + Sync {
-    /// 模块名（对应 CLI 的 `<module>`，如 `mail`、`cal`）。
-    fn name(&self) -> &'static str;
-
     /// 一句话描述。
     fn description(&self) -> &'static str;
 
-    /// 该模块支持的动作文档，用于 `everyday <module> --help`。
-    fn actions(&self) -> Vec<ActionDoc>;
+    /// 返回该模块的参数结构声明（clap 子命令化的单一事实来源）。
+    ///
+    /// 由 `cli.rs` 据此构建 `clap::Command` 树（module → action → flags），
+    /// 模块自身无需感知 clap；`--account` 是全局 flag，不在此声明。
+    fn module_arg_spec(&self) -> ModuleArgSpec;
 
     /// 执行指定 action。
     ///
@@ -36,22 +36,52 @@ pub trait Executor: Send + Sync {
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output>;
 }
 
-/// 动作文档。
-#[derive(Debug, Clone)]
-pub struct ActionDoc {
+/// clap 子命令化：每个模块以「数据」形式声明自己的参数结构，
+/// 由 `cli.rs` 统一转成 `clap::Command` 树。单一事实来源，避免散落在 execute 里重复解析。
+#[derive(Debug, Clone, Copy)]
+pub enum ArgKind {
+    /// 取值 flag：`--name VALUE`
+    Value,
+    /// 布尔开关：`--name`（无值）
+    Bool,
+    /// 可重复取值 flag：`--name V` 可多次，收集为列表（如 note 的 `--prop`）
+    Multi,
+}
+
+/// 单个参数声明。
+pub struct ArgSpec {
+    pub name: &'static str,
+    pub help: &'static str,
+    pub kind: ArgKind,
+}
+
+/// 位置参数形态。
+#[derive(Debug, Clone, Copy)]
+pub enum Positional {
+    /// 无位置参数（纯 flag 命令）。
+    None,
+    /// 恰好 N 个位置参数（如 `config set <path> <value>` 为 `Exactly(2)`）。
+    Exactly(u8),
+    /// 可选单个位置参数（0 或 1，如 `note read [<page_id>]`）。
+    OptionalSingle,
+}
+
+/// 单个 action（子命令）的参数声明。
+pub struct ActionArgSpec {
     pub name: &'static str,
     pub description: &'static str,
     pub usage: &'static str,
+    pub args: &'static [ArgSpec],
+    /// 位置参数声明（如 `config set <path> <value>`、`note read <page_id>`）。
+    /// 位置参数统一以 `args` 这个 clap id 捕获，由 `matches_to_args` 原样还原。
+    pub positional: Positional,
 }
 
-impl ActionDoc {
-    pub const fn new(name: &'static str, description: &'static str, usage: &'static str) -> Self {
-        Self {
-            name,
-            description,
-            usage,
-        }
-    }
+/// 模块级参数声明（clap 子命令化的单一事实来源）。
+pub struct ModuleArgSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub actions: &'static [ActionArgSpec],
 }
 
 /// 模块注册表。
@@ -59,13 +89,12 @@ impl ActionDoc {
 /// 构建时注入配置与（可选的）`--account` 覆盖，
 /// 各模块按需读取自己所需的账户配置。
 pub struct ModuleRegistry {
-    modules: HashMap<&'static str, Box<dyn Executor>>,
+    pub(crate) modules: HashMap<&'static str, Box<dyn Executor>>,
 }
 
 impl ModuleRegistry {
     /// 根据配置构建所有模块。
-    /// `account_override`：来自全局 `--account` flag，模块可选择性使用。
-    pub fn build(config: Arc<Config>, account_override: Option<&str>) -> Result<Self> {
+    pub fn build(config: Arc<Config>) -> Result<Self> {
         let mut modules: HashMap<&'static str, Box<dyn Executor>> = HashMap::new();
 
         // 注册各模块。模块内部决定是否需要账户配置、是否容忍缺失。
@@ -108,7 +137,6 @@ impl ModuleRegistry {
             )),
         );
 
-        let _ = account_override; // 各模块按需通过 config 自行解析；此处保留参数以便未来扩展
         Ok(Self { modules })
     }
 
@@ -148,14 +176,15 @@ mod tests {
     struct DummyModule;
     #[async_trait]
     impl Executor for DummyModule {
-        fn name(&self) -> &'static str {
-            "dummy"
-        }
         fn description(&self) -> &'static str {
             "test"
         }
-        fn actions(&self) -> Vec<ActionDoc> {
-            vec![]
+        fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+            crate::modules::ModuleArgSpec {
+                name: "dummy",
+                description: "test",
+                actions: &[],
+            }
         }
         async fn execute(&self, _a: &str, _args: &[String]) -> Result<Output> {
             Ok(Output::text("ok"))

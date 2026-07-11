@@ -29,7 +29,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
 
 // ============ 核心类型 ============
@@ -158,42 +158,99 @@ impl TimelineModule {
 
 #[async_trait]
 impl Executor for TimelineModule {
-    fn name(&self) -> &'static str {
-        "timeline"
-    }
-
     fn description(&self) -> &'static str {
         "Unified event timeline: query and sync across all sources."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "today",
-                "Show today's events (default)",
-                "everyday timeline today [--source S] [--account A] [--limit N] [--sync]",
-            ),
-            ActionDoc::new(
-                "yesterday",
-                "Show yesterday's events",
-                "everyday timeline yesterday [--source S] [--account A] [--limit N]",
-            ),
-            ActionDoc::new(
-                "week",
-                "Show this week's events (Mon-Sun)",
-                "everyday timeline week [--source S] [--account A] [--limit N]",
-            ),
-            ActionDoc::new(
-                "month",
-                "Show this month's events",
-                "everyday timeline month [--source S] [--account A] [--limit N]",
-            ),
-            ActionDoc::new(
-                "sync",
-                "Sync events from all sources into timeline.db",
-                "everyday timeline sync [--source mail,cal] [--since 2026-01-01]",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        // 查询类 action 共享同一组 flag（不含 --account：它是全局 flag，由 main 注入）。
+        static QUERY_ARGS: &[ArgSpec] = &[
+            ArgSpec {
+                name: "from",
+                help: "起始日期 YYYY-MM-DD",
+                kind: ArgKind::Value,
+            },
+            ArgSpec {
+                name: "to",
+                help: "结束日期 YYYY-MM-DD",
+                kind: ArgKind::Value,
+            },
+            ArgSpec {
+                name: "since",
+                help: "相对起点：YYYY-MM-DD 或 30m/2h/1d/7d",
+                kind: ArgKind::Value,
+            },
+            ArgSpec {
+                name: "source",
+                help: "来源过滤：mail,cal,rss,todo,note,bookmark（逗号分隔）",
+                kind: ArgKind::Value,
+            },
+            ArgSpec {
+                name: "limit",
+                help: "条数上限（默认 100）",
+                kind: ArgKind::Value,
+            },
+            ArgSpec {
+                name: "sync",
+                help: "查询前先同步一次",
+                kind: ArgKind::Bool,
+            },
+        ];
+        static SYNC_ARGS: &[ArgSpec] = &[
+            ArgSpec {
+                name: "source",
+                help: "来源过滤（逗号分隔）",
+                kind: ArgKind::Value,
+            },
+            ArgSpec {
+                name: "since",
+                help: "仅同步该日期之后的事件 YYYY-MM-DD",
+                kind: ArgKind::Value,
+            },
+        ];
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "today",
+                description: "今天的事件",
+                usage: "everyday timeline today [--source S] [--account A] [--limit N] [--sync]",
+                args: QUERY_ARGS,
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "yesterday",
+                description: "昨天的事件",
+                usage: "everyday timeline yesterday [--source S] [--account A] [--limit N] [--sync]",
+                args: QUERY_ARGS,
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "week",
+                description: "本周（周一-周日）的事件",
+                usage: "everyday timeline week [--source S] [--account A] [--limit N] [--sync]",
+                args: QUERY_ARGS,
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "month",
+                description: "本月的事件",
+                usage: "everyday timeline month [--source S] [--account A] [--limit N] [--sync]",
+                args: QUERY_ARGS,
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "sync",
+                description: "同步各来源事件到 timeline",
+                usage: "everyday timeline sync [--source mail,cal] [--since 2026-01-01]",
+                args: SYNC_ARGS,
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "timeline",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {

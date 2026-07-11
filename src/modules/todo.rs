@@ -23,7 +23,7 @@ use serde_json::{Value, json};
 
 use crate::config::TodoAccount;
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{Executor, parse_simple_args};
 use crate::notion_client::NotionClient;
 use crate::output::Output;
 
@@ -155,52 +155,104 @@ impl TodoModule {
 
 #[async_trait]
 impl Executor for TodoModule {
-    fn name(&self) -> &'static str {
-        "todo"
-    }
-
     fn description(&self) -> &'static str {
         "Todo tasks (Notion or local sqlite): login, init-db, list, add, start, complete, delete."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "login",
-                "Store Notion Integration Token in system keyring",
-                "everyday todo login [--account NAME]",
-            ),
-            ActionDoc::new(
-                "init-db",
-                "Create the todo database in Notion (needs parent_page_id)",
-                "everyday todo init-db [--account NAME] [--parent PAGE_ID]",
-            ),
-            ActionDoc::new(
-                "list",
-                "List incomplete todos (sorted by due)",
-                "everyday todo list [--db ID] [--all]",
-            ),
-            ActionDoc::new(
-                "add",
-                "Add a todo",
-                "everyday todo add --title T [--due DATE] [--priority P] [--db ID]",
-            ),
-            ActionDoc::new(
-                "start",
-                "Mark a todo as In Progress",
-                "everyday todo start <page_id>",
-            ),
-            ActionDoc::new(
-                "complete",
-                "Mark a todo as Done",
-                "everyday todo complete <page_id>",
-            ),
-            ActionDoc::new(
-                "delete",
-                "Delete a todo (Notion: archive; local: physical delete)",
-                "everyday todo delete <page_id>",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "login",
+                description: "保存 Notion 凭证到系统 keyring",
+                usage: "everyday todo login [--account NAME]",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "init-db",
+                description: "在 Notion 初始化待办数据库",
+                usage: "everyday todo init-db [--parent PAGE_ID] [--account NAME]",
+                args: &[ArgSpec {
+                    name: "parent",
+                    help: "父页面 ID（默认账户父页）",
+                    kind: ArgKind::Value,
+                }],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "list",
+                description: "列出待办",
+                usage: "everyday todo list [--db ID] [--all] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "db",
+                        help: "数据库 ID",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "all",
+                        help: "列出全部（默认仅未完成）",
+                        kind: ArgKind::Bool,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "add",
+                description: "新增待办",
+                usage: "everyday todo add --title T [--due DATE] [--priority P] [--db ID] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "title",
+                        help: "标题",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "due",
+                        help: "截止日期（如 2026-07-15）",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "priority",
+                        help: "优先级（如 P0/P1/P2）",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "db",
+                        help: "数据库 ID",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "start",
+                description: "标记进行中",
+                usage: "everyday todo start <page_id> [--account NAME]",
+                args: &[],
+                positional: Positional::Exactly(1),
+            },
+            ActionArgSpec {
+                name: "complete",
+                description: "标记完成",
+                usage: "everyday todo complete <page_id> [--account NAME]",
+                args: &[],
+                positional: Positional::Exactly(1),
+            },
+            ActionArgSpec {
+                name: "delete",
+                description: "删除待办",
+                usage: "everyday todo delete <page_id> [--account NAME]",
+                args: &[],
+                positional: Positional::Exactly(1),
+            },
+        ];
+        ModuleArgSpec {
+            name: "todo",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {

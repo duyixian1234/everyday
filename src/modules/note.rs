@@ -24,7 +24,7 @@ use serde_json::{Map, Value, json};
 
 use crate::config::NoteAccount;
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor};
+use crate::modules::Executor;
 use crate::notion_client::NotionClient;
 use crate::output::Output;
 
@@ -50,52 +50,114 @@ impl NoteModule {
 
 #[async_trait]
 impl Executor for NoteModule {
-    fn name(&self) -> &'static str {
-        "note"
-    }
-
     fn description(&self) -> &'static str {
         "Note & knowledge-base (Notion or local sqlite): login, search, list, create, read, append, update."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "login",
-                "Store Notion Integration Token in system keyring",
-                "everyday note login [--account NAME]",
-            ),
-            ActionDoc::new(
-                "search",
-                "Search pages/databases by title",
-                "everyday note search --query Q [--limit N]",
-            ),
-            ActionDoc::new(
-                "create",
-                "Create a page (record) in a database",
-                "everyday note create --title T [--db ID] [--prop K:V ...]",
-            ),
-            ActionDoc::new(
-                "read",
-                "Read a page and render its content as Markdown",
-                "everyday note read <page_id> [--account NAME]",
-            ),
-            ActionDoc::new(
-                "append",
-                "Append text/markdown blocks to a page",
-                "everyday note append [page_id] --text TEXT",
-            ),
-            ActionDoc::new(
-                "update",
-                "Update a page's properties (metadata)",
-                "everyday note update <page_id> --prop K:V ...",
-            ),
-            ActionDoc::new(
-                "list",
-                "List pages in a database",
-                "everyday note list [--db ID] [--limit N]",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "login",
+                description: "保存 Notion 凭证到系统 keyring",
+                usage: "everyday note login [--account NAME]",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "search",
+                description: "搜索页面",
+                usage: "everyday note search --query Q [--limit N] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "query",
+                        help: "搜索关键词",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "limit",
+                        help: "条数上限",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "create",
+                description: "新建页面",
+                usage: "everyday note create --title T [--db ID] [--prop K:V ...] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "title",
+                        help: "页面标题",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "db",
+                        help: "数据库 ID（默认账户默认库）",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "prop",
+                        help: "属性 K:V（可重复）",
+                        kind: ArgKind::Multi,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "read",
+                description: "读取页面内容（默认账户默认页）",
+                usage: "everyday note read [<page_id>] [--account NAME]",
+                args: &[],
+                positional: Positional::OptionalSingle,
+            },
+            ActionArgSpec {
+                name: "append",
+                description: "追加内容到页面（默认账户默认页，或从 stdin 读取）",
+                usage: "everyday note append [<page_id>] --text TEXT [--account NAME]",
+                args: &[ArgSpec {
+                    name: "text",
+                    help: "追加文本（缺省从 stdin 读取）",
+                    kind: ArgKind::Value,
+                }],
+                positional: Positional::OptionalSingle,
+            },
+            ActionArgSpec {
+                name: "update",
+                description: "更新页面属性",
+                usage: "everyday note update <page_id> --prop K:V ... [--account NAME]",
+                args: &[ArgSpec {
+                    name: "prop",
+                    help: "属性 K:V（至少一个，可重复）",
+                    kind: ArgKind::Multi,
+                }],
+                positional: Positional::OptionalSingle,
+            },
+            ActionArgSpec {
+                name: "list",
+                description: "列出数据库中的页面",
+                usage: "everyday note list [--db ID] [--limit N] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "db",
+                        help: "数据库 ID",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "limit",
+                        help: "条数上限",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "note",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {

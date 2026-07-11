@@ -17,7 +17,7 @@ use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
 use crate::config::{Config, MailAccount};
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{Executor, parse_simple_args};
 use crate::modules::{email_cache, email_pool};
 use crate::output::Output;
 
@@ -33,47 +33,145 @@ impl EmailModule {
 
 #[async_trait]
 impl Executor for EmailModule {
-    fn name(&self) -> &'static str {
-        "mail"
-    }
-
     fn description(&self) -> &'static str {
         "Email management (IMAP/SMTP): folders, list, read, search, send, login."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "folders",
-                "List all mailbox folders",
-                "everyday mail folders [--account NAME]",
-            ),
-            ActionDoc::new(
-                "list",
-                "List messages from local cache (auto-sync if stale; --sync to force)",
-                "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync] [--account NAME]",
-            ),
-            ActionDoc::new(
-                "read",
-                "Read a single message (searches all folders by default)",
-                "everyday mail read <uid> [--folder NAME] [--no-recursive] [--account NAME]",
-            ),
-            ActionDoc::new(
-                "search",
-                "Search messages (recursively across all folders by default)",
-                "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
-            ),
-            ActionDoc::new(
-                "send",
-                "Send a message",
-                "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]",
-            ),
-            ActionDoc::new(
-                "login",
-                "Store password in system keyring",
-                "everyday mail login [--account NAME]",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "folders",
+                description: "列出所有文件夹",
+                usage: "everyday mail folders [--account NAME]",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "list",
+                description: "列出邮件（走本地 envelope 缓存）",
+                usage: "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "unread",
+                        help: "仅未读",
+                        kind: ArgKind::Bool,
+                    },
+                    ArgSpec {
+                        name: "limit",
+                        help: "条数上限",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "folder",
+                        help: "限定文件夹",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "no-recursive",
+                        help: "仅查 INBOX（不递归子文件夹）",
+                        kind: ArgKind::Bool,
+                    },
+                    ArgSpec {
+                        name: "sync",
+                        help: "强制立即同步本地缓存",
+                        kind: ArgKind::Bool,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "read",
+                description: "读取邮件正文",
+                usage: "everyday mail read <uid> [--folder NAME] [--no-recursive] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "id",
+                        help: "邮件 UID（--uid 的替代写法）",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "folder",
+                        help: "邮件所在文件夹",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "no-recursive",
+                        help: "仅查 INBOX",
+                        kind: ArgKind::Bool,
+                    },
+                ],
+                positional: Positional::OptionalSingle,
+            },
+            ActionArgSpec {
+                name: "search",
+                description: "在服务器搜索邮件",
+                usage: "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "query",
+                        help: "搜索关键词",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "limit",
+                        help: "条数上限",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "folder",
+                        help: "限定文件夹",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "no-recursive",
+                        help: "仅查 INBOX",
+                        kind: ArgKind::Bool,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "send",
+                description: "发送邮件",
+                usage: "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "to",
+                        help: "收件人地址",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "subject",
+                        help: "主题",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "body",
+                        help: "正文",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "cc",
+                        help: "抄送地址",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "login",
+                description: "保存邮箱凭证到系统 keyring",
+                usage: "everyday mail login [--account NAME]",
+                args: &[],
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "mail",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
@@ -633,11 +731,25 @@ fn extract_envelope_fields(f: &async_imap::types::Fetch) -> Option<EnvelopeField
     };
     Some(EnvelopeFields {
         uid,
-        date: env.as_ref().and_then(|e| e.date.as_deref()).map(decode).unwrap_or_default(),
-        subject: env.as_ref().and_then(|e| e.subject.as_deref()).map(decode).unwrap_or_default(),
-        from: env.as_ref().map(|e| first_addr(&e.from)).unwrap_or_default(),
+        date: env
+            .as_ref()
+            .and_then(|e| e.date.as_deref())
+            .map(decode)
+            .unwrap_or_default(),
+        subject: env
+            .as_ref()
+            .and_then(|e| e.subject.as_deref())
+            .map(decode)
+            .unwrap_or_default(),
+        from: env
+            .as_ref()
+            .map(|e| first_addr(&e.from))
+            .unwrap_or_default(),
         to: env.as_ref().map(|e| first_addr(&e.to)).unwrap_or_default(),
-        message_id: env.as_ref().and_then(|e| e.message_id.as_deref()).map(decode),
+        message_id: env
+            .as_ref()
+            .and_then(|e| e.message_id.as_deref())
+            .map(decode),
     })
 }
 

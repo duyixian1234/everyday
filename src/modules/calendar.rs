@@ -25,7 +25,7 @@ use tower_http::auth::AddAuthorization;
 
 use crate::config::{CalendarAccount, Config};
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
 
 /// hyper-rustls 的 HTTPS connector（webpki 根证书 + http1）。
@@ -50,42 +50,110 @@ impl CalendarModule {
 
 #[async_trait]
 impl Executor for CalendarModule {
-    fn name(&self) -> &'static str {
-        "cal"
-    }
-
     fn description(&self) -> &'static str {
         "Calendar management (CalDAV): login, calendars, list, add, delete events."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "login",
-                "Store CalDAV password in system keyring",
-                "everyday cal login [--account NAME]",
-            ),
-            ActionDoc::new(
-                "calendars",
-                "List calendar collections",
-                "everyday cal calendars [--account NAME]",
-            ),
-            ActionDoc::new(
-                "list",
-                "List events (default: today & future)",
-                "everyday cal list [--today|--date YYYY-MM-DD|--all] [--limit N] [--account NAME]",
-            ),
-            ActionDoc::new(
-                "add",
-                "Add an event",
-                "everyday cal add --title T --start ISO --end ISO [--location L] [--description D] [--calendar HREF] [--account NAME]",
-            ),
-            ActionDoc::new(
-                "delete",
-                "Delete an event by href",
-                "everyday cal delete --id HREF [--account NAME]",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "login",
+                description: "保存 CalDAV 凭证到系统 keyring",
+                usage: "everyday cal login [--account NAME]",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "calendars",
+                description: "列出日历集",
+                usage: "everyday cal calendars [--account NAME]",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "list",
+                description: "列出日历事件",
+                usage: "everyday cal list [--today|--date YYYY-MM-DD|--all] [--limit N] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "today",
+                        help: "仅今日",
+                        kind: ArgKind::Bool,
+                    },
+                    ArgSpec {
+                        name: "date",
+                        help: "指定日期 YYYY-MM-DD",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "all",
+                        help: "返回全部（默认今天及未来）",
+                        kind: ArgKind::Bool,
+                    },
+                    ArgSpec {
+                        name: "limit",
+                        help: "条数上限",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "add",
+                description: "新增事件",
+                usage: "everyday cal add --title T --start ISO --end ISO [--location L] [--description D] [--calendar HREF] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "title",
+                        help: "标题",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "start",
+                        help: "开始时间（RFC3339 或 YYYY-MM-DDTHH:MM:SS）",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "end",
+                        help: "结束时间",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "location",
+                        help: "地点",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "description",
+                        help: "描述",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "calendar",
+                        help: "目标日历 href 或显示名",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "delete",
+                description: "删除事件",
+                usage: "everyday cal delete --id HREF [--account NAME]",
+                args: &[ArgSpec {
+                    name: "id",
+                    help: "事件 href",
+                    kind: ArgKind::Value,
+                }],
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "cal",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {

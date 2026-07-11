@@ -8,7 +8,7 @@ use std::path::Path;
 
 use crate::config::Config;
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{Executor, parse_simple_args};
 use crate::output::{Output, RenderMode};
 
 /// config 模块：无配置依赖（直接读 / 写文件），构造时不需要 Arc<Config>。
@@ -28,42 +28,54 @@ impl Default for ConfigModule {
 
 #[async_trait]
 impl Executor for ConfigModule {
-    fn name(&self) -> &'static str {
-        "config"
-    }
-
     fn description(&self) -> &'static str {
         "Configuration management: view / edit / create config.toml."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "path",
-                "Show config file path",
-                "everyday config path",
-            ),
-            ActionDoc::new(
-                "list",
-                "List all config (TOML or JSON)",
-                "everyday config list",
-            ),
-            ActionDoc::new(
-                "get",
-                "Get a config value by dotted path",
-                "everyday config get <dotted.path>",
-            ),
-            ActionDoc::new(
-                "set",
-                "Set a config value by dotted path",
-                "everyday config set <dotted.path> <value>",
-            ),
-            ActionDoc::new(
-                "init",
-                "Create config from example",
-                "everyday config init",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ModuleArgSpec, Positional};
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "path",
+                description: "显示配置文件路径",
+                usage: "everyday config path",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "list",
+                description: "列出当前配置（脱敏）",
+                usage: "everyday config list",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "get",
+                description: "读取某个配置项",
+                usage: "everyday config get <dotted.path>",
+                args: &[],
+                positional: Positional::Exactly(1),
+            },
+            ActionArgSpec {
+                name: "set",
+                description: "设置某个配置项",
+                usage: "everyday config set <dotted.path> <value>",
+                args: &[],
+                positional: Positional::Exactly(2),
+            },
+            ActionArgSpec {
+                name: "init",
+                description: "生成默认配置文件",
+                usage: "everyday config init",
+                args: &[],
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "config",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
@@ -80,11 +92,7 @@ impl Executor for ConfigModule {
 }
 
 /// 与原 main.rs::run_config 同语义；Executor::execute 调用此处。
-pub(crate) async fn run_config(
-    action: &str,
-    args: &[String],
-    mode: RenderMode,
-) -> Result<Output> {
+pub(crate) async fn run_config(action: &str, args: &[String], mode: RenderMode) -> Result<Output> {
     let action = if action.is_empty() { "list" } else { action };
     match action {
         "path" => {
@@ -195,8 +203,8 @@ fn set_config_path(path: &str, raw_value: &str) -> Result<()> {
     let segs: Vec<&str> = path.split('.').collect();
     upsert_dotted(&mut root, &segs, new_val)?;
 
-    let text = toml::to_string_pretty(&root)
-        .map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
+    let text =
+        toml::to_string_pretty(&root).map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
     if let Some(parent) = cfg_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -221,7 +229,10 @@ fn upsert_dotted(root: &mut toml::Value, segs: &[&str], val: toml::Value) -> Res
                 .ok_or_else(|| AgentError::InvalidArgument(format!("'{seg}' not a table")))?;
             // key 不存在则创建空 table（最后一段会覆盖）。
             if !table.contains_key(*seg) {
-                table.insert((*seg).to_string(), toml::Value::Table(toml::value::Table::new()));
+                table.insert(
+                    (*seg).to_string(),
+                    toml::Value::Table(toml::value::Table::new()),
+                );
             }
             cur = table.get_mut(*seg).unwrap();
         }
@@ -360,9 +371,6 @@ name = "work"
             toml::Value::String("x".to_string()),
         )
         .unwrap();
-        assert_eq!(
-            get_dotted(&v, "a.b.c").unwrap().as_str(),
-            Some("x")
-        );
+        assert_eq!(get_dotted(&v, "a.b.c").unwrap().as_str(), Some("x"));
     }
 }

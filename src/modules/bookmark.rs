@@ -21,7 +21,7 @@ use serde_json::{Value, json};
 
 use crate::config::BookmarkAccount;
 use crate::error::{AgentError, Result};
-use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{Executor, parse_simple_args};
 use crate::notion_client::NotionClient;
 use crate::output::Output;
 
@@ -124,37 +124,83 @@ impl BookmarkModule {
 
 #[async_trait]
 impl Executor for BookmarkModule {
-    fn name(&self) -> &'static str {
-        "bookmark"
-    }
-
     fn description(&self) -> &'static str {
         "Bookmarks (Notion or local sqlite): init-db, add, list, login."
     }
 
-    fn actions(&self) -> Vec<ActionDoc> {
-        vec![
-            ActionDoc::new(
-                "login",
-                "Store Notion Integration Token in system keyring (notion provider)",
-                "everyday bookmark login [--account NAME]",
-            ),
-            ActionDoc::new(
-                "init-db",
-                "Create the bookmark database (Notion needs parent_page_id; local just creates the table)",
-                "everyday bookmark init-db [--account NAME] [--parent PAGE_ID]",
-            ),
-            ActionDoc::new(
-                "add",
-                "Add a bookmark",
-                "everyday bookmark add --url U --title T [--tags a,b] [--db ID]",
-            ),
-            ActionDoc::new(
-                "list",
-                "List bookmarks (optionally filtered by --tag)",
-                "everyday bookmark list [--tag TAG] [--db ID]",
-            ),
-        ]
+    fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        static ACTIONS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "login",
+                description: "保存 Notion 凭证到系统 keyring",
+                usage: "everyday bookmark login [--account NAME]",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "init-db",
+                description: "在 Notion 初始化书签数据库",
+                usage: "everyday bookmark init-db [--parent PAGE_ID] [--account NAME]",
+                args: &[ArgSpec {
+                    name: "parent",
+                    help: "父页面 ID（默认账户父页）",
+                    kind: ArgKind::Value,
+                }],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "add",
+                description: "新增书签",
+                usage: "everyday bookmark add --url U --title T [--tags a,b] [--db ID] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "url",
+                        help: "书签 URL",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "title",
+                        help: "标题",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "tags",
+                        help: "标签，逗号分隔（如 rust,cli）",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "db",
+                        help: "数据库 ID",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "list",
+                description: "列出书签",
+                usage: "everyday bookmark list [--tag TAG] [--db ID] [--account NAME]",
+                args: &[
+                    ArgSpec {
+                        name: "tag",
+                        help: "按标签精确过滤",
+                        kind: ArgKind::Value,
+                    },
+                    ArgSpec {
+                        name: "db",
+                        help: "数据库 ID",
+                        kind: ArgKind::Value,
+                    },
+                ],
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "bookmark",
+            description: self.description(),
+            actions: ACTIONS,
+        }
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
