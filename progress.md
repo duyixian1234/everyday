@@ -2,11 +2,11 @@
 
 > 本文件仅保留**当前状态 + 核心决策（ADR）**。逐次会话的「已完成 / 测试结果 / 下一步」流水账已压缩；技术踩坑与 API 细节见 `findings.md`。
 
-## 当前状态（2026-07-10）
+## 当前状态（2026-07-11）
 
 - **v0.4.0 已发布**：tag `v0.4.0`，GitHub Release 附三平台（ubuntu/macos/windows）+ aarch64 macOS 预编译二进制。
-- **模块**：6 个外部集成模块 **mail / cal / rss / note / todo / bookmark** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；初版 `fs` / `net` / `sys` 已整体移除。
-- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ 137 passed；CI（ubuntu/macos/windows + aarch64 mac）全绿。
+- **模块**：**7 个**外部集成模块 **mail / cal / rss / note / todo / bookmark / timeline** + `config` 均可用；note/todo/bookmark 支持本地 SQLite provider，**默认 local**；timeline 统一事件层（commit `2ce5055`）按 `CONTEXT.md` + 9 个 ADR 实现；初版 `fs` / `net` / `sys` 已整体移除。
+- **质量门禁**：`cargo build` ✅、`cargo clippy --all-targets -- -D warnings` ✅ 零警告、`cargo test` ✅ **173 passed**（v0.4.0 137 + timeline 36）；CI（ubuntu/macos/windows + aarch64 mac）全绿。
 - **文档**：README + `skills/everyday-cli/*` 与代码一致；范围与定位以 `agents.md`「范围与定位」为权威说明（原 PRD.md 已移除）。
 
 ## 核心决策时间线（ADR）
@@ -75,3 +75,18 @@
 - 版本号 `0.3.0 → 0.4.0`（Cargo.toml；Cargo.lock 由 `cargo build` 自动同步）。
 - 质量门禁：build ✅ / clippy `--all-targets -D warnings` 零警告 ✅ / `cargo test` 137 passed ✅。
 - release commit `ca40fbe` 之后 bump 版本并打 tag `v0.4.0`，推送 `origin`（GitHub）触发 release workflow 构建三平台 + aarch64 macOS 预编译二进制。cnb 镜像不推。
+
+### 2026-07-11 — Timeline 统一事件层（commit `2ce5055`）
+- 按 `CONTEXT.md`（领域术语表）+ `docs/adr/0001`–`0009`（9 个架构决策）落地。
+- 核心架构：append-only event log + 纯 pull 模型 + `TimelineProvider` 独立 trait + 各模块暴露 `fetch_for_timeline(window)`。
+- 数据库：`~/.config/everyday/timeline.db`（events + sync_state，自然键 `(source, COALESCE(account,''), ref_id, event_type, timestamp)` 唯一索引）；`~/.config/everyday/ops-log.db` 记录 notion 账户 CLI 操作。
+- 6 个 source adapter：mail（IMAP 拉取）/ cal（CalDAV，**窗口刷新**例外，前看 7 天）/ rss / todo local / note local / bookmark local。
+- Sync 编排器：按 source 分组并行（`futures::join_all`），同 source 串行；best-effort 失败 provider 水位不变，下次重试。
+- 查询：`today` / `yesterday` / `week`（周一-周日）/ `month` / 自定义 `--from/--to`；`--source/--account/--limit/--sync/--since` flags；UTC 存储 + 本地时区查询 + 本地时间显示。
+- AOP hook：`main.rs::run()` 执行成功后调 `ops_log::maybe_log_op()`，仅记录 `todo/note/bookmark` 的 notion 账户写操作；模块零侵入。
+- 顺手修 3 个 bug：
+  1. `gen_id` 同纳秒撞 ID（影响所有 caller；timeline 首个高密度触发点）——加 `AtomicU64` 计数器保唯一。
+  2. `query_events` LIMIT 占位符缺 `?` 前缀导致 `LIMIT {idx}` 当字面（测试期望 2 行返回 1 行）——改字面整数。
+  3. `idx += 1` 死赋值（clippy `unused_assignments`）—— 删。
+- 质量门禁：build ✅ / clippy `-D warnings` 零警告 ✅ / `cargo test` 173 passed（+36 全为 timeline）✅ / `cargo fmt --check` clean ✅。
+- **未发版**：待按 runbook bump `0.4.0 → 0.5.0` + tag + 推 origin。

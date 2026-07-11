@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.4.0 已发布；6 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ config 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local；`cargo build` / `cargo clippy --all-targets -- -D warnings` / `cargo test` 全绿（137 passed）。
+**当前状态：** v0.4.0 已发布；6 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline`（commit `2ce5055`）+ config 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local；`cargo build` / `cargo clippy --all-targets -- -D warnings` / `cargo test` 全绿（173 passed）。
 
 ---
 
@@ -43,6 +43,16 @@
 
 ### Phase 8: 中英文 README [complete]
 根 `README.md` 与 `skills/README.md` 已改写为英文；完整中文文档保留为 `README_ZH.md`；`README.md` 与 `README_ZH.md` 顶部均加语言切换链接（English ↔ 简体中文）。
+
+### Phase 9: Timeline 统一事件层 [complete]
+按 `CONTEXT.md` + 9 个 ADR 实现：
+- `src/modules/timeline.rs` TimelineModule + Executor + 5 actions（today/yesterday/week/month/sync）。
+- `src/modules/timeline/{store,providers,orchestrator}.rs`：timeline.db + 6 source adapter + 按 source 分组并行 sync 编排。
+- `src/ops_log.rs`：AOP dispatch hook 记录 notion 账户写操作。
+- 6 模块（mail/cal/rss/note_local/todo_local/bookmark_local）暴露 `fetch_for_timeline(window)`。
+- 顺手修：`gen_id` 同纳秒撞 ID（加 atomic counter）；`query_events` LIMIT 占位符缺 `?`（改字面整数）。
+- 质量门禁全绿：173 tests / clippy `-D warnings` 零警告 / fmt clean。commit `2ce5055`。
+- 待发版：bump 0.4.0 → 0.5.0 + tag + 推 origin。
 
 ---
 
@@ -126,3 +136,4 @@ username = "me"
 - Phase 6: complete
 - Phase 7: complete
 - Phase 8: complete
+- Phase 9: complete
