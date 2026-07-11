@@ -70,6 +70,10 @@ impl ModuleRegistry {
 
         // 注册各模块。模块内部决定是否需要账户配置、是否容忍缺失。
         modules.insert(
+            "config",
+            Box::new(crate::modules::config::ConfigModule::new()),
+        );
+        modules.insert(
             "mail",
             Box::new(crate::modules::email::EmailModule::new(config.clone())),
         );
@@ -121,6 +125,7 @@ impl ModuleRegistry {
 pub mod bookmark;
 pub mod bookmark_local;
 pub mod calendar;
+pub mod config;
 pub mod email;
 pub mod email_cache;
 pub mod email_pool;

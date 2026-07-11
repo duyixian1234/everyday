@@ -20,7 +20,7 @@ use crate::cli::Cli;
 use crate::config::Config;
 use crate::error::{AgentError, Result};
 use crate::modules::ModuleRegistry;
-use crate::output::{Output, RenderMode, finalize, mode_from_json_flag, render_error};
+use crate::output::{RenderMode, finalize, mode_from_json_flag, render_error};
 
 #[tokio::main]
 async fn main() {
@@ -59,11 +59,8 @@ async fn main() {
 }
 
 async fn run(cli: Cli, mode: RenderMode) -> (i32, String) {
-    // config 模块走专门处理（需要读写配置文件）。
-    if cli.module == "config" {
-        let result = run_config(cli.action.as_deref(), &cli.args, mode).await;
-        return finalize(result, mode);
-    }
+    // config 模块现走 Executor trait + ModuleRegistry，与其它模块统一分发。
+    // 见 src/modules/config.rs。
 
     // 无 action：显示模块帮助（需要先有 registry）。
     if cli.action.is_none() {
@@ -133,10 +130,6 @@ async fn run(cli: Cli, mode: RenderMode) -> (i32, String) {
 
 /// 生成模块帮助文本（列出该模块支持的 actions）。
 fn module_help(module_name: &str) -> Result<String> {
-    // config 模块不在 ModuleRegistry 中，走专门帮助。
-    if module_name == "config" {
-        return Ok(config_help(None));
-    }
     // 用一个空配置构建 registry 只为拿 actions 文档。
     let cfg = Arc::new(Config::default());
     let registry = ModuleRegistry::build(cfg, None)?;
@@ -159,10 +152,6 @@ fn module_help(module_name: &str) -> Result<String> {
 
 /// 生成单个 action 的帮助文本（详细用法）。
 fn action_help(module_name: &str, action_name: &str) -> Result<String> {
-    // config 模块走专门帮助。
-    if module_name == "config" {
-        return Ok(config_help(Some(action_name)));
-    }
     let cfg = Arc::new(Config::default());
     let registry = ModuleRegistry::build(cfg, None)?;
     let module = registry.get(module_name)?;
@@ -260,363 +249,11 @@ fn render_help_target(target: HelpTarget) -> (i32, String) {
     }
 }
 
-/// config 模块的帮助文本（config 不在 ModuleRegistry 中，单独处理）。
-fn config_help(action: Option<&str>) -> String {
-    /// config 模块支持的 actions：(name, description, usage)
-    const CONFIG_ACTIONS: &[(&str, &str, &str)] = &[
-        ("path", "Show config file path", "everyday config path"),
-        (
-            "list",
-            "List all config (TOML or JSON)",
-            "everyday config list",
-        ),
-        (
-            "get",
-            "Get a config value by dotted path",
-            "everyday config get <dotted.path>",
-        ),
-        (
-            "set",
-            "Set a config value by dotted path",
-            "everyday config set <dotted.path> <value>",
-        ),
-        ("init", "Create config from example", "everyday config init"),
-    ];
 
-    match action {
-        None => {
-            let mut out = "config — Configuration management\n\nUsage: everyday config <action> [options]\n\nActions:\n".to_string();
-            for (name, desc, usage) in CONFIG_ACTIONS {
-                out.push_str(&format!("  {name:<8} {desc}\n          {usage}\n"));
-            }
-            out.push_str("\nGlobal flags: --json, --account <NAME>\n");
-            out
-        }
-        Some(a) => match CONFIG_ACTIONS.iter().find(|(name, _, _)| *name == a) {
-            Some((name, desc, usage)) => format!(
-                "config {name} — {desc}\n\nUsage: {usage}\n\nGlobal flags: --json, --account <NAME>\n"
-            ),
-            None => format!(
-                "unknown config action: {a}\n\nUse `everyday config --help` to list actions.\n"
-            ),
-        },
-    }
-}
-
-// ---- config 子命令 ----
-
-async fn run_config(action: Option<&str>, args: &[String], mode: RenderMode) -> Result<Output> {
-    let action = action.unwrap_or("list");
-    match action {
-        "path" => {
-            let p = Config::config_path()?;
-            Ok(Output::text(p.display().to_string()))
-        }
-        "list" => {
-            let cfg = Config::load_or_default()?;
-            match mode {
-                RenderMode::Json => {
-                    let v = serde_json::to_value(&cfg)?;
-                    Ok(Output::Json(v))
-                }
-                RenderMode::Text => {
-                    let toml_str = toml::to_string_pretty(&cfg)
-                        .map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
-                    Ok(Output::text(toml_str))
-                }
-            }
-        }
-        "get" => {
-            let path = args.first().ok_or_else(|| {
-                AgentError::InvalidArgument("usage: everyday config get <dotted.path>".into())
-            })?;
-            let cfg = Config::load_or_default()?;
-            let toml_val: toml::Value = toml::Value::try_from(&cfg)
-                .map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
-            let v = get_dotted(&toml_val, path)?;
-            Ok(Output::text(value_to_display_string(&v)))
-        }
-        "set" => {
-            let (path, value) = (
-                args.first().ok_or_else(|| {
-                    AgentError::InvalidArgument(
-                        "usage: everyday config set <dotted.path> <value>".into(),
-                    )
-                })?,
-                args.get(1).ok_or_else(|| {
-                    AgentError::InvalidArgument(
-                        "usage: everyday config set <dotted.path> <value>".into(),
-                    )
-                })?,
-            );
-            set_config_path(path, value)?;
-            Ok(Output::text(format!("set {path} = {value}")))
-        }
-        "init" => {
-            let path = Config::config_path()?;
-            if path.exists() {
-                return Ok(Output::text(format!(
-                    "config already exists: {}",
-                    path.display()
-                )));
-            }
-            let example = example_config();
-            std::fs::create_dir_all(path.parent().unwrap_or(std::path::Path::new(".")))?;
-            std::fs::write(&path, example)?;
-            Ok(Output::text(format!(
-                "created config at: {}",
-                path.display()
-            )))
-        }
-        other => Err(AgentError::UnknownAction(format!("config {other}"))),
-    }
-}
-
-/// 沿点分路径读取 toml::Value，支持 table 字段与 array 索引（如 `mail.accounts.0.name`）。
-fn get_dotted(root: &toml::Value, path: &str) -> Result<toml::Value> {
-    let mut cur = root.clone();
-    for seg in path.split('.') {
-        cur = if let Some(table) = cur.as_table() {
-            table.get(seg).cloned().ok_or_else(|| {
-                AgentError::InvalidArgument(format!("path segment '{seg}' not found"))
-            })?
-        } else if let Some(arr) = cur.as_array() {
-            let idx: usize = seg.parse().map_err(|_| {
-                AgentError::InvalidArgument(format!("array index '{seg}' not a number"))
-            })?;
-            arr.get(idx).cloned().ok_or_else(|| {
-                AgentError::InvalidArgument(format!("array index {idx} out of bounds"))
-            })?
-        } else {
-            return Err(AgentError::InvalidArgument(format!(
-                "path segment '{seg}' not found"
-            )));
-        };
-    }
-    Ok(cur)
-}
-
-/// 设置点分路径的值并保存。自动推断值类型（bool / int / float / string）。
-/// 支持 table 字段与 array 索引（自动扩展数组）。
-fn set_config_path(path: &str, raw_value: &str) -> Result<()> {
-    let cfg_path = Config::config_path()?;
-    // 读现有文件为 toml::Value（不存在则空表）。
-    let mut root: toml::Value = if cfg_path.exists() {
-        let text = std::fs::read_to_string(&cfg_path)?;
-        if text.trim().is_empty() {
-            toml::Value::Table(toml::value::Table::new())
-        } else {
-            toml::from_str(&text)?
-        }
-    } else {
-        toml::Value::Table(toml::value::Table::new())
-    };
-
-    let new_val = parse_value(raw_value);
-
-    let segs: Vec<&str> = path.split('.').collect();
-    set_dotted(&mut root, &segs, new_val)?;
-
-    let text =
-        toml::to_string_pretty(&root).map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
-    if let Some(parent) = cfg_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&cfg_path, text)?;
-    Ok(())
-}
-
-fn set_dotted(root: &mut toml::Value, segs: &[&str], value: toml::Value) -> Result<()> {
-    if segs.is_empty() {
-        return Err(AgentError::InvalidArgument("empty path".into()));
-    }
-    match root {
-        toml::Value::Table(table) => {
-            if segs.len() == 1 {
-                table.insert(segs[0].to_string(), value);
-                return Ok(());
-            }
-            let entry = table
-                .entry(segs[0].to_string())
-                .or_insert_with(|| toml::Value::Table(toml::value::Table::new()));
-            set_dotted(entry, &segs[1..], value)
-        }
-        toml::Value::Array(arr) => {
-            let idx: usize = segs[0].parse().map_err(|_| {
-                AgentError::InvalidArgument(format!("array index '{}' not a number", segs[0]))
-            })?;
-            if arr.len() <= idx {
-                arr.resize(idx + 1, toml::Value::Table(toml::value::Table::new()));
-            }
-            if segs.len() == 1 {
-                arr[idx] = value;
-                return Ok(());
-            }
-            set_dotted(&mut arr[idx], &segs[1..], value)
-        }
-        _ => Err(AgentError::InvalidArgument(
-            "cannot index into non-table/non-array value".into(),
-        )),
-    }
-}
-
-fn parse_value(s: &str) -> toml::Value {
-    if s == "true" {
-        return toml::Value::Boolean(true);
-    }
-    if s == "false" {
-        return toml::Value::Boolean(false);
-    }
-    if let Ok(i) = s.parse::<i64>() {
-        return toml::Value::Integer(i);
-    }
-    if let Ok(f) = s.parse::<f64>() {
-        return toml::Value::Float(f);
-    }
-    toml::Value::String(s.to_string())
-}
-
-fn value_to_display_string(v: &toml::Value) -> String {
-    match v {
-        toml::Value::String(s) => s.clone(),
-        other => other.to_string(),
-    }
-}
-
-fn example_config() -> String {
-    r#"# Everyday configuration
-# Passwords are NEVER stored here — use the system keyring instead.
-# keyring service convention: everyday/<module>/<account>
-
-[default_account]
-mail = "work"
-calendar = "personal"
-note = "personal"
-todo = "personal"
-bookmark = "personal"
-
-[[mail.accounts]]
-name = "work"
-imap_host = "imap.example.com"
-imap_port = 993
-smtp_host = "smtp.example.com"
-smtp_port = 465
-username = "me@example.com"
-tls = true
-
-[[calendar.accounts]]
-name = "personal"
-caldav_url = "https://caldav.example.com/me"
-username = "me"
-# 可选：忽略指定日历（按 displayname 匹配，不区分大小写）
-ignore_calendars = ["好友生日"]
-
-[[rss.feeds]]
-name = "hackernews"
-url = "https://hnrss.org/frontpage"
-
-# ---- 笔记账户（默认本地 SQLite；可多个）----
-# provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，数据存本地 .db 文件，
-# db_path 可选，缺省为 ~/.config/everyday/note-<account>.db。
-[[note.accounts]]
-name = "personal"
-provider = "local"
-# db_path = "/absolute/path/to/notes.db"   # 可选，覆盖默认路径
-
-# 如需改用 Notion：设 provider = "notion"，并通过
-# `everyday note login --account personal` 把 Token 存入 keyring；
-# default_database_id / default_page_id 为常用目标预设，减少重复输入长字符串。
-# [[note.accounts]]
-# name = "notion"
-# provider = "notion"
-# default_database_id = "db_abc123..."
-# default_page_id = "page_xyz789..."
-
-# ---- 待办账户（默认本地 SQLite；可多个）----
-# provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，任务存本地 .db 文件，
-# db_path 可选，缺省为 ~/.config/everyday/todo-<account>.db。
-[[todo.accounts]]
-name = "personal"
-provider = "local"
-# db_path = "/absolute/path/to/todos.db"   # 可选，覆盖默认路径
-
-# 如需改用 Notion：设 provider = "notion"，通过
-# `everyday todo login --account personal` 存入 keyring（service: everyday/todo/<account>）；
-# parent_page_id 为创建任务数据库时的父级页面（init-db 需要），
-# default_database_id 由 `everyday todo init-db` 成功后自动回填。
-# [[todo.accounts]]
-# name = "notion"
-# provider = "notion"
-# parent_page_id = "page_parent_..."
-
-# ---- 书签账户（默认本地 SQLite；可多个）----
-# provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，数据存本地 .db 文件，
-# db_path 可选，缺省为 ~/.config/everyday/bookmark-<account>.db。
-[[bookmark.accounts]]
-name = "personal"
-provider = "local"
-# db_path = "/absolute/path/to/bookmarks.db"   # 可选，覆盖默认路径
-
-# 如需改用 Notion：设 provider = "notion"，通过
-# `everyday bookmark login --account personal` 存入 keyring（service: everyday/bookmark/<account>）；
-# parent_page_id 为创建书签数据库时的父级页面（init-db 需要），
-# default_database_id 由 `everyday bookmark init-db` 成功后自动回填。
-# [[bookmark.accounts]]
-# name = "notion"
-# provider = "notion"
-# parent_page_id = "page_parent_..."
-"#
-    .to_string()
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn parse_value_infers_types() {
-        assert!(parse_value("true").is_bool());
-        assert!(parse_value("42").is_integer());
-        assert!(parse_value("3.14").is_float());
-        assert!(parse_value("hello").is_str());
-    }
-
-    #[test]
-    fn dotted_get_traverses() {
-        let t: toml::Value = toml::from_str("a = { b = { c = 1 } }").unwrap();
-        let v = get_dotted(&t, "a.b.c").unwrap();
-        assert_eq!(v.as_integer(), Some(1));
-    }
-
-    #[test]
-    fn dotted_get_array_index() {
-        let t: toml::Value =
-            toml::from_str("accounts = [{ name = 'work' }, { name = 'home' }]").unwrap();
-        assert_eq!(
-            get_dotted(&t, "accounts.0.name").unwrap().as_str(),
-            Some("work")
-        );
-        assert_eq!(
-            get_dotted(&t, "accounts.1.name").unwrap().as_str(),
-            Some("home")
-        );
-        assert!(get_dotted(&t, "accounts.5.name").is_err());
-    }
-
-    #[test]
-    fn set_dotted_into_array_index() {
-        let mut t: toml::Value = toml::from_str("accounts = [{ name = 'work' }]").unwrap();
-        set_dotted(
-            &mut t,
-            &["accounts", "0", "imap_host"],
-            toml::Value::String("imap.x.com".into()),
-        )
-        .unwrap();
-        assert_eq!(
-            get_dotted(&t, "accounts.0.imap_host").unwrap().as_str(),
-            Some("imap.x.com")
-        );
-    }
 
     // ---- detect_subcommand_help 测试 ----
 
@@ -705,32 +342,6 @@ mod tests {
     fn help_embedded_in_value_not_detected() {
         // --title=--help → --help is a value, not a flag → should NOT be detected
         assert!(detect_subcommand_help(&args(&["cal", "add", "--title=--help"])).is_none());
-    }
-
-    // ---- config_help 测试 ----
-
-    #[test]
-    fn config_help_lists_all_actions() {
-        let help = config_help(None);
-        assert!(help.contains("config — Configuration management"));
-        assert!(help.contains("path"));
-        assert!(help.contains("list"));
-        assert!(help.contains("get"));
-        assert!(help.contains("set"));
-        assert!(help.contains("init"));
-    }
-
-    #[test]
-    fn config_help_for_known_action() {
-        let help = config_help(Some("get"));
-        assert!(help.contains("config get —"));
-        assert!(help.contains("everyday config get <dotted.path>"));
-    }
-
-    #[test]
-    fn config_help_for_unknown_action() {
-        let help = config_help(Some("bogus"));
-        assert!(help.contains("unknown config action: bogus"));
     }
 
     // ---- action_help 集成测试 ----
