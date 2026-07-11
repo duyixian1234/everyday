@@ -10,6 +10,36 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AgentError, Result};
 
+/// 宏：展开 5 个 `X_account()` 模板方法（mail/calendar/note/todo/bookmark）。
+///
+/// 每个方法做三件事：
+/// 1. 选 `override_name` > 默认 > 报错
+/// 2. 在对应模块的 accounts 里按名字找
+/// 3. 没找到 → AccountNotFound
+///
+/// 之前 5 个方法逐字复制约 75 行，宏展开后 5 行调用。
+macro_rules! impl_account_lookup {
+    ($name:ident, $module:literal, $field:ident, $account:ty) => {
+        #[doc = concat!("解析 ", $module, " 账户：优先 `override_name`，其次默认，最后报错。")]
+        pub fn $name(&self, override_name: Option<&str>) -> Result<&$account> {
+            let want = override_name.or(self.default_account.$field.as_deref());
+            let name = want.ok_or_else(|| {
+                AgentError::AccountNotFound(format!(
+                    "no {} account specified and no default set in [default_account]",
+                    $module
+                ))
+            })?;
+            self.$field
+                .accounts
+                .iter()
+                .find(|a| a.name == name)
+                .ok_or_else(|| {
+                    AgentError::AccountNotFound(format!("{} account '{name}'", $module))
+                })
+        }
+    };
+}
+
 /// 顶层配置。
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -286,80 +316,13 @@ impl Config {
 
     // ---- 账户查找 ----
 
-    /// 解析邮件账户：优先 `override_name`，其次默认，最后报错。
-    pub fn mail_account(&self, override_name: Option<&str>) -> Result<&MailAccount> {
-        let want = override_name.or(self.default_account.mail.as_deref());
-        let name = want.ok_or_else(|| {
-            AgentError::AccountNotFound(
-                "no mail account specified and no default set in [default_account]".into(),
-            )
-        })?;
-        self.mail
-            .accounts
-            .iter()
-            .find(|a| a.name == name)
-            .ok_or_else(|| AgentError::AccountNotFound(format!("mail account '{name}'")))
-    }
-
-    /// 解析日历账户。
-    pub fn calendar_account(&self, override_name: Option<&str>) -> Result<&CalendarAccount> {
-        let want = override_name.or(self.default_account.calendar.as_deref());
-        let name = want.ok_or_else(|| {
-            AgentError::AccountNotFound(
-                "no calendar account specified and no default set in [default_account]".into(),
-            )
-        })?;
-        self.calendar
-            .accounts
-            .iter()
-            .find(|a| a.name == name)
-            .ok_or_else(|| AgentError::AccountNotFound(format!("calendar account '{name}'")))
-    }
-
-    /// 解析笔记账户。
-    pub fn note_account(&self, override_name: Option<&str>) -> Result<&NoteAccount> {
-        let want = override_name.or(self.default_account.note.as_deref());
-        let name = want.ok_or_else(|| {
-            AgentError::AccountNotFound(
-                "no note account specified and no default set in [default_account]".into(),
-            )
-        })?;
-        self.note
-            .accounts
-            .iter()
-            .find(|a| a.name == name)
-            .ok_or_else(|| AgentError::AccountNotFound(format!("note account '{name}'")))
-    }
-
-    /// 解析待办账户。
-    pub fn todo_account(&self, override_name: Option<&str>) -> Result<&TodoAccount> {
-        let want = override_name.or(self.default_account.todo.as_deref());
-        let name = want.ok_or_else(|| {
-            AgentError::AccountNotFound(
-                "no todo account specified and no default set in [default_account]".into(),
-            )
-        })?;
-        self.todo
-            .accounts
-            .iter()
-            .find(|a| a.name == name)
-            .ok_or_else(|| AgentError::AccountNotFound(format!("todo account '{name}'")))
-    }
-
-    /// 解析书签账户。
-    pub fn bookmark_account(&self, override_name: Option<&str>) -> Result<&BookmarkAccount> {
-        let want = override_name.or(self.default_account.bookmark.as_deref());
-        let name = want.ok_or_else(|| {
-            AgentError::AccountNotFound(
-                "no bookmark account specified and no default set in [default_account]".into(),
-            )
-        })?;
-        self.bookmark
-            .accounts
-            .iter()
-            .find(|a| a.name == name)
-            .ok_or_else(|| AgentError::AccountNotFound(format!("bookmark account '{name}'")))
-    }
+    // 五个 `X_account()` 方法原本逐字复制这一段约 15 行模板代码。
+    // 用宏抽出来：编译期展开，无运行时开销。
+    impl_account_lookup!(mail_account, "mail", mail, MailAccount);
+    impl_account_lookup!(calendar_account, "calendar", calendar, CalendarAccount);
+    impl_account_lookup!(note_account, "note", note, NoteAccount);
+    impl_account_lookup!(todo_account, "todo", todo, TodoAccount);
+    impl_account_lookup!(bookmark_account, "bookmark", bookmark, BookmarkAccount);
 
     /// keyring 服务名约定：`everyday/<module>/<account>`。
     pub fn keyring_service(module: &str, account: &str) -> String {
