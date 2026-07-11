@@ -128,15 +128,27 @@ async fn sync_one(
     // 执行 provider sync。
     match provider.sync(&window).await {
         Ok((events, mode)) => {
-            let count = store::insert_events(pool, &events, mode, from, to)
-                .await
-                .map_err(|e| {
-                    eprintln!("timeline: store error for {source}: {e}");
-                })
-                .unwrap_or(0);
+            // 写入 events 表：失败时标 ProviderStatus::Failed，不再静默吞掉报 Ok
+            // 0 events（之前 .unwrap_or(0) 让 DB 错误伪装成"成功无新事件"）。
+            let count = match store::insert_events(pool, &events, mode, from, to).await {
+                Ok(n) => n,
+                Err(e) => {
+                    eprintln!("timeline: insert_events failed for {source}: {e}");
+                    return ProviderSyncResult {
+                        source,
+                        account,
+                        events_count: 0,
+                        status: ProviderStatus::Failed(format!("db write: {e}")),
+                    };
+                }
+            };
 
-            // 更新水位（成功才更新）。
-            let _ = store::set_watermark(pool, &source, account.as_deref(), now, true).await;
+            // 水位推进：失败仅警告，不阻断（下次 sync 会重跑该窗口，
+            // INSERT OR IGNORE 自然去重，不会重复入库）。
+            if let Err(e) = store::set_watermark(pool, &source, account.as_deref(), now, true).await
+            {
+                eprintln!("timeline: set_watermark failed for {source}: {e} (will re-sync window)");
+            }
 
             ProviderSyncResult {
                 source,

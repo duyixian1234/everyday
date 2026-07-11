@@ -229,9 +229,11 @@ impl TimelineModule {
         json_mode: bool,
     ) -> Result<Output> {
         // --sync：查询前先同步一次。
+        // sync 失败不再 `let _ =` 静默吞（之前会让用户拿到旧数据却不知道 sync 挂了）。
+        // 这里让 sync 错误冒泡到 do_query，最终由 main.rs 的 finalize 渲染为错误输出。
         if flags.contains_key("sync") {
             let sources = parse_source_filter(flags.get("source"));
-            let _ = orchestrator::run_sync(&self.config, &sources, None).await;
+            orchestrator::run_sync(&self.config, &sources, None).await?;
         }
 
         // 解析时间范围。
