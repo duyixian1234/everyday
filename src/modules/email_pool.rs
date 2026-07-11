@@ -92,10 +92,12 @@ pub struct PoolGuard {
 
 impl PoolGuard {
     /// 取得内部 session 的可变引用以执行 IMAP 命令。
-    pub fn session(&mut self) -> &mut ImapSession {
+    ///
+    /// 已被 `invalidate()` 消费时返回错误而非 panic（生产路径禁止 unwrap）。
+    pub fn session(&mut self) -> Result<&mut ImapSession> {
         self.session
             .as_mut()
-            .expect("PoolGuard session already consumed")
+            .ok_or_else(|| AgentError::Other("pool guard session already consumed".into()))
     }
 
     /// 标记 session 为 dirty（命令失败后调用），drop 时不归还。
@@ -126,6 +128,38 @@ mod tests {
     fn capacity_is_4() {
         // 编译期常量的稳定性测试：ADR 0010 写死 M=4
         assert_eq!(POOL_SIZE, 4);
+    }
+
+    #[tokio::test]
+    async fn session_after_invalidate_returns_error_not_panic() {
+        // 验证修复：之前 session() 在 invalidate 之后会 .expect() panic。
+        // 现版本必须返回 Result，且 Ok/Err 路径都不 panic。
+        // 这里构造一个空的 PoolGuard 字段等价结构（绕过真实 IMAP 连接）。
+        let permit = Arc::new(Semaphore::new(1))
+            .acquire_owned()
+            .await
+            .expect("semaphore acquire");
+        let mut guard = PoolGuard {
+            pool: Arc::new(PoolInner {
+                sessions: Mutex::new(VecDeque::new()),
+                semaphore: Arc::new(Semaphore::new(1)),
+                account: MailAccount {
+                    name: String::new(),
+                    imap_host: String::new(),
+                    imap_port: 993,
+                    smtp_host: String::new(),
+                    smtp_port: 587,
+                    username: String::new(),
+                    tls: true,
+                },
+                password: String::new(),
+            }),
+            permit,
+            session: None,
+        };
+
+        let result = guard.session();
+        assert!(result.is_err(), "session() after invalidate must error");
     }
 
     // 注：完整 Pool 行为测试需要 mock IMAP server，超出单测范围（CI 跳过网络）。

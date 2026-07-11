@@ -1091,7 +1091,7 @@ async fn sync_one_folder(
         Ok(g) => g,
         Err(e) => return Err(e),
     };
-    let session = guard.session();
+    let session = guard.session()?;
 
     // SELECT folder → uid_validity
     let mailbox = match select_folder_mailbox(session, folder).await {
