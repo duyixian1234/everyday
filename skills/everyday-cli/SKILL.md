@@ -62,6 +62,8 @@ everyday mail list --unread --limit 10 --json
 # → [{"uid":"12345","folder":"INBOX","date":"...","from":"...","subject":"..."}]
 ```
 
+`mail list` reads from a local envelope cache (`~/.config/everyday/mail_cache.db`) — fast, no IMAP round-trip on warm cache. Auto-syncs if any target folder's `last_sync_at` is older than 15 minutes. Pass `--sync` to force an immediate sync (e.g. after returning from offline). `mail search` and `mail read` still go directly to IMAP.
+
 **Read a single message:**
 
 ```bash

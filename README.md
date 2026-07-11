@@ -163,7 +163,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 |------|------|------|
 | `login` | Interactively store the password in the keyring | `everyday mail login [--account NAME]` |
 | `folders` | List all mailbox folders | `everyday mail folders [--account NAME]` |
-| `list` | List message summaries | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive]` |
+| `list` | List message summaries (from local cache; auto-sync if stale) | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync]` |
 | `read` | Read a single message (recursive lookup by default) | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
 | `search` | Search messages | `everyday mail search --query Q [--limit N] [--folder NAME]` |
 | `send` | Send a message | `everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR]` |
@@ -177,6 +177,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `--limit N` | `list` / `search` | Limit the count, default 20 |
 | `--folder NAME` | `list` / `read` / `search` | Specify a folder (non-ASCII names supported); recurses all folders by default |
 | `--no-recursive` | `list` / `read` / `search` | INBOX only |
+| `--sync` | `list` | Force an IMAP sync before listing (ignore staleness) |
 | `--to ADDR` | `send` | Recipient (required) |
 | `--subject S` | `send` | Subject (required) |
 | `--body TEXT` | `send` | Body (required) |

@@ -18,6 +18,7 @@ use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 use crate::config::{Config, MailAccount};
 use crate::error::{AgentError, Result};
 use crate::modules::{ActionDoc, Executor, parse_simple_args};
+use crate::modules::{email_cache, email_pool};
 use crate::output::Output;
 
 pub struct EmailModule {
@@ -49,8 +50,8 @@ impl Executor for EmailModule {
             ),
             ActionDoc::new(
                 "list",
-                "List messages (recursively across all folders by default)",
-                "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
+                "List messages from local cache (auto-sync if stale; --sync to force)",
+                "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync] [--account NAME]",
             ),
             ActionDoc::new(
                 "read",
@@ -142,10 +143,10 @@ async fn mail_login(account: &MailAccount) -> Result<Output> {
 
 // async-imap 基于 futures 的 AsyncRead/AsyncWrite，而 tokio-rustls 实现的是 tokio 的，
 // 用 tokio-util compat 桥接。
-type ImapSession = async_imap::Session<Compat<TlsStream<TcpStream>>>;
+pub(crate) type ImapSession = async_imap::Session<Compat<TlsStream<TcpStream>>>;
 
 /// 建立 IMAPS（implicit TLS, 993）连接并登录。
-async fn imap_connect(account: &MailAccount, password: &str) -> Result<ImapSession> {
+pub(crate) async fn imap_connect(account: &MailAccount, password: &str) -> Result<ImapSession> {
     // 安装 rustls ring crypto provider（重复安装返回 Err，忽略即可）。
     let _ = rustls::crypto::ring::default_provider().install_default();
 
@@ -273,6 +274,14 @@ async fn collect_across_folders(
 }
 
 /// 列出邮件摘要（默认递归所有文件夹）。
+///
+/// 实现按 ADR 0010-0013：
+/// 1. 打开 `mail_cache.db`。
+/// 2. 解析目标 folders（一次临时 IMAP session 拿 LIST）。
+/// 3. staleness 检查（任一 folder `last_sync_at > 15min` 或无水位 → 触发 sync）。
+/// 4. `--sync` flag 强制立即 sync。
+/// 5. sync 走 `email_pool::Pool`（M=4）并发跨 folder 写 envelope + 更新水位。
+/// 6. 查本地 `envelopes` 表返回。
 async fn mail_list(
     account: &MailAccount,
     password: &str,
@@ -283,12 +292,68 @@ async fn mail_list(
         .get("limit")
         .and_then(|s| s.parse().ok())
         .unwrap_or(20);
+    let force_sync = flags.contains_key("sync");
 
-    let mut session = imap_connect(account, password).await?;
-    let folders = resolve_folders(&mut session, flags).await?;
-    let query = if unread { "UNSEEN" } else { "ALL" };
-    let rows = collect_across_folders(&mut session, folders, query, limit).await?;
-    session.logout().await.ok();
+    // 1. 打开本地缓存
+    let cache = email_cache::open().await?;
+
+    // 2. 解析 folders（一次性临时 session；list 不持久化）
+    let mut list_session = imap_connect(account, password).await?;
+    let folders = resolve_folders(&mut list_session, flags).await?;
+    list_session.logout().await.ok();
+
+    // 3. staleness 检查
+    let now = chrono::Utc::now();
+    let mut needs_sync = force_sync;
+    if !needs_sync {
+        for folder in &folders {
+            match email_cache::get_folder_state(&cache, &account.name, folder).await? {
+                None => {
+                    // 无水位 → 首次 sync
+                    needs_sync = true;
+                    break;
+                }
+                Some(state) if email_cache::is_stale(&state, now) => {
+                    needs_sync = true;
+                    break;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // 4. 必要时 sync（并发跨 folder，best-effort）
+    let _sync_stats = if needs_sync {
+        let pool = email_pool::Pool::new(account.clone(), password.to_string()).await?;
+        let stats = sync_folders_concurrent(&pool, &cache, &account.name, &folders).await?;
+        // pool drop 时 session 静默丢弃
+        Some(stats)
+    } else {
+        None
+    };
+
+    // 5. 查本地 envelope
+    let query = email_cache::EnvelopeQuery {
+        folder: flags.get("folder").cloned(),
+        unread_only: unread,
+        since: None,
+        limit: Some(limit),
+    };
+    let envelopes = email_cache::query_envelopes(&cache, &account.name, &query).await?;
+
+    // 6. 渲染表格行
+    let rows: Vec<Vec<String>> = envelopes
+        .into_iter()
+        .map(|e| {
+            vec![
+                e.uid.to_string(),
+                decode_imap_utf7(&e.folder),
+                e.date,
+                e.from_addr,
+                decode_mime_header(&e.subject),
+            ]
+        })
+        .collect();
 
     Ok(Output::records(
         vec![
@@ -854,6 +919,262 @@ async fn select_folder(session: &mut ImapSession, folder: &str) -> Result<()> {
     Err(AgentError::Other(format!(
         "folder '{folder}' not found (tried direct select and decoded-name match)"
     )))
+}
+
+// ============ Mail Cache sync 辅助 ============
+
+/// 同 `select_folder` 但返回 `Mailbox`（拿 `uid_validity` 用于 sync 比对）。
+async fn select_folder_mailbox(
+    session: &mut ImapSession,
+    folder: &str,
+) -> Result<async_imap::types::Mailbox> {
+    if let Ok(mb) = session.select(folder).await {
+        return Ok(mb);
+    }
+    let all = list_all_folders(session).await?;
+    for f in &all {
+        if decode_imap_utf7(f) == folder {
+            let mb = session
+                .select(f)
+                .await
+                .map_err(|e| AgentError::Network(format!("select '{f}': {e}")))?;
+            return Ok(mb);
+        }
+    }
+    Err(AgentError::Other(format!(
+        "folder '{folder}' not found (tried direct select and decoded-name match)"
+    )))
+}
+
+/// 把 `Flag` 迭代器格式化为 IMAP 风格的空格分隔字符串（如 `\Seen \Answered`）。
+/// 自定义 keyword 不带 `\` 前缀。
+fn format_imap_flags<'a, I>(flags: I) -> String
+where
+    I: Iterator<Item = async_imap::types::Flag<'a>>,
+{
+    flags
+        .map(|f| match f {
+            async_imap::types::Flag::Seen => "\\Seen".to_string(),
+            async_imap::types::Flag::Answered => "\\Answered".to_string(),
+            async_imap::types::Flag::Flagged => "\\Flagged".to_string(),
+            async_imap::types::Flag::Deleted => "\\Deleted".to_string(),
+            async_imap::types::Flag::Draft => "\\Draft".to_string(),
+            async_imap::types::Flag::Recent => "\\Recent".to_string(),
+            async_imap::types::Flag::MayCreate => "\\*".to_string(),
+            async_imap::types::Flag::Custom(k) => k.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// 把 IMAP envelope date 字符串（RFC 2822）解析为 RFC3339 UTC。
+/// 解析失败时回退原字符串（避免 sync 中断）。
+fn parse_envelope_date_utc(raw: &str) -> String {
+    if let Some(cleaned) = raw.split('(').next() {
+        let cleaned = cleaned.trim();
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(cleaned) {
+            return dt.with_timezone(&chrono::Utc).to_rfc3339();
+        }
+        if let Ok(dt) = chrono::DateTime::parse_from_rfc2822(raw) {
+            return dt.with_timezone(&chrono::Utc).to_rfc3339();
+        }
+    }
+    raw.to_string()
+}
+
+/// 按 UID 批量 fetch envelope + flags + size，返回 `CachedEnvelope` 列表。
+/// `account` / `fetched_at` 字段由 sync_one_folder 在 upsert 前填。
+async fn fetch_envelopes_for_cache(
+    session: &mut ImapSession,
+    uids: &[u32],
+    folder: &str,
+) -> Result<Vec<crate::modules::email_cache::CachedEnvelope>> {
+    if uids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let uid_set = uids
+        .iter()
+        .map(|u| u.to_string())
+        .collect::<Vec<_>>()
+        .join(",");
+    let fetches: Vec<async_imap::types::Fetch> = session
+        .uid_fetch(&uid_set, "(UID ENVELOPE FLAGS RFC822.SIZE)")
+        .await
+        .map_err(|e| AgentError::Network(format!("fetch envelope: {e}")))?
+        .try_collect()
+        .await
+        .map_err(|e| AgentError::Network(format!("fetch envelope collect: {e}")))?;
+
+    let mut envelopes = Vec::with_capacity(fetches.len());
+    for f in &fetches {
+        let uid = f.uid.unwrap_or(0);
+        if uid == 0 {
+            continue;
+        }
+        let env = f.envelope();
+        let raw_date = env
+            .and_then(|e| e.date.as_deref())
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default();
+        let raw_subject = env
+            .and_then(|e| e.subject.as_deref())
+            .map(|b| String::from_utf8_lossy(b).into_owned())
+            .unwrap_or_default();
+        let from = env
+            .and_then(|e| e.from.as_ref().and_then(|a| a.first()))
+            .map(|a| {
+                let m = a
+                    .mailbox
+                    .as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned());
+                let h = a
+                    .host
+                    .as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned());
+                format_mailbox(m.as_deref(), h.as_deref())
+            })
+            .unwrap_or_default();
+        let to = env
+            .and_then(|e| e.to.as_ref().and_then(|a| a.first()))
+            .map(|a| {
+                let m = a
+                    .mailbox
+                    .as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned());
+                let h = a
+                    .host
+                    .as_deref()
+                    .map(|b| String::from_utf8_lossy(b).into_owned());
+                format_mailbox(m.as_deref(), h.as_deref())
+            })
+            .unwrap_or_default();
+        let message_id = env
+            .and_then(|e| e.message_id.as_deref())
+            .map(|b| String::from_utf8_lossy(b).into_owned());
+        let size = f.size.map(|s| s as i64);
+        let flags = format_imap_flags(f.flags());
+
+        envelopes.push(crate::modules::email_cache::CachedEnvelope {
+            account: String::new(), // 由 sync_one_folder 填
+            folder: folder.to_string(),
+            uid,
+            date: parse_envelope_date_utc(&decode_mime_header(&raw_date)),
+            from_addr: from,
+            subject: decode_mime_header(&raw_subject),
+            flags,
+            message_id,
+            size,
+            to_addr: if to.is_empty() { None } else { Some(to) },
+            fetched_at: String::new(), // 由 upsert_envelopes 填
+        });
+    }
+    Ok(envelopes)
+}
+
+/// 单 folder sync 结果（用于汇总输出 / 调试）。
+#[derive(Debug, Default)]
+struct SyncStats {
+    folders_synced: usize,
+    envelopes_added: usize,
+    errors: Vec<(String, String)>,
+}
+
+/// 单 folder sync：SELECT 拿 uid_validity → 比对水位 → UIDSEARCH → UID FETCH → upsert。
+/// best-effort：失败时 `invalidate()` session + 计入 errors，水位不前进。
+async fn sync_one_folder(
+    pool: &email_pool::Pool,
+    cache: &sqlx::SqlitePool,
+    account: &str,
+    folder: &str,
+) -> Result<usize> {
+    let mut guard = match pool.acquire().await {
+        Ok(g) => g,
+        Err(e) => return Err(e),
+    };
+    let session = guard.session();
+
+    // SELECT folder → uid_validity
+    let mailbox = match select_folder_mailbox(session, folder).await {
+        Ok(mb) => mb,
+        Err(e) => {
+            guard.invalidate();
+            return Err(e);
+        }
+    };
+    let new_uid_validity = mailbox.uid_validity.unwrap_or(0) as u32;
+
+    // 读本地水位，决定 search query
+    let search_query = match email_cache::get_folder_state(cache, account, folder).await? {
+        None => "UID 1:*".to_string(),
+        Some(state) if state.uid_validity != new_uid_validity => {
+            // UIDVALIDITY 失效 → 清空水位，下一轮当首次处理
+            email_cache::clear_folder(cache, account, folder).await?;
+            "UID 1:*".to_string()
+        }
+        Some(state) => format!("UID {}:*", state.max_uid + 1),
+    };
+
+    // UIDSEARCH
+    let uids = match search_uids(session, &search_query).await {
+        Ok(u) => u,
+        Err(e) => {
+            guard.invalidate();
+            return Err(e);
+        }
+    };
+
+    if uids.is_empty() {
+        // 无新邮件，仍更新 last_sync_at + uid_validity（空水位 max_uid=0）
+        email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &[]).await?;
+        return Ok(0);
+    }
+
+    // UID FETCH ENVELOPE + FLAGS + SIZE
+    let envelopes = match fetch_envelopes_for_cache(session, &uids, folder).await {
+        Ok(e) => e,
+        Err(e) => {
+            guard.invalidate();
+            return Err(e);
+        }
+    };
+
+    let count = envelopes.len();
+    // 写 envelope + 更新水位（事务原子，ADR 0012）
+    email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &envelopes).await?;
+    Ok(count)
+}
+
+/// 并发跨 folder sync：使用 `futures::future::join_all` 等待全部结束。
+/// 单 folder 失败不阻塞其他，结果汇入 `SyncStats.errors`。
+async fn sync_folders_concurrent(
+    pool: &email_pool::Pool,
+    cache: &sqlx::SqlitePool,
+    account: &str,
+    folders: &[String],
+) -> Result<SyncStats> {
+    let mut stats = SyncStats::default();
+    let futures = folders.iter().map(|folder| {
+        let pool = pool.clone();
+        async move {
+            (
+                folder.clone(),
+                sync_one_folder(&pool, cache, account, folder).await,
+            )
+        }
+    });
+    let results = futures::future::join_all(futures).await;
+    for (folder, result) in results {
+        match result {
+            Ok(n) => {
+                stats.folders_synced += 1;
+                stats.envelopes_added += n;
+            }
+            Err(e) => {
+                stats.errors.push((folder, format!("{e}")));
+            }
+        }
+    }
+    Ok(stats)
 }
 
 // ============ Timeline 数据拉取 ============

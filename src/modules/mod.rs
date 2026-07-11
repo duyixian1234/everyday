@@ -122,6 +122,8 @@ pub mod bookmark;
 pub mod bookmark_local;
 pub mod calendar;
 pub mod email;
+pub mod email_cache;
+pub mod email_pool;
 pub mod local;
 pub mod note;
 pub mod note_local;

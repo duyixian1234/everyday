@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.5.0 待发版（4 处 timeline 修补 + 文档齐备，181 tests / clippy 零警告 / fmt clean）；6 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline`（commit `2ce5055` + 修复 `045afa6` `9a3ef49` `8de8f26` `32f67c1`）+ config 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local，timeline 通过 ops-log AOP 捕获 notion 写操作后通过 OpsLogProvider 投影到 timeline.events。
+**当前状态：** v0.5.0 已发布；v0.6.0 Mail Cache 实施完成（`src/modules/email_cache.rs` + `email_pool.rs` + `email.rs::mail_list` 改造），196 tests / clippy 零警告 / fmt clean；7 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline` + `config` 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local，timeline 通过 ops-log AOP 捕获 notion 写操作后通过 OpsLogProvider 投影到 timeline.events，`mail list` 走本地 envelope 缓存（auto-sync staleness=15min，`--sync` 强制）。
 
 ---
 
@@ -52,7 +52,17 @@
 - 6 模块（mail/cal/rss/note_local/todo_local/bookmark_local）暴露 `fetch_for_timeline(window)`。
 - 顺手修：`gen_id` 同纳秒撞 ID（加 atomic counter）；`query_events` LIMIT 占位符缺 `?`（改字面整数）。
 - 质量门禁全绿：173 tests / clippy `-D warnings` 零警告 / fmt clean。commit `2ce5055`。
-- 待发版：bump 0.4.0 → 0.5.0 + tag + 推 origin。
+- 4 处修补 + 发版 v0.5.0（commit `218f70b`，tag `v0.5.0` 已推 origin）。
+
+### Phase 10: Mail Cache（envelope 缓存 + 并发 sync）[complete]
+按 `CONTEXT.md` §Mail Cache + ADR 0010-0013 实现：
+- `src/modules/email_cache.rs`：mail_cache.db 双表（envelopes 主键 `(account, folder, uid)`，folder_state 主键 `(account, folder)` 存 `uid_validity/max_uid/last_sync_at`）；`upsert_envelopes` 事务原子写 envelope + 前进水位；`clear_folder` 处理 UIDVALIDITY 失效；`is_stale` 阈值 15 分钟。
+- `src/modules/email_pool.rs`：M=4 IMAP session 池 + `Arc<Semaphore>`；`PoolGuard` 借用归还，`invalidate` 标 dirty。
+- `src/modules/email.rs::mail_list` 改造：开 cache → staleness 检查 → 必要时并发 sync（`sync_folders_concurrent` 跨 folder `join_all`）→ 查本地 envelope → 渲染表格。`search` / `read` / `send` 保持直连 IMAP 不变。
+- K1 清理：只追加不删除（接受数据库膨胀）；F1 flags：sync 时刻快照（最坏 15 分钟滞后可接受）。
+- 8 个 SQL 集成单测覆盖：upsert 写 + 水位前进、空 batch 仅前进 last_sync、upsert on conflict、clear_folder、UIDVALIDITY 失效模拟重置、unread 过滤、K1 ghost envelope 留存、date desc + limit。
+- 质量门禁全绿：build ✅ / clippy `-D warnings` 零警告 ✅ / 196 tests passed (+15) ✅ / fmt clean ✅。
+- 待发版：bump 0.5.0 → 0.6.0 + tag + 推 origin。
 
 ---
 
@@ -137,3 +147,4 @@ username = "me"
 - Phase 7: complete
 - Phase 8: complete
 - Phase 9: complete
+- Phase 10: complete

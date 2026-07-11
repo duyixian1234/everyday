@@ -17,7 +17,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | Module | Status | Notes |
 |--------|--------|-------|
 | `config` | ✅ Complete | path / list / get / set / init |
-| `mail` | ✅ Complete | IMAP receive + SMTP send + keyring credentials |
+| `mail` | ✅ Complete (v0.6.0) | IMAP receive + SMTP send + keyring credentials + local envelope cache (`mail list` reads from `~/.config/everyday/mail_cache.db`, auto-syncs if stale > 15min, `--sync` to force) |
 | `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Complete | Notion: login / search / list / create / read / append / update |
@@ -49,7 +49,7 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 |---------|-------------|---------|
 | `mail login` | Interactively enter password into the OS keyring | `everyday mail login --account work` |
 | `mail folders` | List all mailbox folders | `everyday mail folders --json` |
-| `mail list` | List message summaries (recurses all folders by default, sorted by date desc) | `everyday mail list --unread --limit 10 --json` |
+| `mail list` | List message summaries from local cache (auto-sync if stale; recurses all folders by default, sorted by date desc) | `everyday mail list --unread --limit 10 --json` |
 | `mail read <uid>` | Read a single message in full (searches all folders by default) | `everyday mail read 12345 --json` |
 | `mail search` | Full-text search (recurses all folders by default) | `everyday mail search --query "invoice" --json` |
 | `mail send` | Send a message (SMTP STARTTLS) | `everyday mail send --to a@b.com --subject "Hi" --body "内容"` |
@@ -63,6 +63,7 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 | `--limit N` | `list` / `search` | Max rows, default 20 |
 | `--folder NAME` | `list` / `read` / `search` | Specific folder (Chinese names supported; default recurses all) |
 | `--no-recursive` | `list` / `read` / `search` | INBOX only (no recursion) |
+| `--sync` | `list` | Force IMAP sync before listing (ignore staleness) |
 | `--to ADDR` | `send` | Recipient (required) |
 | `--subject S` | `send` | Subject (required) |
 | `--body TEXT` | `send` | Body (required) |

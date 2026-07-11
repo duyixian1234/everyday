@@ -163,7 +163,7 @@ everyday config set default_account.mail personal
 |------|------|------|
 | `login` | 交互式存储密码到密钥环 | `everyday mail login [--account NAME]` |
 | `folders` | 列出所有邮箱文件夹 | `everyday mail folders [--account NAME]` |
-| `list` | 列出邮件摘要 | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive]` |
+| `list` | 列出邮件摘要（本地缓存；过期自动 sync） | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync]` |
 | `read` | 读取单封邮件（默认递归查找） | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
 | `search` | 搜索邮件 | `everyday mail search --query Q [--limit N] [--folder NAME]` |
 | `send` | 发送邮件 | `everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR]` |
@@ -177,6 +177,7 @@ everyday config set default_account.mail personal
 | `--limit N` | `list` / `search` | 限制条数，默认 20 |
 | `--folder NAME` | `list` / `read` / `search` | 指定文件夹（支持中文名），默认递归全部 |
 | `--no-recursive` | `list` / `read` / `search` | 仅查 INBOX |
+| `--sync` | `list` | 强制 IMAP sync 后再列出（忽略 staleness） |
 | `--to ADDR` | `send` | 收件人（必填） |
 | `--subject S` | `send` | 主题（必填） |
 | `--body TEXT` | `send` | 正文（必填） |

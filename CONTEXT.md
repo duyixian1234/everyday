@@ -1,7 +1,9 @@
-# CONTEXT.md — Everyday Timeline
+# CONTEXT.md — Everyday Modules
 
 > 领域术语表。仅定义概念，不涉及实现细节。
 > 决策记录见 `docs/adr/`。
+>
+> 每个模块独立成节：Timeline / Mail Cache / 其他后续模块。
 
 ## 核心概念
 
@@ -160,3 +162,96 @@ TimelineModule 实现 `Executor`，注册到 `ModuleRegistry`。`name()` = `"tim
 - 排序：timestamp 降序（最新在上）。
 - 文本表格列：`TIME`（本地 `MM-DD HH:MM`）/ `SOURCE` / `TYPE` / `TITLE`。summary 不进表格。
 - JSON 数组：每元素含 `id` / `source` / `account` / `event_type` / `timestamp`（UTC RFC3339）/ `title` / `summary` / `ref_id` / `metadata`。
+
+---
+
+## Mail Cache
+
+> `mail` 模块的本地缓存层。独立于 Timeline.db。
+> 决策见 ADR 0010-0013。
+
+### Mail Cache
+
+`mail` 模块的本地 envelope 缓存层。位置 `~/.config/everyday/mail_cache.db`。目的：让 `mail list` 默认查本地（毫秒级），仅 sync 时走 IMAP 网络。
+
+### Envelope
+
+一封邮件的摘要信息，用于列表展示与基础过滤：`(uid, folder, account, date, from, subject, flags, message_id, size, to, fetched_at)`。**不含 body / attachments**——读完整邮件仍走 IMAP `BODY[]`（见 `mail read`）。Envelope 是 IMAP `ENVELOPE` fetch 字段的本地映射（IMAP envelope 不含 flags / size，此处扩展）。
+
+### 主键语义
+
+`(account, folder, uid)` 复合主键。IMAP UID 是 **folder-scoped**——同一封邮件在不同文件夹有不同 UID；同一 (account, folder) 内 UID 单调递增（除非 UIDVALIDITY 变更）。复合主键准确表达这一约束。
+
+### UID Watermark（水位）
+
+每文件夹在 `folder_state` 表存的水位元数据 `(account, folder, uid_validity, max_uid, last_sync_at)`。Sync 时用 `UIDSEARCH UID <max_uid+1>:*` 取新增邮件 UID——RFC 3501 推荐的增量方式。`max_uid = 0` 表示首次 sync，等价全量（`UIDSEARCH UID 1:*`）。
+
+### UIDVALIDITY 变更
+
+IMAP 文件夹重建（邮件被 server 端批量删除 / 索引重建）时 `UIDVALIDITY` 字段变化，旧 UID 被复用为不同邮件。**每次 sync 前必须 SELECT 拿当前 UIDVALIDITY 与本地比对**，不一致则清空该 folder 的水位与 envelope，回退到全量 SELECT。RFC 3501 §2.3.1.1 强制。
+
+### Staleness
+
+`folder_state.last_sync_at` 距今的时长。默认 `mail list` 若任一目标 folder staleness > **15 分钟**（写死，无 flag），自动触发一次 sync 再查本地。`--sync` flag 强制立即 sync，无视 staleness。阈值不暴露为配置项。
+
+### flags 缓存语义
+
+envelope 的 `flags` 字段是 **sync 时刻的快照**。用户在 web 端 / 其他客户端改 flags 后，本地缓存最坏 15 分钟滞后（直到下次 sync）。`mail list --unread` 反映 sync 时的状态——明确边界，可接受。**不做实时 flags 重拉**（破坏"零网络 list"目标）。
+
+### Ghost Envelope（幽灵邮件）
+
+K1 清理策略：sync 只追加不删除。Server 端被删除 / 跨文件夹移动的邮件，本地 envelope 仍留着。默认 `mail list --limit 20` 按日期排序，幽灵邮件通常已被新邮件挤出 limit，不影响日常体感。数据库无界增长（10 万封约 30MB），未来可加 `mail cache gc` 命令手动清理。
+
+### Search 不走缓存
+
+`mail search --query Q` 仍走 IMAP 直连（`SEARCH TEXT "Q"`），不读本地缓存。原因：IMAP SEARCH 支持 subject + body + header 多字段搜索；本地 LIKE 仅能搜 subject/from，语义不对等。与 `mail list` 行为不对称，文档中明确。
+
+### Read 不走缓存
+
+`mail read <uid>` 走 IMAP 直连 `BODY[]` 拉完整邮件。原因：完整邮件含附件 / multipart，本地不缓存。Envelope 缓存仅服务 list 场景。
+
+### Send / Login 不走缓存
+
+`mail send` / `mail login` 与缓存无关，按需走 SMTP / keyring。
+
+### 连接池与并发
+
+固定大小 IMAP session 池（M=4）+ `tokio::Semaphore` 分发到 N 个文件夹。每次 sync 启动时建 4 个 IMAP session（共享 keyring 密码），文件夹 sync 抢占信号量、复用空闲 session。降低 TLS 握手 + IMAP LOGIN 开销，同时避免触发服务器并发连接 ban。4 是经验值，不通过 flag / config 暴露。
+
+### 数据库 Schema
+
+```
+envelopes(
+    account    TEXT NOT NULL,
+    folder     TEXT NOT NULL,
+    uid        INTEGER NOT NULL,
+    date       TEXT NOT NULL,        -- RFC3339 UTC
+    from_addr  TEXT NOT NULL,        -- mailbox@host
+    subject    TEXT NOT NULL,        -- decoded MIME
+    flags      TEXT NOT NULL,        -- IMAP flags space-separated
+    message_id TEXT,                 -- RFC 5322 Message-ID header (nullable)
+    size       INTEGER,              -- RFC822.SIZE in bytes (nullable)
+    to_addr    TEXT,                 -- first To recipient mailbox@host (nullable)
+    fetched_at TEXT NOT NULL,        -- RFC3339 UTC
+    PRIMARY KEY (account, folder, uid)
+)
+CREATE INDEX ix_envelopes_account_date ON envelopes(account, date DESC);
+
+folder_state(
+    account       TEXT NOT NULL,
+    folder        TEXT NOT NULL,
+    uid_validity  INTEGER NOT NULL,
+    max_uid       INTEGER NOT NULL DEFAULT 0,
+    last_sync_at  TEXT NOT NULL,    -- RFC3339 UTC
+    PRIMARY KEY (account, folder)
+)
+```
+
+### 与 Timeline 的边界
+
+mail_cache.db **独立**于 timeline.db，不跨数据库 JOIN。Timeline 的 mail provider（`fetch_for_timeline`）仍走 IMAP 直连 `SINCE <date>` 拉窗口内邮件（与本缓存层正交）。两个本地存储层服务于不同目标：
+
+- **mail_cache.db**：agent 调用 `mail list` 时的快速响应层（envelope 摘要）。
+- **timeline.db**：跨模块事件聚合层（envelope → Timeline event 投影）。
+
+未来可选：将 mail_cache 投影到 Timeline 的 `MailProvider`（避免 `fetch_for_timeline` 重连 server）。不在本 ADR 范围。
