@@ -6,5 +6,6 @@
 //! 与 `crate::shared`（有状态/带 IO 的共享设施）区分：util 只放小而纯的 helper。
 
 pub mod args;
+pub mod datetime;
 pub mod id;
 pub mod json_mode;

@@ -46,7 +46,10 @@ pub struct CachedEnvelope {
 pub struct FolderState {
     pub uid_validity: u32,
     pub max_uid: u32,
-    pub last_sync_at: DateTime<Utc>,
+    /// `None` 表示水位行存在但 `last_sync_at` 解析失败（DB 损坏 / 旧 schema），
+    /// 按 stale 处理强制重新 sync；不再用 `Utc::now()` 静默掩盖（之前的实现
+    /// 让"刚刚 sync 过"和"水位损坏"无法区分）。
+    pub last_sync_at: Option<DateTime<Utc>>,
 }
 
 /// `mail list` 查询过滤条件。
@@ -291,18 +294,23 @@ pub async fn query_envelopes(
 
 // ============ 工具 ============
 
-fn parse_rfc3339(s: &str) -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339(s)
-        .map(|d| d.with_timezone(&Utc))
-        .unwrap_or_else(|_| Utc::now())
+fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
+    crate::util::datetime::parse_rfc3339(s)
 }
 
 /// staleness 阈值（ADR 0013：写死 15 分钟，无 flag / config）。
 pub const STALENESS_THRESHOLD_SECS: i64 = 15 * 60;
 
 /// folder 是否 stale（last_sync_at 距 now > 阈值）。边界：恰 = 阈值不 stale。
+///
+/// `last_sync_at == None`（DB 损坏 / 旧 schema / 解析失败）一律视为 stale，
+/// 强制重新 sync；不再静默用 `Utc::now()` 兜底导致"刚 sync 过"和"水位损坏"
+/// 表现一样。
 pub fn is_stale(state: &FolderState, now: DateTime<Utc>) -> bool {
-    (now - state.last_sync_at).num_seconds() > STALENESS_THRESHOLD_SECS
+    match state.last_sync_at {
+        None => true,
+        Some(t) => (now - t).num_seconds() > STALENESS_THRESHOLD_SECS,
+    }
 }
 
 // ============ 测试 ============
@@ -322,7 +330,7 @@ mod tests {
         let state = FolderState {
             uid_validity: 1,
             max_uid: 100,
-            last_sync_at: now - chrono::Duration::seconds(60),
+            last_sync_at: Some(now - chrono::Duration::seconds(60)),
         };
         assert!(!is_stale(&state, now));
     }
@@ -333,7 +341,7 @@ mod tests {
         let state = FolderState {
             uid_validity: 1,
             max_uid: 100,
-            last_sync_at: now - chrono::Duration::seconds(1000),
+            last_sync_at: Some(now - chrono::Duration::seconds(1000)),
         };
         assert!(is_stale(&state, now));
     }
@@ -345,7 +353,7 @@ mod tests {
         let state = FolderState {
             uid_validity: 1,
             max_uid: 100,
-            last_sync_at: now - chrono::Duration::seconds(900),
+            last_sync_at: Some(now - chrono::Duration::seconds(900)),
         };
         assert!(
             !is_stale(&state, now),
@@ -355,7 +363,7 @@ mod tests {
         let state = FolderState {
             uid_validity: 1,
             max_uid: 100,
-            last_sync_at: now - chrono::Duration::seconds(901),
+            last_sync_at: Some(now - chrono::Duration::seconds(901)),
         };
         assert!(
             is_stale(&state, now),
@@ -370,14 +378,27 @@ mod tests {
         // chrono::DateTime::to_rfc3339 对 UTC 输出 "+00:00" 而非 "Z"，
         // 仅校验语义等价（同一时刻），不强求字面。
         let expected = chrono::DateTime::parse_from_rfc3339(s).unwrap();
-        assert_eq!(dt, expected.with_timezone(&chrono::Utc));
+        assert_eq!(dt, Some(expected.with_timezone(&chrono::Utc)));
     }
 
     #[test]
-    fn parse_rfc3339_invalid_falls_back_to_now() {
-        // 解析失败回退 Utc::now()，不 panic
-        let dt = parse_rfc3339("not a date");
-        let _ = dt.to_rfc3339(); // 不会 panic
+    fn parse_rfc3339_invalid_returns_none() {
+        // 修复：之前 parse_rfc3339 失败时静默回退到 Utc::now()，
+        // 让"刚 sync 过"和"水位损坏"无法区分。
+        // 改为 None，由调用方决定如何处理（is_stale 直接视为 stale）。
+        assert!(parse_rfc3339("not a date").is_none());
+    }
+
+    #[test]
+    fn stale_when_last_sync_at_corrupt() {
+        // None 强制 stale —— DB 损坏时不再被静默用 now() 掩盖。
+        let now = Utc::now();
+        let state = FolderState {
+            uid_validity: 1,
+            max_uid: 100,
+            last_sync_at: None,
+        };
+        assert!(is_stale(&state, now));
     }
 
     // ============ SQL 集成测试 ============
@@ -490,7 +511,7 @@ mod tests {
             "empty batch must not advance max_uid"
         );
         assert!(
-            after.last_sync_at > before.last_sync_at,
+            after.last_sync_at.unwrap() > before.last_sync_at.unwrap(),
             "empty batch must advance last_sync_at"
         );
     }

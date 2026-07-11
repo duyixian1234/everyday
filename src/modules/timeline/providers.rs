@@ -466,9 +466,7 @@ impl TimelineProvider for OpsLogProvider {
 
 /// 解析 RFC3339 时间字符串。
 fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
-    chrono::DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+    crate::util::datetime::parse_rfc3339(s)
 }
 
 // ============ Provider Registry ============

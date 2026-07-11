@@ -296,9 +296,7 @@ pub fn rows_to_table_rows(rows: &[EventRow]) -> (Vec<String>, Vec<Vec<String>>) 
 
 /// 解析 RFC3339 时间字符串。
 fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(s)
-        .ok()
-        .map(|dt| dt.with_timezone(&Utc))
+    crate::util::datetime::parse_rfc3339(s)
 }
 
 // ============ 水位管理 ============
