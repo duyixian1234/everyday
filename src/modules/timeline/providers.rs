@@ -471,16 +471,38 @@ fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
 
 // ============ Provider Registry ============
 
+/// 宏：注册一个 local/notion 双 provider 模块（todo/note/bookmark 共享）。
+///
+/// 模式：
+/// 1. 对每个 local 账户 push 一个本地 Provider。
+/// 2. 若存在 notion 账户，push 单个 [`OpsLogProvider`]。
+///
+/// `local_providers` 表达式求值应返回 `&[Account]`，`provider_for`
+/// 是形如 `TodoProvider::new(acc.clone())` 的构造表达式。
+macro_rules! add_dual_providers {
+    ($providers:expr, $module:literal, $local_providers:expr, $provider_for:expr) => {{
+        let local_providers: &[_] = $local_providers;
+        let mut has_notion = false;
+        for acc in local_providers {
+            if crate::modules::local::is_local_provider(&acc.provider) {
+                $providers.push(Box::new($provider_for(acc.clone())));
+            } else {
+                has_notion = true;
+            }
+        }
+        if has_notion {
+            $providers.push(Box::new(OpsLogProvider::new($module)));
+        }
+    }};
+}
+
 /// 构建 TimelineProvider 列表（遍历 config 中所有已配置的账户）。
 ///
 /// - Mail：每个 mail 账户一个 MailProvider。
 /// - Cal：每个 calendar 账户一个 CalProvider。
 /// - RSS：单个 RssProvider（无账户概念）。
-/// - Todo/Note/Bookmark：
-///   - local provider 账户 → 单独的 XxxProvider（直拉 SQLite）。
-///   - notion provider 账户 → 注册 [`OpsLogProvider`]（投影 ops-log.db）。
-///
-/// 两者可共存（不同账户不同 provider）。
+/// - Todo/Note/Bookmark：local 账户走本地 provider；notion 账户共享一个
+///   [`OpsLogProvider`]（投影 ops-log.db）。两者可共存。
 pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
     let mut providers: Vec<Box<dyn TimelineProvider>> = Vec::new();
 
@@ -502,50 +524,25 @@ pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
         providers.push(Box::new(RssProvider::new(config.clone())));
     }
 
-    // Todo：local 账户走直拉，notion 账户走 ops-log 投影。
-    let has_notion_todo = config
-        .todo
-        .accounts
-        .iter()
-        .any(|a| !crate::modules::local::is_local_provider(&a.provider));
-    for acc in &config.todo.accounts {
-        if crate::modules::local::is_local_provider(&acc.provider) {
-            providers.push(Box::new(TodoProvider::new(acc.clone())));
-        }
-    }
-    if has_notion_todo {
-        providers.push(Box::new(OpsLogProvider::new("todo")));
-    }
-
-    // Note：同上。
-    let has_notion_note = config
-        .note
-        .accounts
-        .iter()
-        .any(|a| !crate::modules::local::is_local_provider(&a.provider));
-    for acc in &config.note.accounts {
-        if crate::modules::local::is_local_provider(&acc.provider) {
-            providers.push(Box::new(NoteProvider::new(acc.clone())));
-        }
-    }
-    if has_notion_note {
-        providers.push(Box::new(OpsLogProvider::new("note")));
-    }
-
-    // Bookmark：同上。
-    let has_notion_bookmark = config
-        .bookmark
-        .accounts
-        .iter()
-        .any(|a| !crate::modules::local::is_local_provider(&a.provider));
-    for acc in &config.bookmark.accounts {
-        if crate::modules::local::is_local_provider(&acc.provider) {
-            providers.push(Box::new(BookmarkProvider::new(acc.clone())));
-        }
-    }
-    if has_notion_bookmark {
-        providers.push(Box::new(OpsLogProvider::new("bookmark")));
-    }
+    // Todo / Note / Bookmark：local/notion 双 provider 模式。
+    add_dual_providers!(
+        providers,
+        "todo",
+        &config.todo.accounts,
+        TodoProvider::new
+    );
+    add_dual_providers!(
+        providers,
+        "note",
+        &config.note.accounts,
+        NoteProvider::new
+    );
+    add_dual_providers!(
+        providers,
+        "bookmark",
+        &config.bookmark.accounts,
+        BookmarkProvider::new
+    );
 
     providers
 }
