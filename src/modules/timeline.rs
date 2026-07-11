@@ -294,44 +294,15 @@ impl TimelineModule {
         }
 
         // 解析时间范围。
-        // 优先级:`--from` + `--to` > `--since` > preset。
-        //
-        // 三种独立路径:
-        // - `--from` + `--to` 同时给:用它们 (NaiveDate 粒度,unambiguous)
-        // - `--since` 单给:`parse_since_utc` 拿 UTC 起点,保留 sub-day 精度;
-        //   to = now() (相对时长的自然终点)
-        // - 都缺:纯 preset
-        let (from_utc, to_utc) = if let (Some(f), Some(t)) = (flags.get("from"), flags.get("to")) {
-            let f_d = parse_date_str(f)?;
-            let t_d = parse_date_str(t)?;
-            let from = local_to_utc_start(f_d).ok_or_else(|| {
-                AgentError::InvalidArgument(format!(
-                    "--from {f} falls in DST spring-forward gap in local timezone"
-                ))
-            })?;
-            let to = local_to_utc_end(t_d).ok_or_else(|| {
-                AgentError::InvalidArgument(format!(
-                    "--to {t} falls in DST spring-forward gap in local timezone"
-                ))
-            })?;
-            (from, to)
-        } else if let Some(s) = flags.get("since") {
-            let from = parse_since_utc(s)?;
-            (from, Utc::now())
-        } else {
-            let (f_l, t_l) = resolve_preset(preset)?;
-            let from = local_to_utc_start(f_l).ok_or_else(|| {
-                AgentError::InvalidArgument(format!(
-                    "preset '{preset}' start falls in DST spring-forward gap"
-                ))
-            })?;
-            let to = local_to_utc_end(t_l).ok_or_else(|| {
-                AgentError::InvalidArgument(format!(
-                    "preset '{preset}' end falls in DST spring-forward gap"
-                ))
-            })?;
-            (from, to)
-        };
+        // 之前 `--from` 单独给定(无 `--to`)会被静默忽略并回退到 preset,
+        // 无效的 `--from 2026-07-99` 也被静默吞掉,用户以为拿到了数据。
+        // `resolve_query_range` 现在显式处理所有组合并报错。
+        let (from_utc, to_utc) = resolve_query_range(
+            preset,
+            flags.get("from").map(String::as_str),
+            flags.get("to").map(String::as_str),
+            flags.get("since").map(String::as_str),
+        )?;
 
         // 构造查询参数。
         let sources = parse_source_filter(flags.get("source"))?;
@@ -476,6 +447,79 @@ fn parse_since_utc(s: &str) -> Result<chrono::DateTime<Utc>> {
     Err(AgentError::InvalidArgument(format!(
         "invalid --since '{s}', expected YYYY-MM-DD or 30m/2h/1d"
     )))
+}
+
+/// 解析查询时间范围 → (from_utc, to_utc)。
+///
+/// 优先级：`--from`/`--to`(任一给定) > `--since` > preset。
+///
+/// 之前 `--from` 单独给定(无 `--to`)会被静默忽略并回退到 preset,
+/// 无效的 `--from 2026-07-99` 也被静默吞掉,用户拿到 preset 范围的"假数据"。
+/// 现在独立处理两边:
+/// - 仅 `--from`：to 默认 `now()`(查从该日起到现在的事件)
+/// - 仅 `--to`：from 默认 preset 起点(本地日 00:00 → UTC)
+/// - 二者皆给：from > to 时显式报错,避免静默返回空结果
+/// - 任一日期解析失败(如 `2026-07-99`)：显式 `InvalidArgument`
+fn resolve_query_range(
+    preset: &str,
+    from: Option<&str>,
+    to: Option<&str>,
+    since: Option<&str>,
+) -> Result<(chrono::DateTime<Utc>, chrono::DateTime<Utc>)> {
+    if from.is_some() || to.is_some() {
+        let from_utc = match from {
+            Some(f) => {
+                let f_d = parse_date_str(f)?;
+                local_to_utc_start(f_d).ok_or_else(|| {
+                    AgentError::InvalidArgument(format!(
+                        "--from {f} falls in DST spring-forward gap in local timezone"
+                    ))
+                })?
+            }
+            None => {
+                let (f_l, _) = resolve_preset(preset)?;
+                local_to_utc_start(f_l).ok_or_else(|| {
+                    AgentError::InvalidArgument(format!(
+                        "preset '{preset}' start falls in DST spring-forward gap"
+                    ))
+                })?
+            }
+        };
+        let to_utc = match to {
+            Some(t) => {
+                let t_d = parse_date_str(t)?;
+                local_to_utc_end(t_d).ok_or_else(|| {
+                    AgentError::InvalidArgument(format!(
+                        "--to {t} falls in DST spring-forward gap in local timezone"
+                    ))
+                })?
+            }
+            None => Utc::now(),
+        };
+        if let (Some(f), Some(t)) = (from, to)
+            && from_utc > to_utc
+        {
+            return Err(AgentError::InvalidArgument(format!(
+                "--from {f} is later than --to {t}"
+            )));
+        }
+        Ok((from_utc, to_utc))
+    } else if let Some(s) = since {
+        Ok((parse_since_utc(s)?, Utc::now()))
+    } else {
+        let (f_l, t_l) = resolve_preset(preset)?;
+        let from_utc = local_to_utc_start(f_l).ok_or_else(|| {
+            AgentError::InvalidArgument(format!(
+                "preset '{preset}' start falls in DST spring-forward gap"
+            ))
+        })?;
+        let to_utc = local_to_utc_end(t_l).ok_or_else(|| {
+            AgentError::InvalidArgument(format!(
+                "preset '{preset}' end falls in DST spring-forward gap"
+            ))
+        })?;
+        Ok((from_utc, to_utc))
+    }
 }
 
 /// 解析预设时间范围 → (from_local, to_local) 本地日期。
@@ -671,5 +715,54 @@ mod tests {
     fn parse_date_to_utc_start() {
         let dt = parse_date_to_utc("2026-07-11", false);
         assert!(dt.is_some());
+    }
+
+    #[test]
+    fn resolve_query_range_from_alone_valid() {
+        // `--from` 单独给定现在也应被采信,不再静默回退 preset。
+        let expected_from =
+            local_to_utc_start(NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()).unwrap();
+        let (from, to) = resolve_query_range("today", Some("2000-01-01"), None, None).unwrap();
+        assert_eq!(from, expected_from);
+        assert!(to > from); // to 默认 now(),必然晚于 2000 年
+    }
+
+    #[test]
+    fn resolve_query_range_from_alone_invalid_errors() {
+        // 之前 `--from 2026-07-99` 单独给定会被静默忽略,回退到 preset 范围。
+        // 现在必须显式报错,不再静默 fallback。
+        let err = resolve_query_range("today", Some("2026-07-99"), None, None).unwrap_err();
+        assert!(err.message().contains("2026-07-99"));
+        assert!(err.message().contains("YYYY-MM-DD"));
+    }
+
+    #[test]
+    fn resolve_query_range_inverted_from_to_errors() {
+        // `--from` 晚于 `--to` 时静默返回空结果,现在显式报错。
+        let err =
+            resolve_query_range("today", Some("2026-07-01"), Some("2026-06-01"), None).unwrap_err();
+        assert!(err.message().contains("later than"));
+    }
+
+    #[test]
+    fn resolve_query_range_to_alone_defaults_from_preset() {
+        // 仅 `--to` 时,from 取 preset 起点(本地日 00:00 → UTC),to 取该日 23:59:59。
+        let today = Local::now().date_naive();
+        let expected_from = local_to_utc_start(today).unwrap();
+        let expected_to = local_to_utc_end(NaiveDate::from_ymd_opt(2030, 12, 31).unwrap()).unwrap();
+        let (from, to) = resolve_query_range("today", None, Some("2030-12-31"), None).unwrap();
+        assert_eq!(from, expected_from);
+        assert_eq!(to, expected_to);
+    }
+
+    #[test]
+    fn resolve_query_range_since_still_works() {
+        // `--since` 路径不受 `--from`/`--to` 重构影响。
+        let now = Utc::now();
+        let (from, to) = resolve_query_range("today", None, None, Some("30m")).unwrap();
+        let diff = to - from;
+        assert!(diff >= chrono::Duration::minutes(29));
+        assert!(diff <= chrono::Duration::minutes(31));
+        assert!(to > now - chrono::Duration::minutes(1));
     }
 }
