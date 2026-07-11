@@ -605,42 +605,9 @@ fn save_config_value(root: &toml::Value) -> Result<()> {
 }
 
 /// 在 config 的 `todo.accounts` 中找到 name 匹配的账户，写入 `default_database_id`。
+/// 见 `crate::modules::local::set_module_database_id` —— 与 bookmark 共享实现。
 fn set_todo_database_id(root: &mut toml::Value, account_name: &str, db_id: &str) -> Result<()> {
-    let table = root
-        .as_table_mut()
-        .ok_or_else(|| AgentError::Config("config root is not a table".into()))?;
-    let todo = table
-        .get_mut("todo")
-        .ok_or_else(|| AgentError::Config("no [todo] section in config".into()))?;
-    let todo_table = todo
-        .as_table_mut()
-        .ok_or_else(|| AgentError::Config("todo is not a table".into()))?;
-    let accounts = todo_table
-        .get_mut("accounts")
-        .ok_or_else(|| AgentError::Config("todo.accounts missing".into()))?;
-    let arr = accounts
-        .as_array_mut()
-        .ok_or_else(|| AgentError::Config("todo.accounts is not an array".into()))?;
-
-    let mut found = false;
-    for acc in arr.iter_mut() {
-        if acc.get("name").and_then(|n| n.as_str()) == Some(account_name) {
-            acc.as_table_mut()
-                .ok_or_else(|| AgentError::Config("todo account is not a table".into()))?
-                .insert(
-                    "default_database_id".into(),
-                    toml::Value::String(db_id.to_string()),
-                );
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        return Err(AgentError::Config(format!(
-            "todo account '{account_name}' not found in config"
-        )));
-    }
-    Ok(())
+    crate::modules::local::set_module_database_id(root, "todo", account_name, db_id)
 }
 
 #[cfg(test)]
@@ -747,61 +714,16 @@ mod tests {
         assert_eq!(item.title, "");
     }
 
-    /// set_todo_database_id 局部编辑，不破坏其它账户/段落。
+    // set_todo_database_id 的完整测试在 local.rs（共享 helper 的权威回归）。
     #[test]
-    fn set_todo_database_id_edits_only_target() {
+    fn set_todo_database_id_is_shared_helper() {
         let mut root: toml::Value = toml::from_str(
             r#"
-[default_account]
-todo = "work"
-
-[[mail.accounts]]
-name = "work"
-imap_host = "imap.x.com"
-
 [[todo.accounts]]
-name = "personal"
-parent_page_id = "page_p"
-
-[[todo.accounts]]
-name = "work"
-parent_page_id = "page_w"
+name = "x"
 "#,
         )
         .unwrap();
-        set_todo_database_id(&mut root, "work", "db_new").unwrap();
-
-        // work 账户被写入 database_id。
-        let accounts = root
-            .get("todo")
-            .unwrap()
-            .get("accounts")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(accounts[0].get("default_database_id"), None); // personal 未动
-        assert_eq!(
-            accounts[1].get("default_database_id").unwrap().as_str(),
-            Some("db_new")
-        );
-        // mail 段落完好。
-        assert_eq!(
-            root.get("mail")
-                .unwrap()
-                .get("accounts")
-                .unwrap()
-                .get(0)
-                .unwrap()
-                .get("imap_host")
-                .unwrap()
-                .as_str(),
-            Some("imap.x.com")
-        );
-    }
-
-    #[test]
-    fn set_todo_database_id_missing_account_errors() {
-        let mut root: toml::Value = toml::from_str("[[todo.accounts]]\nname = \"x\"\n").unwrap();
         assert!(set_todo_database_id(&mut root, "ghost", "db").is_err());
     }
 }

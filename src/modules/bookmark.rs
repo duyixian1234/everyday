@@ -454,42 +454,9 @@ fn save_config_value(root: &toml::Value) -> Result<()> {
 }
 
 /// 在 config 的 `bookmark.accounts` 中找到 name 匹配的账户，写入 `default_database_id`。
+/// 见 `crate::modules::local::set_module_database_id` —— 与 todo 共享实现。
 fn set_bookmark_database_id(root: &mut toml::Value, account_name: &str, db_id: &str) -> Result<()> {
-    let table = root
-        .as_table_mut()
-        .ok_or_else(|| AgentError::Config("config root is not a table".into()))?;
-    let bookmark = table
-        .get_mut("bookmark")
-        .ok_or_else(|| AgentError::Config("no [bookmark] section in config".into()))?;
-    let bookmark_table = bookmark
-        .as_table_mut()
-        .ok_or_else(|| AgentError::Config("bookmark is not a table".into()))?;
-    let accounts = bookmark_table
-        .get_mut("accounts")
-        .ok_or_else(|| AgentError::Config("bookmark.accounts missing".into()))?;
-    let arr = accounts
-        .as_array_mut()
-        .ok_or_else(|| AgentError::Config("bookmark.accounts is not an array".into()))?;
-
-    let mut found = false;
-    for acc in arr.iter_mut() {
-        if acc.get("name").and_then(|n| n.as_str()) == Some(account_name) {
-            acc.as_table_mut()
-                .ok_or_else(|| AgentError::Config("bookmark account is not a table".into()))?
-                .insert(
-                    "default_database_id".into(),
-                    toml::Value::String(db_id.to_string()),
-                );
-            found = true;
-            break;
-        }
-    }
-    if !found {
-        return Err(AgentError::Config(format!(
-            "bookmark account '{account_name}' not found in config"
-        )));
-    }
-    Ok(())
+    crate::modules::local::set_module_database_id(root, "bookmark", account_name, db_id)
 }
 
 #[cfg(test)]
@@ -541,36 +508,16 @@ mod tests {
         assert!(item.tags.is_empty());
     }
 
+    // set_bookmark_database_id 的完整测试在 local.rs（共享 helper 的权威回归）。
     #[test]
-    fn set_bookmark_database_id_edits_only_target() {
+    fn set_bookmark_database_id_is_shared_helper() {
         let mut root: toml::Value = toml::from_str(
             r#"
-[default_account]
-bookmark = "work"
-
 [[bookmark.accounts]]
-name = "personal"
-parent_page_id = "page_p"
-
-[[bookmark.accounts]]
-name = "work"
-parent_page_id = "page_w"
+name = "x"
 "#,
         )
         .unwrap();
-        set_bookmark_database_id(&mut root, "work", "db_new").unwrap();
-
-        let accounts = root
-            .get("bookmark")
-            .unwrap()
-            .get("accounts")
-            .unwrap()
-            .as_array()
-            .unwrap();
-        assert_eq!(accounts[0].get("default_database_id"), None);
-        assert_eq!(
-            accounts[1].get("default_database_id").unwrap().as_str(),
-            Some("db_new")
-        );
+        assert!(set_bookmark_database_id(&mut root, "ghost", "db").is_err());
     }
 }

@@ -87,6 +87,57 @@ pub fn parse_tags(raw: Option<&String>) -> Vec<String> {
     }
 }
 
+/// 在 config 的 `<module>.accounts[]` 中找到 `name` 匹配的账户，
+/// 写入 `default_database_id = db_id`。
+///
+/// 局部编辑 config TOML，不动其它账户或其它段落。
+/// 之前 todo.rs 与 bookmark.rs 各有一份约 35 行逐字复制
+/// （`set_todo_database_id` / `set_bookmark_database_id`），集中到此处。
+pub fn set_module_database_id(
+    root: &mut toml::Value,
+    module: &str,
+    account_name: &str,
+    db_id: &str,
+) -> Result<()> {
+    let table = root
+        .as_table_mut()
+        .ok_or_else(|| AgentError::Config("config root is not a table".into()))?;
+    let section = table
+        .get_mut(module)
+        .ok_or_else(|| AgentError::Config(format!("no [{module}] section in config")))?;
+    let section_table = section
+        .as_table_mut()
+        .ok_or_else(|| AgentError::Config(format!("{module} is not a table")))?;
+    let accounts = section_table
+        .get_mut("accounts")
+        .ok_or_else(|| AgentError::Config(format!("{module}.accounts missing")))?;
+    let arr = accounts
+        .as_array_mut()
+        .ok_or_else(|| AgentError::Config(format!("{module}.accounts is not an array")))?;
+
+    let mut found = false;
+    for acc in arr.iter_mut() {
+        if acc.get("name").and_then(|n| n.as_str()) == Some(account_name) {
+            acc.as_table_mut()
+                .ok_or_else(|| {
+                    AgentError::Config(format!("{module} account is not a table"))
+                })?
+                .insert(
+                    "default_database_id".into(),
+                    toml::Value::String(db_id.to_string()),
+                );
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        return Err(AgentError::Config(format!(
+            "{module} account '{account_name}' not found in config"
+        )));
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,5 +179,75 @@ mod tests {
     fn parse_tags_single_token() {
         let raw = "rust".to_string();
         assert_eq!(parse_tags(Some(&raw)), vec!["rust"]);
+    }
+
+    #[test]
+    fn set_module_database_id_edits_only_target() {
+        let mut root: toml::Value = toml::from_str(
+            r#"
+[default_account]
+todo = "t1"
+bookmark = "b1"
+
+[[todo.accounts]]
+name = "t1"
+default_database_id = "old_t"
+
+[[todo.accounts]]
+name = "t2"
+
+[[bookmark.accounts]]
+name = "b1"
+default_database_id = "old_b"
+"#,
+        )
+        .unwrap();
+        set_module_database_id(&mut root, "todo", "t1", "new_t").unwrap();
+
+        // t1 应被更新；t2 / b1 / default_account 不动。
+        let todo_accounts = root.get("todo").unwrap().get("accounts").unwrap();
+        let t1 = todo_accounts.as_array().unwrap().iter().find(|a| {
+            a.get("name").and_then(|n| n.as_str()) == Some("t1")
+        });
+        assert_eq!(
+            t1.unwrap().get("default_database_id").unwrap().as_str(),
+            Some("new_t")
+        );
+
+        // b1 应未变。
+        let b1 = root
+            .get("bookmark")
+            .unwrap()
+            .get("accounts")
+            .unwrap()
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|a| a.get("name").and_then(|n| n.as_str()) == Some("b1"))
+            .unwrap();
+        assert_eq!(
+            b1.get("default_database_id").unwrap().as_str(),
+            Some("old_b")
+        );
+    }
+
+    #[test]
+    fn set_module_database_id_missing_account_errors() {
+        let mut root: toml::Value = toml::from_str(
+            r#"
+[[todo.accounts]]
+name = "x"
+"#,
+        )
+        .unwrap();
+        let err = set_module_database_id(&mut root, "todo", "ghost", "db").unwrap_err();
+        assert!(err.message().contains("ghost"));
+    }
+
+    #[test]
+    fn set_module_database_id_missing_module_errors() {
+        let mut root: toml::Value = toml::Value::Table(toml::value::Table::new());
+        let err = set_module_database_id(&mut root, "todo", "x", "db").unwrap_err();
+        assert!(err.message().contains("todo"));
     }
 }
