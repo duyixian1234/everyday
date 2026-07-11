@@ -105,12 +105,19 @@ impl TimelineProvider for CalProvider {
         Some(&self.account.name)
     }
 
-    async fn sync(&self, _window: &TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
+    async fn sync(&self, window: &TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
         let entries = calendar::fetch_for_timeline(&self.account, &self.ignored).await?;
         let events: Vec<TimelineEvent> = entries
             .iter()
             .filter_map(|e| {
                 let timestamp = parse_naive_dt(&e.start)?;
+                // 窗口过滤：CalDAV 一次性返回所有日历事件，需按 orchestrator
+                // 传入的窗口（[watermark, now+7d]）裁剪后才符合 WindowRefresh 语义。
+                // WindowRefresh 模式下 orchestrator 会 DELETE WHERE timestamp BETWEEN
+                // window.from AND window.to —— 不在窗口内的事件本不该出现在 events 表。
+                if timestamp < window.from || timestamp > window.to {
+                    return None;
+                }
                 let summary = format!("{} - {}", e.start, e.end);
                 let metadata = json!({
                     "calendar": e.href,
