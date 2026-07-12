@@ -35,6 +35,8 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [F006](F006-ci-release-github-only.md) | CI + GitHub-only release workflow (cnb mirror excluded) | Accepted | 2026-07-10 |
 | [F007](F007-clap-subcommand-tree.md) | Data-driven clap subcommand tree via module_arg_spec | Accepted | 2026-07-12 |
 | [F008](F008-rss-module.md) | RSS module — feed-rs based subscription aggregator | Accepted | 2026-07-09 |
+| [F009](F009-performance-budget.md) | Performance budget — cold start < 100 ms, network timeouts, large-output streaming | Accepted | 2026-07-12 |
+| [F010](F010-testing-requirements.md) | Testing requirements — mandatory coverage, mocks, CI behaviour, bug-fix discipline | Accepted | 2026-07-12 |
 
 ## Mail (M-series)
 

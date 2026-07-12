@@ -1,199 +1,78 @@
 # agents.md — Everyday AI Agent 协作规范
 
-> 本文件是给 AI Agent（以及人类协作者）的项目工作指南。在任何代码改动前，请先读完本文件。
+> 这是 AI Agent 与人类协作者的项目入口。先读这一段，再按需跳到 `.rules/`
+> 看具体约定，到 [docs/adr/](./docs/adr/) 读决策。
 
 ## 项目概览
 
-**Everyday** 是一个 Rust 编写的本地 CLI 工具集，作为 AI Agent 的"数字双手"。统一命令结构 `everyday <module> <action> [options]`，支持 Text / JSON 双输出。范围与定位见下文「范围与定位」节。
+**Everyday** 是一个 Rust 编写的本地 CLI 工具集，作为 AI Agent 的"数字双手"。
+统一命令结构 `everyday <module> <action> [options]`，支持 Text / JSON 双输出，
+JSON 为 AI 交互主模式。
 
 - **语言：** Rust (edition 2024)
-- **二进制名：** `everyday`（见 `Cargo.toml` 的 `[[bin]]` 段）
-- **目标平台：** Windows / macOS / Linux
+- **二进制名：** `everyday`
+- **目标平台：** Linux / macOS / Windows（含 Apple Silicon aarch64）
 - **异步运行时：** `tokio`
-- **规划文件：** `task_plan.md` / `findings.md` / `progress.md`（使用 planning-with-files 工作流）
+- **规划文件：** `task_plan.md`（阶段 + Errors）/ `progress.md`（当前状态 + ADR
+  时间序索引）/ `findings.md`（ADR 主题索引）。详见 [文档约定](#文档约定)。
 
-## 范围与定位
+## 何时使用本仓库
 
-Everyday 是 AI Agent 连接**外部世界**的统一接口，定位为"外部集成接口"，而非通用系统工具箱。
+引用 [F003](./docs/adr/F003-module-scope-external-integration.md)：Everyday 只
+封装**外部集成协议 / 状态 / 凭证**——IMAP、SMTP、CalDAV、RSS、Notion、bookmark
+本地 DB、Timeline 事件层——不封装 `fs` / `net` / `sys` / 剪贴板等通用能力（代理
+用 shell / `curl` / `fd` / `rg` 即可直接完成）。模块提案必须先回答"封装了什么
+shell 做不到的事"。
 
-- **保留的模块**封装代理自身难以实现的外部协议 / 状态 / 凭证：`mail`（IMAP/SMTP + keyring）、`cal`（CalDAV）、`rss`（feed 解析 + 状态）、`note`/`todo`（Notion API + keyring）。
-- **不内置**文件搜索、HTTP 请求、系统监控、剪贴板等"通用能力"——这些代理用 shell / `curl` / `fd` / `rg` 即可直接完成，CLI 包装无差异化价值。
-- 据此，`fs`、`net` 与 `sys` 模块均已移除（详见 `findings.md`）。
+当前模块：
 
-## 目录结构
-
-```text
-.
-├── agents.md               # 本文件
-├── Justfile                # 开发流程管理（just）
-├── Cargo.toml              # 依赖与包元数据
-├── config.example.toml     # 配置示例
-├── task_plan.md            # 开发计划与阶段跟踪
-├── findings.md             # 调研与技术决策记录
-├── progress.md             # 会话进度日志
-└── src/
-    ├── main.rs             # 入口：解析 → 分发 → 渲染
-    ├── cli.rs              # clap 命令定义
-    ├── config.rs           # 配置加载与多账户管理
-    ├── error.rs            # 统一错误类型 AgentError
-    ├── output.rs           # Output 结构体（Text/JSON 渲染）
-    ├── notion_client.rs    # 底层共享 Notion 客户端（HTTP/限流/反序列化）
-    └── modules/
-        ├── mod.rs          # Executor trait + ModuleRegistry
-        ├── email.rs        # 邮件（IMAP/SMTP）
-        ├── calendar.rs     # 日历（CalDAV）
-        ├── rss.rs          # RSS/Atom 订阅
-        ├── note.rs         # 笔记与知识库（Notion API）
-        └── todo.rs         # 待办任务（Notion API，基于 notion_client）
-```
-
-## 核心架构约定
-
-### 1. 命令结构
-所有命令遵循 `everyday <module> <action> [options]`：
-- `module`：`mail` | `cal` | `rss` | `note` | `todo` | `config`
-- `action`：由各模块自定义（如 `list`、`send`、`status`）
-- 全局 flag：`--json`（切换 JSON 输出）、`--account <name>`（指定账户）
-
-### 2. Executor Trait（核心抽象）
-每个模块实现 `Executor` trait，主程序只通过 trait object 调度：
-```rust
-#[async_trait]
-pub trait Executor: Send + Sync {
-    fn name(&self) -> &'static str;
-    fn description(&self) -> &'static str;
-    async fn execute(&self, action: &str, args: &ActionArgs) -> Result<Output, AgentError>;
-    fn actions(&self) -> Vec<ActionDoc>;  // 用于 `everyday <module> --help`
-}
-```
-**不要**在 `main.rs` 里写模块特定逻辑。新模块 = 新文件 + 注册一行。
-
-### 3. 输出层（Output）
-所有模块返回 `Output`，由主程序统一渲染：
-```rust
-pub enum Output {
-    Text(String),
-    Json(serde_json::Value),
-    Table(tabled::Table),
-}
-```
-- `--json` 模式：`Text` → 原样输出字符串，`Json` → 紧凑 JSON，`Table` → 序列化为 JSON 数组
-- 默认 Text 模式：`Text` → 原样，`Json` → pretty-print，`Table` → 终端表格
-
-### 4. 错误处理
-- 所有 `Result` 用 `Result<T, AgentError>`
-- `AgentError` 实现 `serde::Serialize`，JSON 模式下输出 `{"error":"ErrorType","message":"..."}`
-- 退出码：成功 0，失败 1（特定错误类型可扩展非零码）
-- **禁止** `unwrap()`/`expect()` 出现在非测试代码中，用 `?` + 上下文
-
-### 5. 配置与多账户
-- 配置路径：`~/.config/everyday/config.toml`（用 `dirs::config_dir()` 跨平台解析）
-- 每个模块支持多个命名账户，顶层 `[default_account]` 指定默认账户名
-- **密码绝不存配置文件**，走 `keyring`（service = `everyday/<module>/<account>`）
-- `--account` 覆盖默认；未找到账户 → `AgentError::AccountNotFound`
-
-## 编码规范
-
-### 风格
-- 遵循 `rustfmt` 默认格式 + `clippy` 无警告
-- 公开类型加 `#[derive(Debug, Clone)]`；配置结构体加 `#[derive(Deserialize, Serialize)]`
-- 文档注释 `///` 用于 public API，模块级 `//!` 用于文件顶部说明
-- 异步函数用 `async fn`，trait 方法加 `#[async_trait]`
-
-### 命名
-- 模块文件：小写（`email.rs`，不用 `mail.rs` —— 模块名描述领域）
-- CLI 命令别名：`mail`→邮件、`cal`→日历
-- 结构体：`PascalCase`；函数/变量：`snake_case`；常量：`SCREAMING_SNAKE_CASE`
-
-### 依赖
-- 新增依赖前在 `findings.md` 记录理由
-- 优先 `rustls-tls`，避免 OpenSSL 链
-- 避免 `default-features = true` 带入无用特性，按需开启
-
-## 开发工作流
-
-### 开发命令（just）
-
-项目用 [`just`](https://github.com/casey/just) 统一管理开发流程，底层仍是 cargo 命令。安装：`cargo install just`（或系统包管理器）。
-
-| 命令 | 等价 cargo 命令 | 说明 |
+| 模块 | 范围 | 决策入口 |
 | --- | --- | --- |
-| `just format` | `cargo fmt` | 格式化全部代码 |
-| `just check` | `cargo fmt --check` + `cargo clippy --all-targets -- -D warnings` | 格式检查 + lint（fail-fast：`fmt --check` 失败即中止，不跑 clippy） |
-| `just test` | `cargo test` | 运行测试 |
-| `just build` | `cargo build` | 构建 |
-| `just ci` | `check` → `test` → `build` | 完整 CI 流程 |
-| `just` | `just --list` | 列出所有可用命令 |
+| `mail` | IMAP 列表 / 读 / 搜索；SMTP 发送；envelope 缓存 | [M001](./docs/adr/M001-imap-stack.md) – [M005](./docs/adr/M005-staleness-auto-sync.md) |
+| `cal` | CalDAV 日历：列出 / 创建 / 删除 | [C001](./docs/adr/C001-caldav-stack.md) – [C003](./docs/adr/C003-cal-provider-window-filter.md) |
+| `rss` | RSS / Atom 订阅聚合 | [F008](./docs/adr/F008-rss-module.md) |
+| `note` | Notion 笔记；本地 SQLite provider 默认 | [N001](./docs/adr/N001-notion-note-module.md)，[F005](./docs/adr/F005-default-provider-local.md) |
+| `todo` | Notion 待办（add / start / complete / delete） | [T001](./docs/adr/T001-notion-todo-module.md), [T002](./docs/adr/T002-todo-delete-action.md) |
+| `bookmark` | 书签：本地 SQLite 默认，Notion 备选 | [B001](./docs/adr/B001-bookmark-dual-provider.md) |
+| `timeline` | 跨模块统一事件层（append-only log） | [L001](./docs/adr/L001-append-only-event-log.md) – [L013](./docs/adr/L013-from-explicit-error.md) |
+| `config` | 配置查看 / 修改；走 Executor trait | [R012](./docs/adr/R012-config-executor-trait.md) |
 
-> 提交前统一用 `just ci` 跑一遍；日常开发中 `just format` 修正格式，`just check` 做静态检查。
+## 文档约定
 
-> 跨平台终端：Justfile 顶部用 `set shell := ["bash", "-c"]`（Unix）与 `set windows-shell := ["powershell.exe", "-NoProfile", "-NoLogo", "-Command"]`（Windows），无需额外配置即可在两类平台运行 `just`。
+Agents 与协作者在改代码前，按以下顺序读：
 
-### 改动前
-1. 读 `task_plan.md` 确认当前 Phase
-2. 读相关源文件，理解现有实现
-3. 在 `task_plan.md` 把对应任务标 `in_progress`
+1. 本文件（入口）
+2. [`task_plan.md`](./task_plan.md) 当前阶段
+3. 相关 [`.rules/*.md`](./.rules/RULES.md) 主题规则
+4. 相关 ADR（设计决策）
 
-### 改动中
-- 每 2 次外部抓取/搜索后，立即写入 `findings.md`
-- 遇到错误立刻记入 `task_plan.md` 的 Errors Encountered 表
+每个文档的"产权"边界：
 
-### 改动后
-1. `cargo build` 必须通过
-2. `cargo clippy --all-targets -- -D warnings` 无警告（或 `just check`）
-3. `cargo fmt --check` 无差异（提交前先 `cargo fmt` 统一格式）—— 对齐 CI 的 `rustfmt --check` 门槛，漏跑会导致 Format check 直接失败
-4. 受影响模块的单测通过
-4. 更新 `progress.md`（已完成 / 下一步）
-5. 把 task 状态标 `completed`
-6. **每完成一次完整任务必须 git 提交**（见下方提交规范）
+| 文档 | 内容 |
+| --- | --- |
+| `agents.md` | 项目入口、技术栈、模块清单、文档约定 |
+| [`.rules/`](./.rules/RULES.md) | 非决策类约定（workflow / style / testing / security / commit / justfile / crate 踩坑） |
+| [`docs/adr/`](./docs/adr/README.md) | 每个架构决策的"上下文 / 决策 / 备选 / 影响"（F/M/C/N/T/B/L/R 系列） |
+| [`CONTEXT.md`](./CONTEXT.md) | 领域术语表（仅定义，不涉及实现） |
+| [`task_plan.md`](./task_plan.md) | 阶段 + 错误表 + 设计决策摘要 |
+| [`progress.md`](./progress.md) | 当前状态 + ADR 时间序索引 + 发版流水 |
+| [`findings.md`](./findings.md) | ADR 主题索引（纯索引，无叙述） |
+| `README.md` / `README_ZH.md` / `skills/` | 终端用户与 Agent 用户文档 |
 
-### 提交规范（Conventional Commits）
+跨文档引用都用相对路径。每次提交后跑 `just check-links` 验证引用未腐烂（见
+[`.rules/06-justfile.md`](./.rules/06-justfile.md)）。
 
-**核心规则：每完成一次完整任务（一个功能、一个模块、或一个 Phase）就进行一次 git 提交。**
+## 完成一个任务后
 
-保持提交原子化——一个 commit 只对应一个完整、可独立理解的任务单元：
-- ✅ 不要攒一大批改动才提交；完成一个完整任务就立刻提交
-- ✅ 不要把多个不相关的任务塞进同一个 commit
-- ✅ 每次提交后项目应处于可编译、可运行的稳定状态
+按 [`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Finishing a task" 执行
+五步：
 
-"完整任务"的判定标准（满足其一即可视为完成一个任务单元）：
-- 实现了一个完整功能（如 `mail login` 可用、`cal add` 可用、`todo init-db` 可用）
-- 完成一个模块的全部骨架或核心动作
-- 完成 `task_plan.md` 中的一个 Phase
-- 一组紧密相关、不可分割的小改动（如修复一个 bug + 其测试）
+1. 质量门禁 `just ci`（format / clippy / test / build 全绿）
+2. `just check-links`（跨文档引用完整性）
+3. **ADR 抽取**——把决策性内容从 `progress.md` / `findings.md` 推到 ADR，
+   `findings.md` 与 `progress.md` 仅剩索引
+4. `git commit` 按 [`.rules/05-commit.md`](./.rules/05-commit.md)
+5. 更新 `progress.md` 的 ADR 时间序索引
 
-```
-feat(<module>): <简述>          # 新功能
-fix(<module>): <简述>           # 修 bug
-refactor: <简述>                # 重构
-docs: <简述>                    # 文档
-chore: <简述>                   # 依赖/构建
-test(<module>): <简述>          # 测试
-```
-`<module>` 可选，如 `feat(email): 支持 IMAP IDLE`。
-
-**提交前检查清单：**
-- [ ] `cargo build` 通过
-- [ ] `cargo clippy --all-targets -- -D warnings` 无警告（或 `just check`）
-- [ ] `cargo fmt --check` 通过（或已 `cargo fmt` 统一格式）
-- [ ] `cargo test` 通过
-- [ ] `progress.md` 已记录本次工作
-- [ ] commit message 符合 Conventional Commits 格式
-
-## 测试要求
-- 配置加载、output 渲染、error 序列化必须有单测
-- 每个模块的 Executor 至少有一个 happy-path 集成测试（用 `--json` 断言输出）
-- 网络相关测试用 mock 或 `#[ignore]` 标注，CI 默认跳过
-- 测试文件：单测 `#[cfg(test)] mod tests` 放源文件底部；集成测试 `tests/` 目录
-
-## 安全红线
-- ❌ 不得在配置文件、日志、输出中明文打印密码/token
-- ❌ 不得 `unwrap()` 用户输入解析结果
-- ✅ 网络请求必须设超时（`reqwest::Client::builder().timeout()`）
-- ✅ 本地文件操作（如读取配置）需处理权限错误，返回 `AgentError::PermissionDenied`
-- ✅ 凭证只通过 `keyring` 读写
-
-## 性能预算
-- 冷启动 < 100ms（避免在 main 早期做重 IO）
-- 网络请求（RSS 抓取）支持异步流式（超时 + 并发）
-- 大输出避免全量 buffer，必要时分块
+发版流程见
+[`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Release (runbook summary)"。
