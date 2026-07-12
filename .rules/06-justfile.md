@@ -27,10 +27,18 @@ works on native Windows. Use bash chaining (`&&`) for portability.
 | `just` | `just --list` | List all recipes |
 | `just format` | `cargo fmt` | Format all code |
 | `just check` | `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | Lint; **fail-fast on `fmt --check`** (does not run clippy if formatting is wrong) |
-| `just test` | `cargo test` | Run all tests |
-| `just build` | `cargo build` | Build the binary |
+| `just test` | `cargo test -q` | Run all tests; `-q` suppresses progress lines |
+| `just build` | `cargo build -q` | Build the binary; `-q` suppresses progress lines |
 | `just ci` | `check` → `test` → `build` | Full local CI |
 | `just check-links` | (custom) | Cross-reference integrity check — see below |
+
+## Quiet output convention
+
+`cargo`-backed recipes (`test`, `build`) carry the `-q` (quiet) flag by default.
+This suppresses the "Compiling / Finished" progress chatter and keeps CI logs to
+only errors, test failures, and the final summary. Favor `-q` for any new
+`cargo` recipe added to this file unless the recipe's purpose is to surface the
+full build trace.
 
 ## `just check-links`
 

@@ -24,11 +24,11 @@ _clippy:
 
 # Run tests (cargo test)
 test:
-    cargo test
+    cargo test -q
 
 # Build the project (cargo build)
 build:
-    cargo build
+    cargo build -q
 
 # Validate cross-document links (agents.md / .rules/ / docs/adr/)
 # Requires bash + grep/awk; on Windows use Git Bash or WSL.
