@@ -12,13 +12,15 @@
 
 use std::collections::HashMap;
 
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use sqlx::Row;
 
-use crate::config::TodoAccount;
+use crate::config::{Config, TodoAccount};
 use crate::error::{AgentError, Result};
 use crate::modules::local::{connect, mode_json, resolve_db_path};
 use crate::output::Output;
+use crate::search::{Hit, SearchQuery, Searchable};
 
 /// Status option names (kept identical to the Notion provider).
 const STATUS_TODO: &str = "Todo";
@@ -303,6 +305,125 @@ pub async fn fetch_for_timeline(
     Ok(entries)
 }
 
+// ============ Cross-module search (Phase 11) ============
+
+/// Per-module hard cap, enforced inside the provider
+/// ([S004](../../docs/adr/S004-execution-model.md)).
+const SEARCH_PER_MODULE_CAP: usize = 50;
+
+/// Cross-module search (Phase 11): return todo hits whose `title` matches
+/// the query (OR over tokens, case-insensitive GLOB).
+///
+/// `ts` is `updated_at` (UTC, RFC3339) — the module's primary edit time
+/// ([S005](../../docs/adr/S005-time-semantics-scope.md)); falls back to
+/// `created_at` when `updated_at` is the default empty string (untouched
+/// after add).
+///
+/// Notion accounts are skipped in v1 (live-fetch-on-search rejected by
+/// [S005](../../docs/adr/S005-time-semantics-scope.md)).
+#[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+pub async fn search_for_search(account: &TodoAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
+    let tokens: Vec<&str> = q.tokens();
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut params: Vec<String> = Vec::new();
+    let mut conds: Vec<String> = Vec::new();
+    for t in &tokens {
+        if t.is_empty() {
+            continue;
+        }
+        let lower = t.to_ascii_lowercase();
+        params.push(format!("*{lower}*"));
+        let idx = params.len();
+        conds.push(format!("lower(title) GLOB ?{idx}"));
+    }
+    if conds.is_empty() {
+        return Ok(Vec::new());
+    }
+    let where_clause = conds.join(" OR ");
+
+    let cap = q.limit.unwrap_or(SEARCH_PER_MODULE_CAP);
+    params.push(cap.to_string());
+    let cap_idx = params.len();
+
+    // ORDER BY ts DESC: prefer updated_at when set, otherwise created_at.
+    // SQLite's CASE expression compares two columns and picks the larger
+    // (lexicographic RFC3339 = chronological).
+    let sql = format!(
+        "SELECT id, title, status, created_at, updated_at FROM todos \
+         WHERE {where_clause} \
+         ORDER BY (CASE WHEN updated_at = '' THEN created_at ELSE updated_at END) DESC, id ASC \
+         LIMIT ?{cap_idx}"
+    );
+
+    let pool = open(account).await?;
+    let mut query = sqlx::query(&sql);
+    for p in &params {
+        query = query.bind(p);
+    }
+
+    let rows = query.fetch_all(&pool).await?;
+    let hits = rows
+        .iter()
+        .map(|r| {
+            let id: String = r.get("id");
+            let title: String = r.get("title");
+            let status: String = r.get("status");
+            let created_at: String = r.get("created_at");
+            let updated_at: String = r.get("updated_at");
+            // ts prefers updated_at, falls back to created_at.
+            let ts_str = if updated_at.is_empty() {
+                created_at
+            } else {
+                updated_at
+            };
+            let ts = crate::util::datetime::parse_rfc3339(&ts_str);
+            let snippet = status; // single-token snippet for todos
+            Hit {
+                module: "todo",
+                account: Some(account.name.clone()),
+                id,
+                title,
+                snippet,
+                url: None,
+                ts,
+                kind: "task",
+            }
+        })
+        .collect();
+    Ok(hits)
+}
+
+/// Provider adapter: implements [`Searchable`] for one local todo account.
+#[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+pub struct TodoSearchProvider {
+    account: TodoAccount,
+}
+
+impl TodoSearchProvider {
+    /// Construct from a configured local account.
+    #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+    pub fn new(account: TodoAccount) -> Self {
+        Self { account }
+    }
+}
+
+#[async_trait]
+impl Searchable for TodoSearchProvider {
+    fn module_name(&self) -> &'static str {
+        "todo"
+    }
+
+    async fn search(&self, q: &SearchQuery, _cfg: &Config) -> Result<Vec<Hit>> {
+        if q.raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        search_for_search(&self.account, q).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -354,6 +475,52 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.type_name(), "InvalidArgument");
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    /// Cross-module search (Phase 11): OR-of-tokens, GLOB on title, snippet
+    /// carries the status, ts prefers updated_at over created_at.
+    #[tokio::test]
+    async fn search_for_search_matches_title_with_or() {
+        let acc = tmp_account();
+        let mut f1 = HashMap::new();
+        f1.insert("title".into(), "Rust 重构".into());
+        add(&acc, &f1).await.unwrap();
+        let mut f2 = HashMap::new();
+        f2.insert("title".into(), "修复 cli 启动 bug".into());
+        add(&acc, &f2).await.unwrap();
+        let mut f3 = HashMap::new();
+        f3.insert("title".into(), "时间线文档".into());
+        add(&acc, &f3).await.unwrap();
+
+        // Single token "rust" — only the first todo.
+        let q = SearchQuery::new("rust");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].module, "todo");
+        assert!(hits[0].title.contains("Rust"));
+        assert_eq!(hits[0].snippet, STATUS_TODO);
+
+        // OR-of-tokens "rust cli" — two hits (Rust 重构 via title "rust",
+        // 修复 cli 启动 bug via title "cli").
+        let q = SearchQuery::new("rust cli");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 2);
+        let titles: Vec<&str> = hits.iter().map(|h| h.title.as_str()).collect();
+        assert!(titles.iter().any(|t| t.contains("Rust")));
+        assert!(titles.iter().any(|t| t.contains("cli")));
+
+        // --limit override caps results.
+        let mut q = SearchQuery::new("修复 时间线");
+        q.limit = Some(1);
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 1);
+
+        // Empty query → no hits.
+        let q = SearchQuery::new("   ");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert!(hits.is_empty());
+
         let _ = std::fs::remove_file(acc.db_path.unwrap());
     }
 }
