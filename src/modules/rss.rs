@@ -22,6 +22,7 @@ use futures::future::join_all;
 
 use crate::config::{Config, RssFeed};
 use crate::error::{AgentError, Result};
+use crate::modules::rss_items;
 use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
 
@@ -41,6 +42,65 @@ struct FetchedFeed {
     name: String,
     feed: Option<feed_rs::model::Feed>,
     error: Option<String>,
+}
+
+/// Lightweight projection of a feed entry suitable for the local item cache
+/// (Phase 11). Avoids leaking `feed_rs::model::Entry` outside this module.
+#[derive(Debug, Clone)]
+pub struct EntryForCache {
+    pub guid: String,
+    pub title: String,
+    pub summary: String,
+    pub link: String,
+    pub author: String,
+    pub published: Option<chrono::DateTime<Utc>>,
+}
+
+impl EntryForCache {
+    /// Project a `feed_rs::model::Entry` into the cache-friendly shape.
+    pub fn from_entry(feed_name: &str, e: &feed_rs::model::Entry) -> Self {
+        let title = e
+            .title
+            .as_ref()
+            .map(|t| t.content.clone())
+            .unwrap_or_default();
+        let summary = e
+            .summary
+            .as_ref()
+            .map(|s| {
+                let content = s.content.as_str();
+                if content.len() > 500 {
+                    // Cache more than the timeline snippet (200) so search
+                    // consumers can re-truncate; we keep the upstream's
+                    // full text up to 500 chars.
+                    content[..500].to_string()
+                } else {
+                    content.to_string()
+                }
+            })
+            .unwrap_or_default();
+        let link = pick_link(&e.links);
+        let author = e
+            .authors
+            .first()
+            .map(|p| p.name.clone())
+            .unwrap_or_default();
+        let guid = if !e.id.is_empty() {
+            e.id.clone()
+        } else {
+            // Fall back to a feed_name-scoped hash of the link so the
+            // natural key remains stable across re-fetches.
+            format!("{feed_name}::{link}")
+        };
+        Self {
+            guid,
+            title,
+            summary,
+            link,
+            author,
+            published: e.published,
+        }
+    }
 }
 
 pub struct RssModule {
@@ -358,9 +418,24 @@ async fn rss_digest(config: &Config, flags: &HashMap<String, String>) -> Result<
 
     let mut rows: Vec<EntryRow> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
+    // Phase 11: cache writes piggy-back on the same fetch. Best-effort: a
+    // cache failure must not block the user's digest output [S005].
+    let cache_pool = rss_items::open().await.ok();
     for r in results {
         match r.feed {
             Some(f) => {
+                // Project entries into the cache-friendly shape and write.
+                if let Some(pool) = &cache_pool {
+                    let entries: Vec<EntryForCache> = f
+                        .entries
+                        .iter()
+                        .map(|e| EntryForCache::from_entry(&r.name, e))
+                        .collect();
+                    // Find the matching RssFeed for url metadata.
+                    if let Some(feed) = config.rss.feeds.iter().find(|x| x.name == r.name) {
+                        let _ = rss_items::upsert_items(pool, feed, &entries).await;
+                    }
+                }
                 for e in &f.entries {
                     rows.push(build_entry_row(&r.name, e));
                 }
@@ -414,6 +489,16 @@ async fn rss_fetch(config: &Config, flags: &HashMap<String, String>) -> Result<O
     let f = res
         .feed
         .ok_or_else(|| AgentError::Network(res.error.unwrap_or_else(|| "fetch failed".into())))?;
+
+    // Phase 11: also write to the local cache (best-effort).
+    if let Ok(pool) = rss_items::open().await {
+        let entries: Vec<EntryForCache> = f
+            .entries
+            .iter()
+            .map(|e| EntryForCache::from_entry(&feed.name, e))
+            .collect();
+        let _ = rss_items::upsert_items(&pool, feed, &entries).await;
+    }
 
     let mut rows: Vec<EntryRow> = f
         .entries

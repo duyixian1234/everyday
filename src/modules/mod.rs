@@ -174,6 +174,7 @@ pub mod local;
 pub mod note;
 pub mod note_local;
 pub mod rss;
+pub mod rss_items;
 pub mod timeline;
 pub mod todo;
 pub mod todo_local;
