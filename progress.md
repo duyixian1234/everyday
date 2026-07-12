@@ -39,7 +39,7 @@
   SQLite，Notion 显式声明。
 - **Timeline**：append-only event log + ops-log AOP 统一 6 个 source 的事件捕获，
   详见 [L001–L013](./docs/adr/L001-append-only-event-log.md)。
-- **规划中（Phase 13）**：动作层 Backend DI 重构设计已定稿（[R016–R018](./docs/adr/R016-action-backend-di.md)），待实施——note/todo/bookmark 动作层去除 `NotionClient` 直接引用，改走 `NoteBackend::for_account` 工厂 + `Notion*Backend`/`Local*Backend`，并加 in-memory Mock 做回归护栏。
+- **Phase 13 已落地（未发版）**：动作层 Backend DI 重构完成（[R016–R018](./docs/adr/R016-action-backend-di.md)）——note/todo/bookmark 动作层去除 `NotionClient` 直接引用，改走 `Note/Todo/BookmarkBackend::for_account` 工厂 + `Notion*Backend`/`Local*Backend` 双实现，加 in-memory `Mock*Backend` 做 DI 回归护栏（各 2 条验收单测）。非破坏性，随下次发版（v0.9.0 规划中）发布；当前 master 258 tests / clippy `-D warnings` 零警告 / fmt clean。
 - **质量门禁**：`cargo build` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
   零警告 / `cargo test`（具体数字见各版本发版行）/ `cargo fmt --check` ✅；
   CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。

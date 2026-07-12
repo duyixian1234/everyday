@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.8.0 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地，破坏性移除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令（ADR R013–R015）。统一 `everyday auth login|logout|verify|list --module <mod>`；`--verify` 存后显式验证，默认只存；模块内部改走 `auth::get_credential`。250 tests / clippy `-D warnings` 零警告 / fmt clean。mail 推迟 v1.1。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。Phase 13（动作层 Backend DI 重构 note/todo/bookmark）设计已定稿（ADR R016–R018），实施待启动。
+**当前状态：** v0.8.0 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地。Phase 13（动作层 Backend DI 重构 note/todo/bookmark）已实施完成（ADR R016–R018）：三模块动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取，加 in-memory Mock 回归护栏（note/todo/bookmark 各 2 条 DI 验收单测）。258 tests / clippy `-D warnings` 零警告 / fmt clean。Phase 13 为内部重构、非破坏性，随下次发版（v0.9.0 规划中）一并发布；mail 推迟 v1.1。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
 
 ---
 
@@ -96,7 +96,7 @@
 - 质量门禁：`cargo build` / `clippy --all-targets -- -D warnings` 零警告 / `cargo test` 250 全过 / `cargo fmt --check` 全绿。
 - 版本号升至 **v0.8.0**（破坏性）。
 
-### Phase 13: 动作层 Backend 依赖倒置重构（note/todo/bookmark）[pending]
+### Phase 13: 动作层 Backend 依赖倒置重构（note/todo/bookmark）[complete]
 按 Grill 设计（ADR [R016](docs/adr/R016-action-backend-di.md) 总设计 / [R017](docs/adr/R017-backend-layout-scope.md) 目录布局与范围 / [R018](docs/adr/R018-backend-domain-mocks.md) domain 类型与 Mock）。目标：消除双 provider 三件套（`note` / `todo` / `bookmark`）动作层对具体 provider 专属依赖（`NotionClient`）的直接引用，落实 SOLID（DIP/SRP/ISP）+ 依赖注入。
 
 设计要点（Grill 已拍板，Q1–Q7）：
@@ -169,7 +169,14 @@
   - 模块对外路径 `crate::modules::note|todo|bookmark` 不变、CLI 不变 → README/skills 一般无需改，仅确认；若目录结构需说明则补一笔。
   - 质量门禁全绿；更新 `progress.md` 的 ADR 时间序与"当前状态"。
 
-完成小结（待实施）：_（落地后回填质量门禁结果与版本号）_
+完成小结（落地，质量门禁全绿）：
+
+- note / todo / bookmark 三模块动作层全部依赖倒置：引入 `NoteBackend` / `TodoBackend` / `BookmarkBackend` trait（每动作一方法，返回 typed domain，绝不返回 `Output`）；`for_account` 工厂集中 provider 分支 + token 读取 + `NotionClient` 构造（仅工厂内一次）。
+- 双实现：`Notion*Backend`（持 `client` + `account` 复用连接；`init_db` 经静态 `Config::config_path()` 写回 `database_id`）/ `Local*Backend`（本地 SQLite，返回同 domain）。
+- 动作层 `execute` 仅经 `for_account` 取 `Box<dyn *Backend>` 后委托 `dispatch(&*backend, ...)`：零 `NotionClient` 引用、零 provider 分支、零 keyring 读取（DIP/SRP/ISP 兑现）。
+- Mock 回归护栏：`Mock*Backend`（`#[cfg(test)]` in-memory）注入动作层单测，证明零 `NotionClient` 依赖 + provider-agnostic 渲染（text / JSON 一致）；note / todo / bookmark 各 2 条 DI 验收单测。
+- 目录布局落 R017（`xxx/{mod.rs, backend.rs, notion.rs, local.rs}`），模块对外路径 `crate::modules::xxx` 不变；CLI 不变。
+- 质量门禁：build / clippy `--all-targets -- -D warnings` 零警告 / test 258 / fmt clean / check-links(122) 全绿。非破坏性变更，无版本号提升（随下次发版一并发布）。
 
 ---
 
@@ -257,4 +264,4 @@ username = "me"
 - Phase 10: complete
 - Phase 11: complete (search module landed; released as v0.7.0)
 - Phase 12: complete (auth module consolidation; ADRs R013/R014/R015 done, v0.8.0 released)
-- Phase 13: pending (action-layer Backend DI for note/todo/bookmark; design ADRs R016/R017/R018 done, implementation T13.1–T13.10 pending)
+- Phase 13: complete (action-layer Backend DI for note/todo/bookmark; ADRs R016/R017/R018 implemented via T13.1–T13.10; 258 tests / clippy `-D warnings` clean / fmt clean; non-breaking, ships in next release)
