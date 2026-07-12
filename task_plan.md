@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.6.1 已发布；修复 timeline `--from` 单独给定被静默回退 preset 的问题（commit `52f6377`）；v0.6.0 Mail Cache 实施完成（`src/modules/email_cache.rs` + `email_pool.rs` + `email.rs::mail_list` 改造）+ CLI 重构（clap 子命令树 + 移除 help-registry），209 tests / clippy 零警告 / fmt clean；7 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline` + `config` 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local，timeline 通过 ops-log AOP 捕获 notion 写操作后通过 OpsLogProvider 投影到 timeline.events，`mail list` 走本地 envelope 缓存（auto-sync staleness=15min，`--sync` 强制）。
+**当前状态：** v0.6.2 已发布；修复 Rust 1.97 stable clippy `doc_lazy_continuation` + `doc_overindented_list_items` 两 lint 阻塞 CI 的问题（commit `dd2e786`，`src/modules/calendar.rs:10` 补 2 空格缩进、`src/modules/todo.rs:14` 由 14 空格缩至 2 空格）；v0.6.1 修复 timeline `--from` 单独给定被静默回退 preset（commit `52f6377`）；v0.6.0 Mail Cache 实施完成（`src/modules/email_cache.rs` + `email_pool.rs` + `email.rs::mail_list` 改造）+ CLI 重构（clap 子命令树 + 移除 help-registry），209 tests / clippy 零警告 / fmt clean；7 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline` + `config` 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local，timeline 通过 ops-log AOP 捕获 notion 写操作后通过 OpsLogProvider 投影到 timeline.events，`mail list` 走本地 envelope 缓存（auto-sync staleness=15min，`--sync` 强制）。
 
 ---
 
@@ -62,7 +62,7 @@
 - K1 清理：只追加不删除（接受数据库膨胀）；F1 flags：sync 时刻快照（最坏 15 分钟滞后可接受）。
 - 8 个 SQL 集成单测覆盖：upsert 写 + 水位前进、空 batch 仅前进 last_sync、upsert on conflict、clear_folder、UIDVALIDITY 失效模拟重置、unread 过滤、K1 ghost envelope 留存、date desc + limit。
 - 质量门禁全绿：build ✅ / clippy `-D warnings` 零警告 ✅ / 196 tests passed (+15) ✅ / fmt clean ✅。
-- 已发版：v0.6.0（Mail Cache）+ v0.6.1（timeline `--from` 静默回退修复，commit `52f6377`）均已推 origin（GitHub，非 cnb 镜像）。
+- 已发版：v0.6.0（Mail Cache）+ v0.6.1（timeline `--from` 静默回退修复，commit `52f6377`）+ v0.6.2（Rust 1.97 clippy 注释 lint 修复，commit `dd2e786`）均已推 origin（GitHub，非 cnb 镜像）。
 
 ---
 

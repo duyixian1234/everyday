@@ -7,6 +7,10 @@
 
 ## 当前状态
 
+- **v0.6.2 已发布**：tag `v0.6.2`，修复 Rust 1.97 stable clippy
+  `doc_lazy_continuation` + `doc_overindented_list_items` 两 lint 阻塞 CI 的问题
+  （`src/modules/calendar.rs:10` 补 2 空格缩进、`src/modules/todo.rs:14` 由 14 空格
+  缩至 2 空格）。纯注释 / 文档格式 patch，无功能性改动。
 - **v0.6.1 已发布**：tag `v0.6.1`，修复 timeline `--from` 单独给定被静默回退
   preset 的问题。详见 [ADR L013](./docs/adr/L013-from-explicit-error.md)。
 - **v0.6.0 已发布**：Mail Cache 落地 + CLI 重构（clap 子命令树 + 移除
@@ -60,6 +64,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.6.2** | `v0.6.2` | 修 Rust 1.97 clippy 注释 lint 阻塞 CI | （纯格式 patch，无新 ADR） |
 | **v0.6.1** | `v0.6.1` | 修 timeline `--from` 单独给定被静默回退 | [L013](./docs/adr/L013-from-explicit-error.md) |
 | **v0.6.0** | `v0.6.0` | Mail Cache 落地 + clap 子命令化 + 移除 help-registry | [M002–M005](./docs/adr/M002-imap-connection-pool.md), [F007](./docs/adr/F007-clap-subcommand-tree.md), [R012](./docs/adr/R012-config-executor-trait.md) |
 | **v0.5.0** | `v0.5.0` | Timeline 统一事件层 + 4 处修补 | [L001–L013](./docs/adr/L001-append-only-event-log.md) |
