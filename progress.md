@@ -7,7 +7,7 @@
 
 ## 当前状态
 
-- **v0.8.0 已发布（待 tag）**：Phase 12 凭据 / `login` 逻辑收拢到顶层 `auth` 模块。
+- **v0.8.0 已发布**：Phase 12 凭据 / `login` 逻辑收拢到顶层 `auth` 模块。
   删除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令及本地 provider
   的 no-op `login`，改为统一 `everyday auth login|logout|verify|list --module <mod>`
   （[R013](./docs/adr/R013-auth-module-consolidation.md) 收拢总设计 / [R014](./docs/adr/R014-auth-verify-opt-in.md)
