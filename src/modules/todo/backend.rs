@@ -109,3 +109,61 @@ pub fn for_account(config: &Config, account: &TodoAccount) -> Result<Box<dyn Tod
         Ok(Box::new(NotionTodoBackend::new(client, account.clone())))
     }
 }
+
+/// Test-only in-memory backend. Lives behind `#[cfg(test)]` so it never ships in the
+/// binary. It holds pre-seeded domain data and returns it verbatim, letting the action
+/// layer be exercised without a `NotionClient` or SQLite — the DI acceptance guard for
+/// [R016](../../../docs/adr/R016-action-backend-di.md) / [R018](../../../docs/adr/R018-backend-domain-mocks.md).
+#[cfg(test)]
+pub mod testkit {
+    use super::*;
+    use crate::error::AgentError;
+
+    /// In-memory `TodoBackend`. `items` backs `list`; the `added` / `status_set` / `deleted` /
+    /// `init_db` fields back their respective actions. Missing fields error, mirroring a real
+    /// backend that was never given the data to respond with.
+    #[derive(Clone, Default)]
+    pub struct MockTodoBackend {
+        pub items: Vec<TodoItem>,
+        pub added: Option<TodoAdded>,
+        pub status_set: Option<TodoStatusSet>,
+        pub deleted: Option<TodoDeleted>,
+        pub init_db: Option<TodoInitDb>,
+    }
+
+    #[async_trait]
+    impl TodoBackend for MockTodoBackend {
+        async fn init_db(&self, _parent: Option<&str>) -> Result<TodoInitDb> {
+            self.init_db
+                .clone()
+                .ok_or_else(|| AgentError::Other("mock init_db unset".into()))
+        }
+
+        async fn list(&self, _all: bool) -> Result<Vec<TodoItem>> {
+            Ok(self.items.clone())
+        }
+
+        async fn add(
+            &self,
+            _title: &str,
+            _due: Option<&str>,
+            _priority: Option<&str>,
+        ) -> Result<TodoAdded> {
+            self.added
+                .clone()
+                .ok_or_else(|| AgentError::Other("mock added unset".into()))
+        }
+
+        async fn set_status(&self, _id: &str, _status: &str) -> Result<TodoStatusSet> {
+            self.status_set
+                .clone()
+                .ok_or_else(|| AgentError::Other("mock status_set unset".into()))
+        }
+
+        async fn delete(&self, _id: &str) -> Result<TodoDeleted> {
+            self.deleted
+                .clone()
+                .ok_or_else(|| AgentError::Other("mock deleted unset".into()))
+        }
+    }
+}
