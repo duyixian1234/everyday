@@ -1,6 +1,6 @@
 //! Note module: notes / knowledge-base management. Defaults to the local SQLite provider (`local`),
-//! but can switch to the Notion API (`provider = "notion"`) [N001](../../docs/adr/N001-notion-note-module.md)
-//! [F005](../../docs/adr/F005-default-provider-local.md).
+//! but can switch to the Notion API (`provider = "notion"`) [N001](../../../docs/adr/N001-notion-note-module.md)
+//! [F005](../../../docs/adr/F005-default-provider-local.md).
 //!
 //! Design goal: hide Notion's verbose Block nesting and expose two high-level capabilities to the Agent:
 //! **plain-text / Markdown append** and **simplified property operations**.
@@ -15,7 +15,9 @@
 //! - `list`    list all pages under a database (title + properties)
 //!
 //! Credential safety: the token is stored only in the system keyring (service = `everyday/note/<account>`),
-//! never persisted to config [F002](../../docs/adr/F002-multi-account-keyring.md).
+//! never persisted to config [F002](../../../docs/adr/F002-multi-account-keyring.md).
+
+pub mod local;
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
@@ -159,7 +161,7 @@ impl Executor for NoteModule {
 
         // Local SQLite provider: route to the local implementation; otherwise go through Notion.
         if crate::modules::local::is_local_provider(&account.provider) {
-            use crate::modules::note_local as local;
+            use crate::modules::note::local;
             return match action {
                 "search" => local::search(account, &flags).await,
                 "create" => local::create(account, &flags, &multi).await,
@@ -231,7 +233,7 @@ fn push_flag(
 // ============ Credentials (keyring) ============
 
 /// Read the Notion token from the OS keyring via the consolidated `auth` module
-/// ([R013](../../docs/adr/R013-auth-module-consolidation.md)).
+/// ([R013](../../../docs/adr/R013-auth-module-consolidation.md)).
 fn get_token(config: &Config, account: &NoteAccount) -> Result<String> {
     crate::modules::auth::get_credential(config, "note", &account.name)
 }
@@ -239,7 +241,7 @@ fn get_token(config: &Config, account: &NoteAccount) -> Result<String> {
 // ============ HTTP wrapper ============
 //
 // All Notion HTTP requests go through the shared [`NotionClient`] (see `notion_client.rs`)
-// [F004](../../docs/adr/F004-shared-notion-client.md): it injects auth headers, handles 429
+// [F004](../../../docs/adr/F004-shared-notion-client.md): it injects auth headers, handles 429
 // backoff retries, and maps error types. This module no longer carries its own HTTP layer.
 
 /// Paginate and fetch all child blocks of a block (used for `read` content aggregation).
@@ -1301,7 +1303,7 @@ fn read_stdin() -> Result<String> {
     Ok(buf)
 }
 
-/// Detect the current render mode (the global JSON flag injects `--json` into args; reuse the module-level check). See [R001](../../docs/adr/R001-thread-local-json-mode.md).
+/// Detect the current render mode (the global JSON flag injects `--json` into args; reuse the module-level check). See [R001](../../../docs/adr/R001-thread-local-json-mode.md).
 fn mode_from_json() -> crate::output::RenderMode {
     // note's actions decide their output shape internally, but `search`/`read` must branch by mode.
     // main injects `--json` into args and parse_args captures it as a flag, which we read here.

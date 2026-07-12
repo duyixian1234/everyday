@@ -1,4 +1,4 @@
-//! Local SQLite provider for the note module. See [N001](../../docs/adr/N001-notion-note-module.md) / [F005](../../docs/adr/F005-default-provider-local.md).
+//! Local SQLite provider for the note module. See [N001](../../../docs/adr/N001-notion-note-module.md) / [F005](../../../docs/adr/F005-default-provider-local.md).
 //!
 //! Mirrors the Notion provider's `search` / `list` / `create` / `read` / `append`
 //! / `update` semantics; data lives in the account's configured local SQLite file.
@@ -383,7 +383,7 @@ pub struct NoteTimelineEntry {
 
 /// Incremental Timeline fetch: return notes whose `created_at` or `updated_at` falls in the window.
 ///
-/// Local provider degradation semantics: multiple updates collapse into a single `updated` event (latest updated_at). See [L001](../../docs/adr/L001-append-only-event-log.md).
+/// Local provider degradation semantics: multiple updates collapse into a single `updated` event (latest updated_at). See [L001](../../../docs/adr/L001-append-only-event-log.md).
 pub async fn fetch_for_timeline(
     account: &NoteAccount,
     from: chrono::DateTime<chrono::Utc>,
@@ -446,13 +446,13 @@ async fn upsert_prop(pool: &SqlitePool, note_id: &str, key: &str, value: &str) -
 // ============ Cross-module search (Phase 11) ============
 
 /// Per-module hard cap, enforced inside the provider
-/// ([S004](../../docs/adr/S004-execution-model.md)).
+/// ([S004](../../../docs/adr/S004-execution-model.md)).
 const SEARCH_PER_MODULE_CAP: usize = 50;
 
 /// Maximum snippet length returned to the aggregator. Long bodies are
 /// truncated at this many characters; the aggregator caps further by
 /// `global_limit`, so the upstream consumer never sees arbitrarily large
-/// snippets ([S002](../../docs/adr/S002-hit-normalization.md)).
+/// snippets ([S002](../../../docs/adr/S002-hit-normalization.md)).
 const SNIPPET_MAX_CHARS: usize = 200;
 
 /// Cross-module search (Phase 11): return note hits whose `title` or
@@ -460,11 +460,11 @@ const SNIPPET_MAX_CHARS: usize = 200;
 ///
 /// - Tokenize `q.raw` by whitespace, OR over tokens, case-insensitive
 ///   GLOB substring over `title` OR `content`
-///   ([S003](../../docs/adr/S003-query-semantics.md)).
+///   ([S003](../../../docs/adr/S003-query-semantics.md)).
 /// - Per-module hard cap = [`SEARCH_PER_MODULE_CAP`] (50); the
 ///   aggregator applies its own global cap on top.
 /// - `ts` is `updated_at` (UTC, RFC3339) — the module's primary edit
-///   time ([S005](../../docs/adr/S005-time-semantics-scope.md)).
+///   time ([S005](../../../docs/adr/S005-time-semantics-scope.md)).
 /// - `snippet` is the first [`SNIPPET_MAX_CHARS`] chars of `content`.
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub async fn search_for_search(account: &NoteAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
@@ -556,7 +556,7 @@ fn snippet_from_content(content: &str, max_chars: usize) -> String {
 /// Provider adapter: implements [`Searchable`] for one local note account.
 ///
 /// One provider per local account. Notion accounts are not searchable in
-/// v1 (consistent with [S005](../../docs/adr/S005-time-semantics-scope.md):
+/// v1 (consistent with [S005](../../../docs/adr/S005-time-semantics-scope.md):
 /// live-fetch-on-search rejected; local cache only).
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub struct NoteSearchProvider {

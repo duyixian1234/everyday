@@ -17,10 +17,13 @@ use serde_json::{Value, json};
 
 use crate::config::Config;
 use crate::error::{AgentError, Result};
+use crate::modules::bookmark::local as bookmark_local;
 use crate::modules::local::is_local_provider;
+use crate::modules::note::local as note_local;
 use crate::modules::parse_simple_args;
 use crate::modules::timeline::parse_source_list;
-use crate::modules::{Executor, bookmark_local, calendar, note_local, rss_items, todo_local};
+use crate::modules::todo::local as todo_local;
+use crate::modules::{Executor, calendar, rss_items};
 use crate::output::Output;
 use crate::search::{SearchOutcome, SearchQuery, SearchRegistry};
 use crate::util::datetime::parse_since;

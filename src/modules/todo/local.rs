@@ -1,13 +1,13 @@
 //! Local SQLite provider for the `todo` module.
 //!
 //! Parity implementation of `list` / `add` / `start` / `complete` semantics
-//! alongside the Notion provider [T001](../../docs/adr/T001-notion-todo-module.md),
+//! alongside the Notion provider [T001](../../../docs/adr/T001-notion-todo-module.md),
 //! with data persisted in the account's local SQLite file. The local provider needs
 //! no credentials (credentials are owned by the `auth` module), and `init-db`
 //! only creates the table and reports its path.
 //!
 //! Output shape (column names / JSON keys) is deliberately kept identical to
-//! the Notion version in `todo.rs` [F005](../../docs/adr/F005-default-provider-local.md),
+//! the Notion version in `todo.rs` [F005](../../../docs/adr/F005-default-provider-local.md),
 //! so an Agent can switch providers without changing its parsing logic.
 
 use std::collections::HashMap;
@@ -207,7 +207,7 @@ pub async fn set_status(
 /// SELECT the title first, then DELETE; `rows_affected == 0` is treated as
 /// "id not found" and reported as an error. The extra read lets the ops-log
 /// delete event carry the title, matching the Notion version's convention
-/// [T002](../../docs/adr/T002-todo-delete-action.md).
+/// [T002](../../../docs/adr/T002-todo-delete-action.md).
 pub async fn delete(account: &TodoAccount, id: Option<&String>) -> Result<Output> {
     let id = id.ok_or_else(|| AgentError::InvalidArgument("`delete` requires <id>".into()))?;
     let pool = open(account).await?;
@@ -259,7 +259,7 @@ pub struct TodoTimelineEntry {
 /// falls within the window.
 ///
 /// Local provider degraded semantics: pulled from the current-state snapshot,
-/// not the full transfer history [L001](../../docs/adr/L001-append-only-event-log.md).
+/// not the full transfer history [L001](../../../docs/adr/L001-append-only-event-log.md).
 /// - newly added todo -> `created` event
 /// - status-changed todo -> event mapped from current status (e.g. `completed`)
 pub async fn fetch_for_timeline(
@@ -300,19 +300,19 @@ pub async fn fetch_for_timeline(
 // ============ Cross-module search (Phase 11) ============
 
 /// Per-module hard cap, enforced inside the provider
-/// ([S004](../../docs/adr/S004-execution-model.md)).
+/// ([S004](../../../docs/adr/S004-execution-model.md)).
 const SEARCH_PER_MODULE_CAP: usize = 50;
 
 /// Cross-module search (Phase 11): return todo hits whose `title` matches
 /// the query (OR over tokens, case-insensitive GLOB).
 ///
 /// `ts` is `updated_at` (UTC, RFC3339) — the module's primary edit time
-/// ([S005](../../docs/adr/S005-time-semantics-scope.md)); falls back to
+/// ([S005](../../../docs/adr/S005-time-semantics-scope.md)); falls back to
 /// `created_at` when `updated_at` is the default empty string (untouched
 /// after add).
 ///
 /// Notion accounts are skipped in v1 (live-fetch-on-search rejected by
-/// [S005](../../docs/adr/S005-time-semantics-scope.md)).
+/// [S005](../../../docs/adr/S005-time-semantics-scope.md)).
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub async fn search_for_search(account: &TodoAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
     let tokens: Vec<&str> = q.tokens();

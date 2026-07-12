@@ -1,5 +1,5 @@
 //! Bookmark module: save / browse web bookmarks. Defaults to the local SQLite provider (`local`),
-//! but can switch to Notion (`provider = "notion"`) [B001](../../docs/adr/B001-bookmark-dual-provider.md).
+//! but can switch to Notion (`provider = "notion"`) [B001](../../../docs/adr/B001-bookmark-dual-provider.md).
 //!
 //! Design goal: a lightweight "read-later / favorites" store where each bookmark has a URL, a title,
 //! and a set of tags. Exposes three high-level actions to the Agent: `init-db` (create DB),
@@ -12,8 +12,10 @@
 //! - `list`     list bookmarks, `--tag <TAG>` filters by tag (`--db` selects the Notion database)
 //!
 //! Credential safety: the token is stored only in the system keyring (service = `everyday/bookmark/<account>`),
-//! never persisted to config [F002](../../docs/adr/F002-multi-account-keyring.md). Non-secret metadata such
+//! never persisted to config [F002](../../../docs/adr/F002-multi-account-keyring.md). Non-secret metadata such
 //! as `database_id` / `parent_page_id` may be stored in config.
+
+pub mod local;
 
 use std::collections::HashMap;
 
@@ -202,7 +204,7 @@ impl Executor for BookmarkModule {
 
         // Local SQLite provider: route to the local implementation; otherwise go through Notion.
         if crate::modules::local::is_local_provider(&account.provider) {
-            use crate::modules::bookmark_local as local;
+            use crate::modules::bookmark::local;
             return match action {
                 "init-db" => local::init_db(account).await,
                 "add" => local::add(account, &flags).await,
@@ -222,12 +224,12 @@ impl Executor for BookmarkModule {
 
 // ============ Tag parsing ============
 
-// See `crate::modules::local::parse_tags` — both bookmark providers share this implementation [R009](../../docs/adr/R009-notion-common-local-module.md).
+// See `crate::modules::local::parse_tags` — both bookmark providers share this implementation [R009](../../../docs/adr/R009-notion-common-local-module.md).
 
 // ============ Credentials (keyring) ============
 
 /// Read the Notion token from the OS keyring via the consolidated `auth` module
-/// ([R013](../../docs/adr/R013-auth-module-consolidation.md)).
+/// ([R013](../../../docs/adr/R013-auth-module-consolidation.md)).
 fn get_token(config: &Config, account: &BookmarkAccount) -> Result<String> {
     crate::modules::auth::get_credential(config, "bookmark", &account.name)
 }
@@ -427,7 +429,7 @@ fn resolve_db_id(account: &BookmarkAccount, flags: &HashMap<String, String>) -> 
 }
 
 /// Detect the current render mode. The JSON global flag is injected into args and captured by
-/// parse_simple_args into flags, but mode detection uniformly uses `--json` from the process args [R001](../../docs/adr/R001-thread-local-json-mode.md).
+/// parse_simple_args into flags, but mode detection uniformly uses `--json` from the process args [R001](../../../docs/adr/R001-thread-local-json-mode.md).
 fn mode_json() -> bool {
     crate::util::json_mode::is_json()
 }
@@ -458,7 +460,7 @@ fn save_config_value(root: &toml::Value) -> Result<()> {
 }
 
 /// Find the account with a matching name under config's `bookmark.accounts` and write `default_database_id`.
-/// See `crate::modules::local::set_module_database_id` — shared with todo [R009](../../docs/adr/R009-notion-common-local-module.md).
+/// See `crate::modules::local::set_module_database_id` — shared with todo [R009](../../../docs/adr/R009-notion-common-local-module.md).
 fn set_bookmark_database_id(root: &mut toml::Value, account_name: &str, db_id: &str) -> Result<()> {
     crate::modules::local::set_module_database_id(root, "bookmark", account_name, db_id)
 }

@@ -1,4 +1,4 @@
-//! Local SQLite provider for the bookmark module [B001](../../docs/adr/B001-bookmark-dual-provider.md).
+//! Local SQLite provider for the bookmark module [B001](../../../docs/adr/B001-bookmark-dual-provider.md).
 //!
 //! Parity implementation of `add` / `list` semantics with the Notion provider; data lands in the
 //! account's configured local SQLite file. The local provider needs no credentials
@@ -230,12 +230,12 @@ pub async fn fetch_for_timeline(
 
 // ============ Helpers ============
 
-// parse_tags: see `crate::modules::local::parse_tags` — shared by both bookmark providers [R009](../../docs/adr/R009-notion-common-local-module.md).
+// parse_tags: see `crate::modules::local::parse_tags` — shared by both bookmark providers [R009](../../../docs/adr/R009-notion-common-local-module.md).
 
 // ============ Cross-module search (Phase 11) ============
 
 /// Per-module hard cap, enforced inside the provider
-/// ([S004](../../docs/adr/S004-execution-model.md)).
+/// ([S004](../../../docs/adr/S004-execution-model.md)).
 const SEARCH_PER_MODULE_CAP: usize = 50;
 
 /// Cross-module search (Phase 11): return bookmark hits whose `title`,
@@ -243,13 +243,13 @@ const SEARCH_PER_MODULE_CAP: usize = 50;
 /// GLOB).
 ///
 /// `ts` is `created_at` (UTC, RFC3339) — the module's primary time
-/// ([S005](../../docs/adr/S005-time-semantics-scope.md)).
+/// ([S005](../../../docs/adr/S005-time-semantics-scope.md)).
 ///
 /// `Hit.url` carries the bookmark URL when present (so search consumers
 /// can open the link without re-running `bookmark list`).
 ///
 /// Notion accounts are skipped in v1 (live-fetch-on-search rejected by
-/// [S005](../../docs/adr/S005-time-semantics-scope.md)).
+/// [S005](../../../docs/adr/S005-time-semantics-scope.md)).
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub async fn search_for_search(account: &BookmarkAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
     let tokens: Vec<&str> = q.tokens();

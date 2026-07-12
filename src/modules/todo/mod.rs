@@ -1,12 +1,12 @@
 //! `todo` module: todo task management. Defaults to the local SQLite provider
 //! (`local`), switchable to Notion (`provider = "notion"`)
-//! [T001](../../docs/adr/T001-notion-todo-module.md)
-//! [F005](../../docs/adr/F005-default-provider-local.md).
+//! [T001](../../../docs/adr/T001-notion-todo-module.md)
+//! [F005](../../../docs/adr/F005-default-provider-local.md).
 //!
 //! The Notion branch is the upper layer of a two-layer architecture: it owns a shared
 //! [`NotionClient`] and strongly maps the clean domain model [`TodoItem`] back and forth
 //! against Notion's raw `Properties`, hiding Notion's property nesting
-//! [F004](../../docs/adr/F004-shared-notion-client.md).
+//! [F004](../../../docs/adr/F004-shared-notion-client.md).
 //!
 //! Commands (actions):
 //! - `auth login` stores the Notion Integration Token in the system keyring (see `auth` module)
@@ -19,9 +19,11 @@
 //! - `delete`   archives the Notion page (soft delete)
 //!
 //! Credential safety: the token lives only in the system keyring
-//! (service = `everyday/todo/<account>`) [F002](../../docs/adr/F002-multi-account-keyring.md)
+//! (service = `everyday/todo/<account>`) [F002](../../../docs/adr/F002-multi-account-keyring.md)
 //! and never lands on disk in the config. Non-secret metadata such as
 //! `database_id` / `parent_page_id` may live in the config.
+
+pub mod local;
 
 use std::collections::HashMap;
 
@@ -261,7 +263,7 @@ impl Executor for TodoModule {
 
         // Local SQLite provider: routed to the local impl; otherwise go through Notion.
         if crate::modules::local::is_local_provider(&account.provider) {
-            use crate::modules::todo_local as local;
+            use crate::modules::todo::local;
             return match action {
                 "init-db" => local::init_db(account).await,
                 "list" => local::list(account, &flags).await,
@@ -302,7 +304,7 @@ impl Executor for TodoModule {
 // ============ credentials (keyring) ============
 
 /// Read the Notion token from the OS keyring via the consolidated `auth` module
-/// ([R013](../../docs/adr/R013-auth-module-consolidation.md)).
+/// ([R013](../../../docs/adr/R013-auth-module-consolidation.md)).
 fn get_token(config: &Config, account: &TodoAccount) -> Result<String> {
     crate::modules::auth::get_credential(config, "todo", &account.name)
 }
@@ -552,7 +554,7 @@ async fn todo_set_status(
 /// `todo delete <page_id>` (Notion): archive the page.
 ///
 /// Notion has no real delete API; setting `archived: true` hides it from the UI and
-/// soft-deletes it [T002](../../docs/adr/T002-todo-delete-action.md). Same error path
+/// soft-deletes it [T002](../../../docs/adr/T002-todo-delete-action.md). Same error path
 /// as `start`/`complete` (`InvalidArgument` for missing id).
 ///
 /// GET the title before archiving so the ops-log + timeline delete events carry the
@@ -622,7 +624,7 @@ fn resolve_db_id(account: &TodoAccount, flags: &HashMap<String, String>) -> Resu
 /// Detect the current render mode. The JSON global flag is already injected into args
 /// and captured by `parse_simple_args` into `flags`, but the mode is decided uniformly
 /// by the process-level `--json` flag, matching the `note` module
-/// [R001](../../docs/adr/R001-thread-local-json-mode.md).
+/// [R001](../../../docs/adr/R001-thread-local-json-mode.md).
 fn mode_json() -> bool {
     crate::util::json_mode::is_json()
 }
@@ -654,7 +656,7 @@ fn save_config_value(root: &toml::Value) -> Result<()> {
 
 /// Find the account matching `name` under `todo.accounts` in config and write
 /// `default_database_id`. See `crate::modules::local::set_module_database_id` -
-/// shared with bookmark [R009](../../docs/adr/R009-notion-common-local-module.md).
+/// shared with bookmark [R009](../../../docs/adr/R009-notion-common-local-module.md).
 fn set_todo_database_id(root: &mut toml::Value, account_name: &str, db_id: &str) -> Result<()> {
     crate::modules::local::set_module_database_id(root, "todo", account_name, db_id)
 }

@@ -17,13 +17,13 @@ use crate::config::{
     BookmarkAccount, CalendarAccount, Config, MailAccount, NoteAccount, TodoAccount,
 };
 use crate::error::Result;
-use crate::modules::bookmark_local;
+use crate::modules::bookmark::local as bookmark_local;
 use crate::modules::calendar;
 use crate::modules::email;
-use crate::modules::note_local;
+use crate::modules::note::local as note_local;
 use crate::modules::rss;
 use crate::modules::timeline::{SyncMode, TimeWindow, TimelineEvent, TimelineProvider};
-use crate::modules::todo_local;
+use crate::modules::todo::local as todo_local;
 
 // ============ Mail ============
 

@@ -175,9 +175,12 @@ impl ModuleRegistry {
 }
 
 // ---- module submodule declarations ----
+//
+// note / todo / bookmark are directory modules (Phase 13, ADR R016/R017):
+// each exposes `mod.rs` (Executor) + `backend.rs` (trait + factory) +
+// `notion.rs` (Notion*Backend) + `local.rs` (Local*Backend, was `*_local.rs`).
 pub mod auth;
 pub mod bookmark;
-pub mod bookmark_local;
 pub mod calendar;
 pub mod config;
 pub mod email;
@@ -185,13 +188,11 @@ pub mod email_cache;
 pub mod email_pool;
 pub mod local;
 pub mod note;
-pub mod note_local;
 pub mod rss;
 pub mod rss_items;
 pub mod search;
 pub mod timeline;
 pub mod todo;
-pub mod todo_local;
 
 /// Generic simple-argument parser, re-exported from [`crate::util::args`]
 /// for backward compatibility with existing callers
