@@ -14,13 +14,15 @@
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
 
+use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 use sqlx::{Row, SqlitePool};
 
-use crate::config::NoteAccount;
+use crate::config::{Config, NoteAccount};
 use crate::error::{AgentError, Result};
 use crate::modules::local::{connect, mode_json, resolve_db_path};
 use crate::output::Output;
+use crate::search::{Hit, SearchQuery, Searchable};
 
 const CREATE_NOTES_SQL: &str = "CREATE TABLE IF NOT EXISTS notes (\
     id TEXT PRIMARY KEY, \
@@ -449,6 +451,150 @@ async fn upsert_prop(pool: &SqlitePool, note_id: &str, key: &str, value: &str) -
     Ok(())
 }
 
+// ============ Cross-module search (Phase 11) ============
+
+/// Per-module hard cap, enforced inside the provider
+/// ([S004](../../docs/adr/S004-execution-model.md)).
+const SEARCH_PER_MODULE_CAP: usize = 50;
+
+/// Maximum snippet length returned to the aggregator. Long bodies are
+/// truncated at this many characters; the aggregator caps further by
+/// `global_limit`, so the upstream consumer never sees arbitrarily large
+/// snippets ([S002](../../docs/adr/S002-hit-normalization.md)).
+const SNIPPET_MAX_CHARS: usize = 200;
+
+/// Cross-module search (Phase 11): return note hits whose `title` or
+/// `content` matches the query.
+///
+/// - Tokenize `q.raw` by whitespace, OR over tokens, case-insensitive
+///   GLOB substring over `title` OR `content`
+///   ([S003](../../docs/adr/S003-query-semantics.md)).
+/// - Per-module hard cap = [`SEARCH_PER_MODULE_CAP`] (50); the
+///   aggregator applies its own global cap on top.
+/// - `ts` is `updated_at` (UTC, RFC3339) — the module's primary edit
+///   time ([S005](../../docs/adr/S005-time-semantics-scope.md)).
+/// - `snippet` is the first [`SNIPPET_MAX_CHARS`] chars of `content`.
+#[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+pub async fn search_for_search(account: &NoteAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
+    let tokens: Vec<&str> = q.tokens();
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build the WHERE clause manually so we can mix title + content in
+    // one statement with continuous placeholder numbering.
+    let mut params: Vec<String> = Vec::new();
+    let mut conds: Vec<String> = Vec::new();
+    for t in &tokens {
+        if t.is_empty() {
+            continue;
+        }
+        let lower = t.to_ascii_lowercase();
+        params.push(format!("*{lower}*"));
+        let idx = params.len();
+        conds.push(format!("lower(title) GLOB ?{idx}"));
+        params.push(format!("*{lower}*"));
+        let idx2 = params.len();
+        conds.push(format!("lower(content) GLOB ?{idx2}"));
+    }
+    if conds.is_empty() {
+        return Ok(Vec::new());
+    }
+    let where_clause = conds.join(" OR ");
+
+    let cap = q.limit.unwrap_or(SEARCH_PER_MODULE_CAP);
+    params.push(cap.to_string());
+    let cap_idx = params.len();
+
+    let sql = format!(
+        "SELECT id, title, content, updated_at FROM notes \
+         WHERE {where_clause} \
+         ORDER BY updated_at DESC, id ASC LIMIT ?{cap_idx}"
+    );
+
+    let pool = open(account).await?;
+    let mut query = sqlx::query(&sql);
+    for p in &params {
+        query = query.bind(p);
+    }
+
+    let rows = query.fetch_all(&pool).await?;
+    let hits = rows
+        .iter()
+        .map(|r| {
+            let id: String = r.get("id");
+            let title: String = r.get("title");
+            let content: String = r.get("content");
+            let updated_at: String = r.get("updated_at");
+            let ts = crate::util::datetime::parse_rfc3339(&updated_at);
+            let snippet = snippet_from_content(&content, SNIPPET_MAX_CHARS);
+            Hit {
+                module: "note",
+                account: Some(account.name.clone()),
+                id,
+                title,
+                snippet,
+                // local note has no URL; agents use module+id.
+                url: None,
+                ts,
+                kind: "page",
+            }
+        })
+        .collect();
+    Ok(hits)
+}
+
+/// Build a short snippet from the note body: first non-empty line,
+/// truncated at `max_chars`. Whitespace is normalized; trailing `…`
+/// marks truncation.
+fn snippet_from_content(content: &str, max_chars: usize) -> String {
+    let first = content
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .unwrap_or("");
+    if first.chars().count() <= max_chars {
+        first.to_string()
+    } else {
+        let truncated: String = first.chars().take(max_chars).collect();
+        format!("{truncated}…")
+    }
+}
+
+/// Provider adapter: implements [`Searchable`] for one local note account.
+///
+/// One provider per local account. Notion accounts are not searchable in
+/// v1 (consistent with [S005](../../docs/adr/S005-time-semantics-scope.md):
+/// live-fetch-on-search rejected; local cache only).
+#[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+pub struct NoteSearchProvider {
+    account: NoteAccount,
+}
+
+impl NoteSearchProvider {
+    /// Construct from a configured local account.
+    #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+    pub fn new(account: NoteAccount) -> Self {
+        Self { account }
+    }
+}
+
+#[async_trait]
+impl Searchable for NoteSearchProvider {
+    fn module_name(&self) -> &'static str {
+        "note"
+    }
+
+    async fn search(&self, q: &SearchQuery, _cfg: &Config) -> Result<Vec<Hit>> {
+        // Local provider: skip silently on empty query (the aggregator
+        // already enforces non-empty raw, but defensive).
+        if q.raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        search_for_search(&self.account, q).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -550,6 +696,68 @@ mod tests {
         let acc = tmp_account();
         let err = read(&acc, &["ghost".to_string()]).await.unwrap_err();
         assert_eq!(err.type_name(), "InvalidArgument");
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    /// Cross-module search: matches both title and content; OR semantics
+    /// over tokens (the second token matches a different row).
+    #[tokio::test]
+    async fn search_for_search_matches_title_and_content() {
+        let acc = tmp_account();
+        // Note A: title contains "rust", body contains "sqlite".
+        let mut f1 = HashMap::new();
+        f1.insert("title".into(), "Rust 笔记".into());
+        create(&acc, &f1, &[]).await.unwrap();
+        let pool = open(&acc).await.unwrap();
+        let id_a: String = sqlx::query("SELECT id FROM notes")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("id");
+        let mut at = HashMap::new();
+        at.insert("text".into(), "stored in sqlite".into());
+        append(&acc, &at, std::slice::from_ref(&id_a))
+            .await
+            .unwrap();
+
+        // Note B: title "rust cli 工具" (matches rust), body "时间线".
+        let mut f2 = HashMap::new();
+        f2.insert("title".into(), "rust cli 工具".into());
+        create(&acc, &f2, &[]).await.unwrap();
+
+        // Single-token query "sql" — only Note A (body match).
+        let q = SearchQuery::new("sql");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, id_a);
+        assert_eq!(hits[0].module, "note");
+        assert!(hits[0].snippet.contains("sqlite"));
+
+        // Single-token query "rust" — both notes match via title.
+        let q = SearchQuery::new("rust");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 2);
+
+        // OR-of-tokens query "sql cli" — both notes match: A via body
+        // ("sqlite"), B via title ("cli"). This proves OR semantics: a
+        // row qualifies if any token matches any column.
+        let q = SearchQuery::new("sql cli");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 2);
+        let ids: Vec<&str> = hits.iter().map(|h| h.id.as_str()).collect();
+        assert!(ids.contains(&id_a.as_str()));
+
+        // --limit override caps results.
+        let mut q = SearchQuery::new("rust");
+        q.limit = Some(1);
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 1);
+
+        // Empty query produces no hits (defensive guard).
+        let q = SearchQuery::new("   ");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert!(hits.is_empty());
+
         let _ = std::fs::remove_file(acc.db_path.unwrap());
     }
 }
