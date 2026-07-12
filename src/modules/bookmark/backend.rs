@@ -86,3 +86,52 @@ pub fn for_account(config: &Config, account: &BookmarkAccount) -> Result<Box<dyn
         )))
     }
 }
+
+/// Test-only in-memory backend. Lives behind `#[cfg(test)]` so it never ships in the
+/// binary. It holds pre-seeded domain data and returns it verbatim, letting the action
+/// layer be exercised without a `NotionClient` or SQLite — the DI acceptance guard for
+/// [R016](../../../docs/adr/R016-action-backend-di.md) / [R018](../../../docs/adr/R018-backend-domain-mocks.md).
+#[cfg(test)]
+pub mod testkit {
+    use super::*;
+    use crate::error::AgentError;
+
+    /// In-memory `BookmarkBackend`. `items` backs `list`; `added` / `init_db` back their
+    /// respective actions. Missing fields error, mirroring a real backend that was never
+    /// given the data to respond with.
+    #[derive(Clone, Default)]
+    pub struct MockBookmarkBackend {
+        pub items: Vec<BookmarkItem>,
+        pub added: Option<BookmarkAdded>,
+        pub init_db: Option<BookmarkInitDb>,
+    }
+
+    #[async_trait]
+    impl BookmarkBackend for MockBookmarkBackend {
+        async fn init_db(&self, _parent: Option<&str>) -> Result<BookmarkInitDb> {
+            self.init_db
+                .clone()
+                .ok_or_else(|| AgentError::Other("mock init_db unset".into()))
+        }
+
+        async fn add(
+            &self,
+            _url: &str,
+            _title: &str,
+            _tags: &[String],
+            _db_id: Option<&str>,
+        ) -> Result<BookmarkAdded> {
+            self.added
+                .clone()
+                .ok_or_else(|| AgentError::Other("mock added unset".into()))
+        }
+
+        async fn list(
+            &self,
+            _tag: Option<&str>,
+            _db_id: Option<&str>,
+        ) -> Result<Vec<BookmarkItem>> {
+            Ok(self.items.clone())
+        }
+    }
+}

@@ -246,6 +246,9 @@ fn render_list(items: Vec<BookmarkItem>) -> Output {
 mod tests {
     use super::*;
 
+    use crate::modules::bookmark::backend::testkit::MockBookmarkBackend;
+    use crate::util::json_mode;
+
     #[test]
     fn parse_tags_splits_and_trims() {
         // The shared helper's regression tests live in local.rs; here we only verify the alias path also calls it.
@@ -254,5 +257,71 @@ mod tests {
             parse_tags(Some(&"rust, cli ,  web ".to_string())),
             vec!["rust", "cli", "web"]
         );
+    }
+
+    fn sample_item() -> BookmarkItem {
+        BookmarkItem {
+            id: "b1".into(),
+            url: "https://example.com".into(),
+            title: "示例书签".into(),
+            tags: vec!["rust".into(), "cli".into()],
+        }
+    }
+
+    /// (a) The full action path — parse → backend → render — runs end-to-end against a
+    /// `MockBookmarkBackend` that holds no `NotionClient` and no SQLite. This proves the DI
+    /// seam removes `NotionClient` / provider branches / keyring reads from the action layer.
+    #[tokio::test]
+    async fn dispatch_with_mock_runs_action_path_without_notion_client() {
+        let backend = MockBookmarkBackend {
+            items: vec![sample_item()],
+            ..Default::default()
+        };
+        let flags = HashMap::new();
+
+        let out = dispatch(&backend, "list", &flags).await.unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["id", "title", "url", "tags"]);
+                assert_eq!(
+                    rows,
+                    vec![vec!["b1", "示例书签", "https://example.com", "rust, cli"]]
+                );
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    /// (b) The render layer is provider-agnostic: the same domain data renders identically
+    /// whether it originated from Notion or the local backend. We render directly with
+    /// MockBookmarkBackend-supplied data and assert both text (Records) and JSON shapes.
+    #[test]
+    fn render_is_provider_agnostic_for_same_domain_data() {
+        let item = sample_item();
+
+        // Text mode → table with stable columns (backend-independent).
+        let text_out = render_list(vec![item.clone()]);
+        match text_out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["id", "title", "url", "tags"]);
+                assert_eq!(rows[0][0], "b1");
+                assert_eq!(rows[0][1], "示例书签");
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+
+        // JSON mode → object with the same keys, regardless of source backend.
+        json_mode::set_json_mode(true);
+        let json_out = render_list(vec![item]);
+        json_mode::set_json_mode(false);
+        if let Output::Json(Value::Array(arr)) = json_out {
+            assert_eq!(arr.len(), 1);
+            assert_eq!(arr[0]["id"], json!("b1"));
+            assert_eq!(arr[0]["url"], json!("https://example.com"));
+            assert_eq!(arr[0]["title"], json!("示例书签"));
+            assert_eq!(arr[0]["tags"], json!(["rust", "cli"]));
+        } else {
+            panic!("expected JSON array, got {json_out:?}");
+        }
     }
 }
