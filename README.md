@@ -110,7 +110,7 @@ everyday config set mail.accounts.0.username me@example.com
 ### 3. Store the password
 
 ```bash
-everyday mail login --account work
+everyday auth login --module mail --account work
 # Prompts for the password and stores it in the system keyring (never on disk)
 ```
 
@@ -161,7 +161,6 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 | Command | Description | Usage |
 |------|------|------|
-| `login` | Interactively store the password in the keyring | `everyday mail login [--account NAME]` |
 | `folders` | List all mailbox folders | `everyday mail folders [--account NAME]` |
 | `list` | List message summaries (from local cache; auto-sync if stale) | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync]` |
 | `read` | Read a single message (recursive lookup by default) | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
@@ -207,7 +206,6 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 | Command | Description | Usage |
 |------|------|------|
-| `login` | Interactively store the Notion token in the keyring (only needed for the `notion` provider) | `everyday note login [--account NAME]` |
 | `search` | Search pages / databases by title | `everyday note search --query Q [--limit N]` |
 | `list` | List pages in a database | `everyday note list [--db ID] [--limit N]` |
 | `create` | Create a new page (record) in a database | `everyday note create --title T [--db ID] [--prop K:V ...]` |
@@ -227,7 +225,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `--limit N` | `search` / `list` | Limit the count (`search` default 10, `list` default 50, cap 100; `--limit 0` means unlimited) |
 
 > **Local provider (default)**: no setup needed — just run `everyday note create` / `append`; the database file is created automatically.
-> **Notion provider**: create an integration in Notion to get an `ntn_...` token → `everyday note login` to store it in the keyring → set that account to `provider = "notion"` in the config and fill in `default_database_id` / `default_page_id` → **share** the target page / database with the integration in Notion.
+> **Notion provider**: create an integration in Notion to get an `ntn_...` token → store it via `everyday auth login --module note` in the keyring → set that account to `provider = "notion"` in the config and fill in `default_database_id` / `default_page_id` → **share** the target page / database with the integration in Notion.
 
 ### todo — to-do tasks (local SQLite by default / optional Notion)
 
@@ -235,7 +233,6 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 | Command | Description | Usage |
 |------|------|------|
-| `login` | Interactively store the Notion token in the keyring (only needed for the `notion` provider) | `everyday todo login [--account NAME]` |
 | `init-db` | Init tables: local provider creates the SQLite table; Notion provider creates the task database (requires `parent_page_id`) and back-fills `database_id` | `everyday todo init-db [--account NAME] [--parent PAGE_ID]` |
 | `list` | List unfinished tasks (by Due ascending) | `everyday todo list [--db ID] [--all]` |
 | `add` | Add a task | `everyday todo add --title T [--due DATE] [--priority P] [--db ID]` |
@@ -255,7 +252,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `--priority P` | `add` | Priority (select: P0 / P1 / P2) |
 
 > **Local provider (default)**: no setup needed — just run `everyday todo add` / `list`; the database file and tables are created automatically.
-> **Notion provider**: create an integration in Notion to get an `ntn_...` token → `everyday todo login` to store it in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday todo init-db` to create the task database and authorize the integration to access the parent page. Then `list` / `add` / `start` / `complete` are ready to use.
+> **Notion provider**: create an integration in Notion to get an `ntn_...` token → store it via `everyday auth login --module todo` in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday todo init-db` to create the task database and authorize the integration to access the parent page. Then `list` / `add` / `start` / `complete` are ready to use.
 
 ### bookmark — bookmarks (local SQLite by default / optional Notion)
 
@@ -263,7 +260,6 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 | Command | Description | Usage |
 |------|------|------|
-| `login` | Interactively store the Notion token in the keyring (only needed for the `notion` provider) | `everyday bookmark login [--account NAME]` |
 | `init-db` | Init storage: local provider creates the SQLite tables; Notion provider creates the bookmark database (requires `parent_page_id`) and back-fills `database_id` | `everyday bookmark init-db [--account NAME] [--parent PAGE_ID]` |
 | `list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list [--tag TAG] [--db ID]` |
 | `add` | Add a bookmark | `everyday bookmark add --url U --title T [--tags a,b] [--db ID]` |
@@ -283,7 +279,18 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 **Tag parsing**: `--tags "rust, cli , web"` is split on commas, trimmed, and empty entries dropped → `["rust", "cli", "web"]`.
 
 > **Local provider (default)**: no setup needed — just run `everyday bookmark add` / `list`; the database file and tables are created automatically.
-> **Notion provider**: create an integration in Notion to get an `ntn_...` token → `everyday bookmark login` to store it in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday bookmark init-db` to create the bookmark database and authorize the integration to access the parent page. Then `list` / `add` are ready to use.
+> **Notion provider**: create an integration in Notion to get an `ntn_...` token → store it via `everyday auth login --module bookmark` in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday bookmark init-db` to create the bookmark database and authorize the integration to access the parent page. Then `list` / `add` are ready to use.
+
+### auth — credential lifecycle (NEW in v0.8.0)
+
+Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring. Password strategy (mail/cal) uses `--password`; Notion token strategy (note/todo/bookmark when `provider=notion`) uses `--token`. If the flag is omitted, it falls back to an interactive prompt. Passwords/tokens never touch disk.
+
+| Command | Description | Usage |
+|------|------|------|
+| `login` | Store a credential in the OS keyring (optionally verify with `--verify`). `--module` required; `--account` defaults to the module's default account | `everyday auth login --module mail --account work --password PWD` |
+| `logout` | Delete the stored credential from the keyring | `everyday auth logout --module mail --account work` |
+| `verify` | Read the stored credential and verify it against the server (no re-prompt); reports `not_required` for local/sqlite or rss | `everyday auth verify --module note` |
+| `list` | List configured accounts and their keyring state (stored / missing / not_required) | `everyday auth list --module todo` |
 
 ### timeline — unified event timeline (NEW in v0.5.0)
 
@@ -454,7 +461,7 @@ provider = "local"
 # provider = "notion"
 # default_database_id = "db_abc123..."   # use your real Notion ID
 # default_page_id = "page_xyz789..."
-# The Notion integration token (ntn_...) is NOT written here; store it via `everyday note login`
+# The Notion integration token (ntn_...) is NOT written here; store it via `everyday auth login --module note`
 ```
 
 ### Credential safety
@@ -462,8 +469,8 @@ provider = "local"
 Passwords are **never** stored in the config file; they are managed through the system keyring:
 
 - **keyring service naming**: `everyday/<module>/<account>` (e.g. `everyday/mail/work`)
-- **Store a password**: `everyday mail login --account work` (interactive input, stored in the keyring)
-- **Read a password**: other mail commands read it from the keyring automatically, no manual step
+- **Store a credential**: `everyday auth login --module mail --account work` (interactive input; password stored in the keyring)
+- **Read a credential**: the module reads it from the keyring automatically via `auth::get_credential` — no manual step needed
 
 ### Multiple accounts
 
@@ -524,7 +531,7 @@ everyday config get mail.accounts.0.smtp_port
 
 ```bash
 # The local provider needs no login; only provider = "notion" requires interactively storing a token (keyring only, never on disk)
-everyday note login
+everyday auth login --module note
 
 # Search pages / databases (JSON)
 everyday note search --query "work" --json
@@ -559,7 +566,7 @@ everyday note update <page_id> --prop "Status:Read"
 ```bash
 # The local provider needs no login — just add / list (tables auto-created);
 # only provider = "notion" requires this one-time setup: store the token, create the task database
-everyday todo login
+everyday auth login --module todo
 everyday todo init-db --parent "<page_id>"     # authorize the integration to access the parent page in Notion
 
 # List unfinished tasks (by Due ascending)
@@ -581,7 +588,7 @@ everyday todo complete <page_id>
 ```bash
 # The local provider needs no login — just add / list (tables auto-created);
 # only provider = "notion" requires this one-time setup: store the token, create the bookmark database
-everyday bookmark login
+everyday auth login --module bookmark
 everyday bookmark init-db --parent "<page_id>"   # Notion only: authorize the integration to access the parent page
 
 # Add a bookmark with tags
@@ -669,11 +676,12 @@ Adding a module only takes: create a file + implement the trait + register one l
 |------|------|------|
 | `config` | ✅ Fully available | path / list / get / set / init |
 | `mail` | ✅ Fully available | IMAP receiving + SMTP sending + keyring credentials |
-| `cal` | ✅ Fully available | CalDAV login / calendars / list / add / delete |
+| `cal` | ✅ Fully available | CalDAV calendars / list / add / delete |
 | `rss` | ✅ Fully available | follow / list / unfollow / digest / fetch |
-| `note` | ✅ Fully available | login / search / list / create / read / append / update (local SQLite by default, optional Notion API) |
-| `todo` | ✅ Fully available | login / init-db / list / add / start / complete (local SQLite by default, optional Notion API) |
-| `bookmark` | ✅ Fully available | login / init-db / list / add (local SQLite by default, optional Notion API) |
+| `note` | ✅ Fully available | search / list / create / read / append / update (local SQLite by default, optional Notion API) |
+| `todo` | ✅ Fully available | init-db / list / add / start / complete (local SQLite by default, optional Notion API) |
+| `bookmark` | ✅ Fully available | init-db / list / add (local SQLite by default, optional Notion API) |
+| `auth` | ✅ Fully available (v0.8.0) | login / logout / verify / list — consolidated credential lifecycle for all modules |
 | `timeline` | ✅ Fully available | unified event log: today / yesterday / week / month / sync |
 | `search` | ✅ Fully available (NEW in v0.7.0) | cross-module unified search: query all modules in one shot |
 

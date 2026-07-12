@@ -18,11 +18,12 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 |--------|--------|-------|
 | `config` | ✅ Complete | path / list / get / set / init |
 | `mail` | ✅ Complete (v0.6.1) | IMAP receive + SMTP send + keyring credentials + local envelope cache (`mail list` reads from `~/.config/everyday/mail_cache.db`, auto-syncs if stale > 15min, `--sync` to force) |
-| `cal` | ✅ Complete | CalDAV login / calendars / list / add / delete |
+| `cal` | ✅ Complete | CalDAV calendars / list / add / delete |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
-| `note` | ✅ Complete | Notion: login / search / list / create / read / append / update |
-| `todo` | ✅ Complete | Notion/local tasks (shared `notion-client` SDK for notion): login / init-db / list / add / start / complete / **delete** |
-| `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK for notion): login / init-db / list / add |
+| `note` | ✅ Complete | Notion: search / list / create / read / append / update |
+| `todo` | ✅ Complete | Notion/local tasks (shared `notion-client` SDK for notion): init-db / list / add / start / complete / **delete** |
+| `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK for notion): init-db / list / add |
+| `auth` | ✅ Complete (v0.8.0) | login / logout / verify / list — consolidated credential lifecycle for all modules |
 | `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + ops-log AOP trace. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`). v0.6.1 修复 `--from` 单独给定被静默回退 preset 的问题 |
 
 ---
@@ -41,13 +42,35 @@ Config file: `~/.config/everyday/config.toml` (resolved cross-platform via `dirs
 
 ---
 
-## mail — email management (IMAP/SMTP) ✅
+## auth — credential lifecycle ✅
 
-Credentials: config holds account metadata → `everyday mail login` stores the password in the OS keyring → other commands read it automatically. Passwords never touch disk.
+Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring (default: store only; `--verify` also verifies). Password strategy (mail/cal) uses `--password`; Notion token strategy (note/todo/bookmark when `provider=notion`) uses `--token`. If the flag is omitted, it falls back to an interactive prompt. Passwords/tokens never touch disk.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `mail login` | Interactively enter password into the OS keyring | `everyday mail login --account work` |
+| `auth login` | Store a credential in the OS keyring (optionally verify). `--module` required; `--account` defaults to the module's default account | `everyday auth login --module mail --account work --password PWD` |
+| `auth logout` | Delete the stored credential from the keyring | `everyday auth logout --module mail --account work` |
+| `auth verify` | Read the stored credential and verify it against the server (no re-prompt); reports `not_required` for local/sqlite or rss | `everyday auth verify --module note` |
+| `auth list` | List configured accounts and their keyring state (stored / missing / not_required) | `everyday auth list --module todo` |
+
+### auth options
+
+| Flag | Applies to | Description |
+|------|-----------|-------------|
+| `--module <MOD>` | all | Target module (`mail` / `cal` / `note` / `todo` / `bookmark`) |
+| `--account NAME` | all | Specify account (override default) |
+| `--password PWD` | `login` | Password (mail/cal); falls back to interactive prompt |
+| `--token TOK` | `login` | Notion token (note/todo/bookmark); falls back to interactive prompt |
+| `--verify` | `login` | Also verify the credential against the server after storing |
+
+---
+
+## mail — email management (IMAP/SMTP) ✅
+
+Credentials: config holds account metadata → credentials are stored via `everyday auth login --module mail [--account NAME]` (password stored in the OS keyring) → other commands read it automatically via `auth::get_credential`. Passwords never touch disk.
+
+| Command | Description | Example |
+|---------|-------------|---------|
 | `mail folders` | List all mailbox folders | `everyday mail folders --json` |
 | `mail list` | List message summaries from local cache (auto-sync if stale; recurses all folders by default, sorted by date desc) | `everyday mail list --unread --limit 10 --json` |
 | `mail read <uid>` | Read a single message in full (searches all folders by default) | `everyday mail read 12345 --json` |
@@ -85,13 +108,12 @@ Credentials: config holds account metadata → `everyday mail login` stores the 
 
 ## cal — calendar management (CalDAV) ✅
 
-Credentials: config holds account metadata (`caldav_url`, `username`) → `everyday cal login` stores password in OS keyring → other commands read it automatically. Verified against QQ CalDAV (`dav.qq.com`).
+Credentials: config holds account metadata (`caldav_url`, `username`) → credentials are stored via `everyday auth login --module cal [--account NAME]` (password in OS keyring) → other commands read it automatically via `auth::get_credential`. Verified against QQ CalDAV (`dav.qq.com`).
 
 **Ignoring calendars:** add `ignore_calendars = ["好友生日", "Tasks"]` under a `[[calendar.accounts]]` entry in `config.toml`. Matched by displayname (case-insensitive); ignored calendars are hidden from `cal calendars` / `cal list` / `cal add` for that account.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `cal login` | Interactively enter password into the OS keyring | `everyday cal login --account personal` |
 | `cal calendars` | List calendar collections (中文列名: 路径/名称/颜色) | `everyday cal calendars --json` |
 | `cal list` | List events (default: today & future; `--all` for all, `--today`/`--date` to filter) | `everyday cal list --json` |
 | `cal add` | Add an event (icalendar VEVENT, PUT) | `everyday cal add --title T --start 2026-07-09T15:00:00Z --end 2026-07-09T16:00:00Z` |
@@ -142,13 +164,12 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → `every
 
 ## note — Notion notes & knowledge base ✅
 
-Credentials: config holds account metadata (`provider`, `default_database_id`, `default_page_id`) → `everyday note login` stores the Notion Integration Token (`ntn_...`) in the OS keyring → other commands read it automatically. The token never touches disk. Design goal: hide Notion's nested Block model behind plain-text/Markdown append and simplified property ops.
+Credentials: config holds account metadata (`provider`, `default_database_id`, `default_page_id`) → the Notion Integration Token (`ntn_...`) is stored via `everyday auth login --module note [--account NAME]` into the OS keyring → other commands read it automatically via `auth::get_credential`. The token never touches disk. Design goal: hide Notion's nested Block model behind plain-text/Markdown append and simplified property ops.
 
-**Setup:** create a Notion integration to get the `ntn_...` token, run `everyday note login`, set `[[note.accounts]]` in config, then **share the target page/database with the integration** in Notion.
+**Setup:** create a Notion integration to get the `ntn_...` token, store it via `everyday auth login --module note`, set `[[note.accounts]]` in config, then **share the target page/database with the integration** in Notion.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `note login` | Interactively enter Notion token into the OS keyring | `everyday note login --account personal` |
 | `note search` | Search pages/databases by title | `everyday note search --query "工作" --limit 10 --json` |
 | `note list` | List pages in a database (`--db` or `default_database_id`) | `everyday note list --db "db_abc" --limit 20 --json` |
 | `note create` | Create a page (record) in a database, with properties | `everyday note create --title T --db ID --prop "状态:未读" --json` |
@@ -158,13 +179,12 @@ Credentials: config holds account metadata (`provider`, `default_database_id`, `
 
 ## todo — Notion task database ✅
 
-Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `TodoItem` (id / title / status / due / priority) to/from Notion page properties. Credentials: `everyday todo login` stores the Notion Integration Token (`ntn_...`) in the OS keyring (service `everyday/todo/<account>`); the token never touches disk.
+Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `TodoItem` (id / title / status / due / priority) to/from Notion page properties. Credentials: the Notion Integration Token (`ntn_...`) is stored via `everyday auth login --module todo [--account NAME]` into the OS keyring (service `everyday/todo/<account>`); the token never touches disk.
 
-**Setup:** create a Notion integration → `everyday todo login` → add `[[todo.accounts]]` with `parent_page_id` → `everyday todo init-db` (creates the Task/Status/Due/Priority database and writes `database_id` back to config; the integration must be granted access to the parent page).
+**Setup:** create a Notion integration → store the token via `everyday auth login --module todo` → add `[[todo.accounts]]` with `parent_page_id` → `everyday todo init-db` (creates the Task/Status/Due/Priority database and writes `database_id` back to config; the integration must be granted access to the parent page).
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `todo login` | Interactively enter Notion token into the OS keyring | `everyday todo login --account personal` |
 | `todo init-db` | Create the todo database in Notion (needs `parent_page_id`); writes `database_id` back to config | `everyday todo init-db --parent "page_xyz"` |
 | `todo list` | List incomplete todos, sorted by due (`--all` includes Done) | `everyday todo list --db "db_abc" --json` |
 | `todo add` | Add a todo (`--title` required; `--due` / `--priority` optional) | `everyday todo add --title "写周报" --due 2026-07-15 --priority P1 --json` |
@@ -246,13 +266,12 @@ Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate
 
 ## bookmark — bookmarks (local SQLite by default / optional Notion)
 
-Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `BookmarkItem` (id / url / title / tags) to/from Notion page properties (Title / URL / Tags). Credentials: `everyday bookmark login` stores the Notion Integration Token (`ntn_...`) in the OS keyring (service `everyday/bookmark/<account>`); the token never touches disk. The **local SQLite provider is the default** (`provider = "local"`, alias `sqlite`): no credentials, no network, bookmarks stored at `~/.config/everyday/bookmark-<account>.db`. Command usage is identical across both providers.
+Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `BookmarkItem` (id / url / title / tags) to/from Notion page properties (Title / URL / Tags). Credentials: the Notion Integration Token (`ntn_...`) is stored via `everyday auth login --module bookmark [--account NAME]` into the OS keyring (service `everyday/bookmark/<account>`); the token never touches disk. The **local SQLite provider is the default** (`provider = "local"`, alias `sqlite`): no credentials, no network, bookmarks stored at `~/.config/everyday/bookmark-<account>.db`. Command usage is identical across both providers.
 
-**Setup (Notion only):** create a Notion integration → `everyday bookmark login` → add `[[bookmark.accounts]]` with `parent_page_id` → `everyday bookmark init-db` (creates the Title/URL/Tags database and writes `database_id` back to config; the integration must be granted access to the parent page).
+**Setup (Notion only):** create a Notion integration → store the token via `everyday auth login --module bookmark` → add `[[bookmark.accounts]]` with `parent_page_id` → `everyday bookmark init-db` (creates the Title/URL/Tags database and writes `database_id` back to config; the integration must be granted access to the parent page).
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `bookmark login` | Interactively enter Notion token into the OS keyring | `everyday bookmark login --account personal` |
 | `bookmark init-db` | Create the bookmark database (Notion needs `parent_page_id`); writes `database_id` back to config | `everyday bookmark init-db --parent "page_xyz"` |
 | `bookmark list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list --tag rust --json` |
 | `bookmark add` | Add a bookmark (`--url` and `--title` required; `--tags` optional, comma-separated) | `everyday bookmark add --url "https://..." --title "Rust" --tags "rust,cli" --json` |

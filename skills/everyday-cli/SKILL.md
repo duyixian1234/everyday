@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, login, init-db, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, query an aggregated timeline of recent activity, search across all integrations in one shot, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, init-db, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, query an aggregated timeline of recent activity, search across all integrations in one shot, manage credentials, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -48,7 +48,7 @@ everyday config set mail.accounts.0.imap_host imap.example.com
 everyday config set mail.accounts.0.smtp_host smtp.example.com
 everyday config set mail.accounts.0.username me@example.com
 everyday config set default_account.mail work
-everyday mail login --account work   # prompts for password, saved to keyring
+everyday auth login --module mail --account work   # prompts for password, saved to keyring
 ```
 
 After this, `mail` commands work without re-entering credentials.
@@ -142,12 +142,12 @@ echo "批量捕获内容" | everyday note append <page_id>
 everyday note update <page_id> --prop "状态:已读"
 ```
 
-First-time Notion setup: `everyday note login` (stores the `ntn_...` integration token in the OS keyring, service `everyday/note/<account>`). The target page/database must be shared with the integration in Notion. `--db` / page id default to `default_database_id` / `default_page_id` from config when omitted.
+First-time Notion setup: store the `ntn_...` integration token via `everyday auth login --module note` (service `everyday/note/<account>`). The target page/database must be shared with the integration in Notion. `--db` / page id default to `default_database_id` / `default_page_id` from config when omitted.
 
 **Manage todos (Notion task database, built on the shared `notion-client`):**
 
 ```bash
-everyday todo login                            # store Notion token (keyring service everyday/todo/<account>)
+everyday auth login --module todo              # store Notion token (keyring service everyday/todo/<account>)
 everyday todo init-db --parent "<page_id>"     # create the task database; writes database_id back to config
 everyday todo list --json                      # incomplete todos, sorted by due
 everyday todo list --all --json                # include Done
@@ -180,7 +180,7 @@ everyday timeline today --sync --json
 everyday timeline sync --source mail,rss --json
 ```
 
-First-time todo setup: `everyday todo login` (token in keyring, service `everyday/todo/<account>`), then add `[[todo.accounts]]` with `parent_page_id` and run `everyday todo init-db` (the integration must be granted access to the parent page). `--db` defaults to the `default_database_id` written by `init-db`.
+First-time todo setup: store the token via `everyday auth login --module todo` (service `everyday/todo/<account>`), then add `[[todo.accounts]]` with `parent_page_id` and run `everyday todo init-db` (the integration must be granted access to the parent page). `--db` defaults to the `default_database_id` written by `init-db`.
 
 ## Error format
 

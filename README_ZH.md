@@ -110,7 +110,7 @@ everyday config set mail.accounts.0.username me@example.com
 ### 3. 存储密码
 
 ```bash
-everyday mail login --account work
+everyday auth login --module mail --account work
 # 提示输入密码，存入系统密钥环（不落盘）
 ```
 
@@ -161,7 +161,6 @@ everyday config set default_account.mail personal
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `login` | 交互式存储密码到密钥环 | `everyday mail login [--account NAME]` |
 | `folders` | 列出所有邮箱文件夹 | `everyday mail folders [--account NAME]` |
 | `list` | 列出邮件摘要（本地缓存；过期自动 sync） | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync]` |
 | `read` | 读取单封邮件（默认递归查找） | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
@@ -207,7 +206,6 @@ everyday config set default_account.mail personal
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `login` | 交互式存储 Notion Token 到密钥环（仅 `notion` provider 需要） | `everyday note login [--account NAME]` |
 | `search` | 按标题搜索页面 / 数据库 | `everyday note search --query Q [--limit N]` |
 | `list` | 列出指定数据库下的页面 | `everyday note list [--db ID] [--limit N]` |
 | `create` | 在数据库中新建页面（记录） | `everyday note create --title T [--db ID] [--prop K:V ...]` |
@@ -227,7 +225,7 @@ everyday config set default_account.mail personal
 | `--limit N` | `search` / `list` | 限制条数（`search` 默认 10，`list` 默认 50，上限 100；`--limit 0` 表示不限制） |
 
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday note create` / `append` 即可，数据库文件自动创建。
-> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday note login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `default_database_id` / `default_page_id` → 在 Notion 把目标页面 / 数据库**分享给该 integration**。
+> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → 通过 `everyday auth login --module note` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `default_database_id` / `default_page_id` → 在 Notion 把目标页面 / 数据库**分享给该 integration**。
 
 ### todo — 待办任务（默认本地 SQLite / 可选 Notion）
 
@@ -235,7 +233,6 @@ everyday config set default_account.mail personal
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `login` | 交互式存储 Notion Token 到密钥环（仅 `notion` provider 需要） | `everyday todo login [--account NAME]` |
 | `init-db` | 建表：本地 provider 建 SQLite 表，Notion provider 创建任务数据库（需 `parent_page_id`）并回填 `database_id` | `everyday todo init-db [--account NAME] [--parent PAGE_ID]` |
 | `list` | 列出未完成任务（按 Due 升序） | `everyday todo list [--db ID] [--all]` |
 | `add` | 新增任务 | `everyday todo add --title T [--due DATE] [--priority P] [--db ID]` |
@@ -255,7 +252,7 @@ everyday config set default_account.mail personal
 | `--priority P` | `add` | 优先级（Select：P0 / P1 / P2） |
 
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday todo add` / `list` 即可，数据库文件与表自动创建。
-> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday todo login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday todo init-db` 创建任务数据库并授权该 integration 访问父级页面。之后 `list` / `add` / `start` / `complete` 即可使用。
+> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → 通过 `everyday auth login --module todo` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday todo init-db` 创建任务数据库并授权该 integration 访问父级页面。之后 `list` / `add` / `start` / `complete` 即可使用。
 
 ### bookmark — 书签（默认本地 SQLite / 可选 Notion）
 
@@ -263,7 +260,6 @@ everyday config set default_account.mail personal
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `login` | 交互式存储 Notion Token 到密钥环（仅 `notion` provider 需要） | `everyday bookmark login [--account NAME]` |
 | `init-db` | 初始化存储：本地 provider 建 SQLite 表；Notion provider 创建书签数据库（需 `parent_page_id`）并回填 `database_id` | `everyday bookmark init-db [--account NAME] [--parent PAGE_ID]` |
 | `list` | 列出书签（`--tag` 按单个标签过滤） | `everyday bookmark list [--tag TAG] [--db ID]` |
 | `add` | 新增书签 | `everyday bookmark add --url U --title T [--tags a,b] [--db ID]` |
@@ -283,7 +279,18 @@ everyday config set default_account.mail personal
 **标签解析**：`--tags "rust, cli , web"` 按逗号拆分、去空白、丢弃空项 → `["rust", "cli", "web"]`。
 
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday bookmark add` / `list` 即可，数据库文件与表自动创建。
-> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → `everyday bookmark login` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday bookmark init-db` 创建书签数据库并授权该 integration 访问父级页面。之后 `list` / `add` 即可使用。
+> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → 通过 `everyday auth login --module bookmark` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday bookmark init-db` 创建书签数据库并授权该 integration 访问父级页面。之后 `list` / `add` 即可使用。
+
+### auth — 凭证生命周期（v0.8.0 新增）
+
+全模块统一的凭证管理。各模块内部通过 `auth::get_credential` 读取已存凭证；你只需用这些命令在系统密钥环中管理凭证。密码凭证（mail/cal）使用 `--password`；Notion Token 凭证（note/todo/bookmark 在 `provider=notion` 时）使用 `--token`。若省略该 flag，则回退到交互式提示。密码 / Token 绝不落盘。
+
+| 命令 | 说明 | 用法 |
+|------|------|------|
+| `login` | 将凭证存入系统密钥环（加 `--verify` 可同时校验）。`--module` 必填；`--account` 缺省为模块默认账户 | `everyday auth login --module mail --account work --password PWD` |
+| `logout` | 从密钥环删除已存凭证 | `everyday auth logout --module mail --account work` |
+| `verify` | 读取已存凭证并向服务端校验（不重新提示）；local/sqlite 或 rss 返回 `not_required` | `everyday auth verify --module note` |
+| `list` | 列出已配置账户及其密钥环状态（stored / missing / not_required） | `everyday auth list --module todo` |
 
 ### timeline — 统一事件流（v0.5.0 新增）
 
@@ -454,7 +461,7 @@ provider = "local"
 # provider = "notion"
 # default_database_id = "db_abc123..."   # 值以实际 Notion ID 为准
 # default_page_id = "page_xyz789..."
-# Notion Integration Token (ntn_...) 不在此处填写，由 `everyday note login` 存入密钥环
+# Notion Integration Token (ntn_...) 不在此处填写，由 `everyday auth login --module note` 存入密钥环
 ```
 
 ### 凭证安全
@@ -462,8 +469,8 @@ provider = "local"
 密码**绝不**存储在配置文件中，而是通过系统密钥环管理：
 
 - **keyring 服务名约定**：`everyday/<module>/<account>`（如 `everyday/mail/work`）
-- **存储密码**：`everyday mail login --account work`（交互式输入，存入密钥环）
-- **读取密码**：其他 mail 命令自动从密钥环读取，无需手动指定
+- **存储凭证**：`everyday auth login --module mail --account work`（交互式输入，存入密钥环）
+- **读取凭证**：模块通过 `auth::get_credential` 自动从密钥环读取，无需手动指定
 
 ### 多账户
 
@@ -524,7 +531,7 @@ everyday config get mail.accounts.0.smtp_port
 
 ```bash
 # 本地 provider 无需登录；仅 provider = "notion" 时才需交互式存入 Token（仅密钥环，不落盘）
-everyday note login
+everyday auth login --module note
 
 # 搜索页面 / 数据库（JSON）
 everyday note search --query "工作" --json
@@ -559,7 +566,7 @@ everyday note update <page_id> --prop "状态:已读"
 ```bash
 # 本地 provider 无需登录，直接 add / list 即可（表自动创建）；
 # 仅 provider = "notion" 时才需以下一次性配置：存 Token、创建任务数据库
-everyday todo login
+everyday auth login --module todo
 everyday todo init-db --parent "<page_id>"     # 需在 Notion 把父页面授权给该 integration
 
 # 列出未完成任务（按 Due 升序）
@@ -581,7 +588,7 @@ everyday todo complete <page_id>
 ```bash
 # 本地 provider 无需登录，直接 add / list 即可（表自动创建）；
 # 仅 provider = "notion" 时才需以下一次性配置：存 Token、创建书签数据库
-everyday bookmark login
+everyday auth login --module bookmark
 everyday bookmark init-db --parent "<page_id>"   # 仅 Notion：需在 Notion 把父页面授权给该 integration
 
 # 新增带标签的书签
@@ -669,11 +676,12 @@ pub trait Executor: Send + Sync {
 |------|------|------|
 | `config` | ✅ 完整可用 | path / list / get / set / init |
 | `mail` | ✅ 完整可用 | IMAP 收件 + SMTP 发件 + keyring 凭证 |
-| `cal` | ✅ 完整可用 | CalDAV login / calendars / list / add / delete |
+| `cal` | ✅ 完整可用 | CalDAV calendars / list / add / delete |
 | `rss` | ✅ 完整可用 | follow / list / unfollow / digest / fetch |
-| `note` | ✅ 完整可用 | login / search / list / create / read / append / update（默认本地 SQLite，可选 Notion API） |
-| `todo` | ✅ 完整可用 | login / init-db / list / add / start / complete（默认本地 SQLite，可选 Notion API） |
-| `bookmark` | ✅ 完整可用 | login / init-db / list / add（默认本地 SQLite，可选 Notion API） |
+| `note` | ✅ 完整可用 | search / list / create / read / append / update（默认本地 SQLite，可选 Notion API） |
+| `todo` | ✅ 完整可用 | init-db / list / add / start / complete（默认本地 SQLite，可选 Notion API） |
+| `bookmark` | ✅ 完整可用 | init-db / list / add（默认本地 SQLite，可选 Notion API） |
+| `auth` | ✅ 完整可用（v0.8.0 新增） | login / logout / verify / list — 全模块统一的凭证生命周期管理 |
 | `timeline` | ✅ 完整可用 | 统一事件流：today / yesterday / week / month / sync |
 | `search` | ✅ 完整可用（v0.7.0 新增） | 跨模块统一搜索：query |
 

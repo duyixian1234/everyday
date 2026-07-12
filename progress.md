@@ -7,6 +7,14 @@
 
 ## 当前状态
 
+- **v0.8.0 已发布（待 tag）**：Phase 12 凭据 / `login` 逻辑收拢到顶层 `auth` 模块。
+  删除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令及本地 provider
+  的 no-op `login`，改为统一 `everyday auth login|logout|verify|list --module <mod>`
+  （[R013](./docs/adr/R013-auth-module-consolidation.md) 收拢总设计 / [R014](./docs/adr/R014-auth-verify-opt-in.md)
+  verify 显式可选 / [R015](./docs/adr/R015-auth-credential-io.md) 非交互输入契约）。
+  模块内部凭据读取改走 `auth::get_credential`；`--verify` 存后显式验证，
+  默认只存。`auth verify` / `list` 对 local/sqlite、rss 短路 `not_required`。
+  250 tests / clippy `-D warnings` 零警告 / fmt clean。破坏性变更：各模块 `login` 已移除。
 - **v0.7.0 已发布**：Phase 11 跨模块统一搜索 `everyday search query "<q>"`
   落地，新增 `search` 模块（[S001–S006](./docs/adr/S001-search-architecture.md)）。
   Searchable 适配器覆盖 note / todo / bookmark / rss（新增本地条目缓存表）
@@ -42,6 +50,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-07-12 | R | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块；verify 显式可选；非交互输入契约 |
 | 2026-07-12 | S | [S001–S006](./docs/adr/S001-search-architecture.md) | 跨模块统一搜索：架构 / Hit 契约 / 查询语义 / 执行模型 / 时间语义与范围 / CLI |
 | 2026-07-12 | F | [F009](./docs/adr/F009-performance-budget.md) | 性能预算（冷启动 < 100 ms + 网络超时 + 大输出流式） |
 | 2026-07-12 | F | [F010](./docs/adr/F010-testing-requirements.md) | 测试要求（强制单测项 + mock + CI 行为） |
@@ -72,6 +81,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.8.0** | `v0.8.0` | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块（破坏性：移除各模块 `login`） | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) |
 | **v0.7.0** | `v0.7.0` | 跨模块统一搜索：`everyday search` + Searchable/Registry | [S001–S006](./docs/adr/S001-search-architecture.md) |
 | **v0.6.2** | `v0.6.2` | 修 Rust 1.97 clippy 注释 lint 阻塞 CI | （纯格式 patch，无新 ADR） |
 | **v0.6.1** | `v0.6.1` | 修 timeline `--from` 单独给定被静默回退 | [L013](./docs/adr/L013-from-explicit-error.md) |
