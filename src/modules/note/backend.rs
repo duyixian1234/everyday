@@ -116,3 +116,84 @@ pub fn for_account(config: &Config, account: &NoteAccount) -> Result<Box<dyn Not
         Ok(Box::new(NotionNoteBackend::new(client)))
     }
 }
+
+/// Test-only in-memory backend. Lives behind `#[cfg(test)]` so it never ships in the
+/// binary. It holds pre-seeded domain data and returns it verbatim, letting the action
+/// layer be exercised without a `NotionClient` or SQLite — the DI acceptance guard for
+/// [R016](../../../docs/adr/R016-action-backend-di.md) / [R018](../../../docs/adr/R018-backend-domain-mocks.md).
+#[cfg(test)]
+pub mod testkit {
+    use super::*;
+    use crate::error::AgentError;
+    use std::collections::HashMap;
+
+    /// In-memory `NoteBackend`. `summaries`/`entries` back `search`/`list`; `pages` backs
+    /// `read` by id. `create`/`append`/`update` synthesize domain results from their inputs.
+    #[derive(Clone, Default)]
+    pub struct MockNoteBackend {
+        /// Rows returned by `search`.
+        pub summaries: Vec<NoteSummary>,
+        /// Rows returned by `list`.
+        pub entries: Vec<NoteListEntry>,
+        /// Pages keyed by id, returned by `read`.
+        pub pages: HashMap<String, NoteRead>,
+    }
+
+    #[async_trait]
+    impl NoteBackend for MockNoteBackend {
+        async fn search(&self, _query: &str, _limit: usize) -> Result<Vec<NoteSummary>> {
+            Ok(self.summaries.clone())
+        }
+
+        async fn list(&self, _db_id: Option<&str>, _limit: usize) -> Result<Vec<NoteListEntry>> {
+            Ok(self.entries.clone())
+        }
+
+        async fn create(
+            &self,
+            title: &str,
+            _db_id: Option<&str>,
+            props: &[(String, String)],
+        ) -> Result<NoteCreated> {
+            Ok(NoteCreated {
+                id: "mock-page".to_string(),
+                title: title.to_string(),
+                url: None,
+                database_id: None,
+                prop_count: props.len(),
+                resource: "note",
+            })
+        }
+
+        async fn read(&self, page_id: &str) -> Result<NoteRead> {
+            self.pages
+                .get(page_id)
+                .cloned()
+                .ok_or_else(|| AgentError::Other(format!("mock note {page_id} not found")))
+        }
+
+        async fn append(&self, page_id: &str, text: &str) -> Result<NoteAppended> {
+            let appended = text
+                .split('\n')
+                .filter(|l| !l.trim().is_empty())
+                .count()
+                .max(1);
+            Ok(NoteAppended {
+                id: page_id.to_string(),
+                url: None,
+                appended,
+                resource: "note",
+                unit: "line",
+            })
+        }
+
+        async fn update(&self, page_id: &str, props: &[(String, String)]) -> Result<NoteUpdated> {
+            Ok(NoteUpdated {
+                id: page_id.to_string(),
+                url: None,
+                updated_count: props.len(),
+                resource: "note",
+            })
+        }
+    }
+}

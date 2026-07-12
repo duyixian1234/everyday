@@ -35,7 +35,8 @@ use crate::config::NoteAccount;
 use crate::error::{AgentError, Result};
 use crate::modules::Executor;
 use crate::modules::note::backend::{
-    NoteAppended, NoteCreated, NoteListEntry, NoteRead, NoteSummary, NoteUpdated, for_account,
+    NoteAppended, NoteBackend, NoteCreated, NoteListEntry, NoteRead, NoteSummary, NoteUpdated,
+    for_account,
 };
 use crate::output::Output;
 
@@ -163,67 +164,89 @@ impl Executor for NoteModule {
         // DI seam: the module never names `NotionClient`, never branches on provider,
         // never touches the keyring — all of that lives in `for_account`.
         let backend = for_account(&self.config, account)?;
+        dispatch(
+            backend.as_ref(),
+            account,
+            action,
+            &flags,
+            &multi,
+            &positional,
+        )
+        .await
+    }
+}
 
-        match action {
-            "search" => {
-                let query = flags.get("query").ok_or_else(|| {
-                    AgentError::InvalidArgument("search requires --query <keyword>".into())
-                })?;
-                let limit: usize = flags
-                    .get("limit")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(10)
-                    .min(100);
-                let results = backend.search(query, limit).await?;
-                Ok(render_search(results))
-            }
-            "list" => {
-                let db_id = flags
-                    .get("db")
-                    .map(|s| s.as_str())
-                    .or(account.default_database_id.as_deref());
-                let limit: usize = flags
-                    .get("limit")
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(50)
-                    .min(100);
-                let rows = backend.list(db_id, limit).await?;
-                Ok(render_list(rows))
-            }
-            "create" => {
-                let title = flags.get("title").ok_or_else(|| {
-                    AgentError::InvalidArgument("create requires --title <title>".into())
-                })?;
-                let db_id = flags
-                    .get("db")
-                    .map(|s| s.as_str())
-                    .or(account.default_database_id.as_deref());
-                let props = split_props(&multi)?;
-                let created = backend.create(title, db_id, &props).await?;
-                Ok(render_create(created))
-            }
-            "read" => {
-                let page_id = resolve_page_id(account, &positional)?;
-                let detail = backend.read(&page_id).await?;
-                Ok(render_read(detail))
-            }
-            "append" => {
-                let page_id = resolve_page_id(account, &positional)?;
-                let text = resolve_append_text(&flags)?;
-                let appended = backend.append(&page_id, &text).await?;
-                Ok(render_append(appended))
-            }
-            "update" => {
-                let page_id = positional
-                    .first()
-                    .ok_or_else(|| AgentError::InvalidArgument("update requires <page_id>".into()))?
-                    .clone();
-                let props = split_props(&multi)?;
-                let updated = backend.update(&page_id, &props).await?;
-                Ok(render_update(updated))
-            }
-            other => Err(AgentError::UnknownAction(format!("note {other}"))),
+/// Core action dispatch, parameterized over a `NoteBackend`. `execute` supplies a real
+/// backend via `for_account`; tests supply a `MockNoteBackend`. This is the DI seam that
+/// keeps the action path free of `NotionClient` / provider branches / keyring reads
+/// ([R016](../../../docs/adr/R016-action-backend-di.md)).
+async fn dispatch(
+    backend: &dyn NoteBackend,
+    account: &NoteAccount,
+    action: &str,
+    flags: &HashMap<String, String>,
+    multi: &[(String, String)],
+    positional: &[String],
+) -> Result<Output> {
+    match action {
+        "search" => {
+            let query = flags.get("query").ok_or_else(|| {
+                AgentError::InvalidArgument("search requires --query <keyword>".into())
+            })?;
+            let limit: usize = flags
+                .get("limit")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(10)
+                .min(100);
+            let results = backend.search(query, limit).await?;
+            Ok(render_search(results))
         }
+        "list" => {
+            let db_id = flags
+                .get("db")
+                .map(|s| s.as_str())
+                .or(account.default_database_id.as_deref());
+            let limit: usize = flags
+                .get("limit")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(50)
+                .min(100);
+            let rows = backend.list(db_id, limit).await?;
+            Ok(render_list(rows))
+        }
+        "create" => {
+            let title = flags.get("title").ok_or_else(|| {
+                AgentError::InvalidArgument("create requires --title <title>".into())
+            })?;
+            let db_id = flags
+                .get("db")
+                .map(|s| s.as_str())
+                .or(account.default_database_id.as_deref());
+            let props = split_props(multi)?;
+            let created = backend.create(title, db_id, &props).await?;
+            Ok(render_create(created))
+        }
+        "read" => {
+            let page_id = resolve_page_id(account, positional)?;
+            let detail = backend.read(&page_id).await?;
+            Ok(render_read(detail))
+        }
+        "append" => {
+            let page_id = resolve_page_id(account, positional)?;
+            let text = resolve_append_text(flags)?;
+            let appended = backend.append(&page_id, &text).await?;
+            Ok(render_append(appended))
+        }
+        "update" => {
+            let page_id = positional
+                .first()
+                .ok_or_else(|| AgentError::InvalidArgument("update requires <page_id>".into()))?
+                .clone();
+            let props = split_props(multi)?;
+            let updated = backend.update(&page_id, &props).await?;
+            Ok(render_update(updated))
+        }
+        other => Err(AgentError::UnknownAction(format!("note {other}"))),
     }
 }
 
@@ -478,6 +501,7 @@ fn render_update(d: NoteUpdated) -> Output {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::note::backend::testkit::MockNoteBackend;
 
     #[test]
     fn parse_args_handles_repeated_prop() {
@@ -519,5 +543,90 @@ mod tests {
     fn split_props_rejects_missing_colon() {
         let multi = vec![("prop".to_string(), "invalid".to_string())];
         assert!(split_props(&multi).is_err());
+    }
+
+    // ---- T13.3: DI acceptance guard via MockNoteBackend ----
+
+    /// Build a minimal local `NoteAccount` with no defaults; enough to drive `dispatch`
+    /// without touching the keyring or any provider.
+    fn dummy_account() -> NoteAccount {
+        NoteAccount {
+            name: "test".into(),
+            provider: "local".into(),
+            default_database_id: None,
+            default_page_id: None,
+            db_path: None,
+        }
+    }
+
+    /// (a) The full action path — parse → backend → render — runs end-to-end against a
+    /// `MockNoteBackend` that holds no `NotionClient` and no SQLite. This proves the DI seam
+    /// removes `NotionClient` / provider branches / keyring reads from the action layer.
+    #[tokio::test]
+    async fn dispatch_with_mock_runs_action_path_without_notion_client() {
+        let backend = MockNoteBackend {
+            summaries: vec![NoteSummary {
+                id: "p1".into(),
+                kind: "page".into(),
+                title: "Rust 笔记".into(),
+                url: Some("https://example.com/p1".into()),
+                updated: "2026-07-12".into(),
+            }],
+            ..Default::default()
+        };
+        let account = dummy_account();
+        let mut flags = HashMap::new();
+        flags.insert("query".into(), "rust".into());
+
+        let out = dispatch(&backend, &account, "search", &flags, &[], &[])
+            .await
+            .unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["id", "type", "title", "last_edited"]);
+                assert_eq!(rows, vec![vec!["p1", "page", "Rust 笔记", "2026-07-12"]]);
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    /// (b) The render layer is provider-agnostic: the same domain data renders identically
+    /// whether it originated from Notion or the local backend. Here we render directly with
+    /// MockNoteBackend-supplied data and assert both text (Records) and JSON shapes.
+    #[test]
+    fn render_is_provider_agnostic_for_same_domain_data() {
+        let summary = NoteSummary {
+            id: "p1".into(),
+            kind: "page".into(),
+            title: "Rust 笔记".into(),
+            url: Some("https://example.com/p1".into()),
+            updated: "2026-07-12".into(),
+        };
+
+        // Text mode → table with stable columns (backend-independent).
+        let text_out = render_search(vec![summary.clone()]);
+        match text_out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["id", "type", "title", "last_edited"]);
+                assert_eq!(rows[0][0], "p1");
+                assert_eq!(rows[0][2], "Rust 笔记");
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+
+        // JSON mode → object with the same keys, regardless of source backend.
+        crate::util::json_mode::set_json_mode(true);
+        let json_out = render_search(vec![summary]);
+        crate::util::json_mode::set_json_mode(false);
+        if let Output::Json(Value::Array(arr)) = json_out {
+            assert_eq!(arr.len(), 1);
+            assert_eq!(arr[0]["id"], json!("p1"));
+            assert_eq!(arr[0]["type"], json!("page"));
+            assert_eq!(arr[0]["title"], json!("Rust 笔记"));
+            assert_eq!(arr[0]["last_edited"], json!("2026-07-12"));
+            assert_eq!(arr[0]["url"], json!("https://example.com/p1"));
+        } else {
+            panic!("expected Json array, got {json_out:?}");
+        }
     }
 }
