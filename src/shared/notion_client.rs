@@ -1,15 +1,18 @@
-//! 底层 Notion API 客户端（核心协议层）。
+//! Low-level Notion API client (core protocol layer).
 //!
-//! 职责：HTTP 请求封装、Token 注入、速率限制（429 退避重试）、
-//! 原始 JSON 反序列化。业务模块（如 `todo`）在其上做领域映射，
-//! 避免每个模块重复编写 Notion API 逻辑。
+//! Responsibilities: HTTP request wrapping, token injection, rate limiting
+//! (429 backoff + retry), and raw JSON deserialization. Domain modules
+//! (e.g. `todo`) build their mapping on top, so no module re-implements
+//! Notion API logic.
 //!
-//! 设计参考待办模块设计文档的两层架构：本文件为「底层共享 SDK」，
-//! 业务模块为「上层语义化业务」。
+//! Two-layer architecture per [F004](../../docs/adr/F004-shared-notion-client.md):
+//! this file is the "low-level shared SDK"; domain modules are the
+//! "high-level semantic business layer".
 //!
-//! 错误处理遵循项目既有约定（见 `error.rs` 与 `agents.md`）：
-//! 401/403 映射为 `AgentError::Auth`，其它非 2xx 映射为 `AgentError::Network`，
-//! 响应体解析失败映射为 `AgentError::Other`。不新增与现有枚举重复的变体。
+//! Error handling follows the project convention (see [`error`] and
+//! [agents.md](../../agents.md)): 401/403 → `AgentError::Auth`, other
+//! non-2xx → `AgentError::Network`, body-parse failure → `AgentError::Other`.
+//! No new variants that duplicate the existing enum.
 
 use std::time::Duration;
 
@@ -20,23 +23,24 @@ use serde::de::DeserializeOwned;
 
 use crate::error::{AgentError, Result};
 
-/// Notion REST API 基址。
+/// Notion REST API base URL.
 const NOTION_API: &str = "https://api.notion.com/v1";
-/// 使用的 Notion API 版本（固定，向后兼容）。
+/// Pinned Notion API version (fixed for back-compat).
 const NOTION_VERSION: &str = "2022-06-28";
 
-/// 共享 Notion 客户端。
+/// Shared Notion client.
 ///
-/// 持有一个已注入 `Authorization` 与 `Notion-Version` 头的
-/// `reqwest::Client`，所有请求复用同一连接池。
+/// Holds a `reqwest::Client` with `Authorization` and `Notion-Version`
+/// headers already injected; all requests reuse the same connection pool.
 pub struct NotionClient {
     client: reqwest::Client,
 }
 
 impl NotionClient {
-    /// 用 Integration Token 构造客户端。
+    /// Build a client from an Integration Token.
     ///
-    /// 不使用 `.unwrap()`：头解析/客户端构建失败都收拢为 `AgentError`。
+    /// No `.unwrap()`: header parse / client-build failures are folded
+    /// into `AgentError`.
     pub fn new(token: String) -> Result<Self> {
         let mut headers = HeaderMap::new();
         let auth = format!("Bearer {token}");
@@ -56,18 +60,19 @@ impl NotionClient {
         Ok(Self { client })
     }
 
-    /// 通用请求：发送并解析响应为 `R`。
+    /// Generic request: send and deserialize the response into `R`.
     ///
-    /// 自动处理 429 频率限制：读取响应头 `Retry-After`（不存在则默认 1 秒）
-    /// 退避后**单次重试**，确保 Agent 批量操作（如逐个更新任务状态）不断流。
-    /// Notion 限制约每秒 3 次请求，单次重试足以平滑偶发限流。
+    /// Auto-handles 429 rate limiting: reads the `Retry-After` header
+    /// (defaults to 1s when absent), backs off, then retries **once** so
+    /// Agent batch ops (e.g. updating task statuses one by one) don't break
+    /// the stream. Notion allows ~3 req/s; one retry smooths transient limits.
     pub async fn request<B, R>(&self, method: Method, path: &str, body: Option<&B>) -> Result<R>
     where
         B: Serialize + ?Sized,
         R: DeserializeOwned,
     {
         let url = format!("{NOTION_API}{path}");
-        // 仅重试一次，避免无限退避。
+        // Only retry once to avoid infinite backoff.
         for attempt in 0..2 {
             let mut req = self.client.request(method.clone(), &url);
             if let Some(b) = body {
@@ -79,7 +84,7 @@ impl NotionClient {
                 .map_err(|e| AgentError::Network(format!("notion request failed: {e}")))?;
             let status = resp.status();
 
-            // 429：仅在首次尝试时退避重试一次。
+            // 429: back off and retry once, only on the first attempt.
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS && attempt == 0 {
                 let wait = resp
                     .headers()
@@ -114,18 +119,19 @@ impl NotionClient {
                 .map_err(|e| AgentError::Other(format!("parse notion response: {e}")))?;
             return Ok(value);
         }
-        // 理论不可达：循环仅可能在 attempt==0 且 429 时 continue，第二次必返回。
+        // Unreachable in practice: the loop only continues on attempt==0
+        // with a 429, so the second pass must return.
         Err(AgentError::Network(
             "notion request exhausted retries".into(),
         ))
     }
 
-    /// GET 请求（无请求体）。
+    /// GET request (no body).
     pub async fn get<R: DeserializeOwned>(&self, path: &str) -> Result<R> {
         self.request(Method::GET, path, None::<&()>).await
     }
 
-    /// POST 请求（带 JSON 请求体）。
+    /// POST request (JSON body).
     pub async fn post<B: Serialize + ?Sized, R: DeserializeOwned>(
         &self,
         path: &str,
@@ -134,7 +140,7 @@ impl NotionClient {
         self.request(Method::POST, path, Some(body)).await
     }
 
-    /// PATCH 请求（带 JSON 请求体）。
+    /// PATCH request (JSON body).
     pub async fn patch<B: Serialize + ?Sized, R: DeserializeOwned>(
         &self,
         path: &str,
@@ -144,7 +150,8 @@ impl NotionClient {
     }
 }
 
-/// 从 Notion 错误响应体提取 `message` 字段；提取失败则回退为原始文本。
+/// Extract the `message` field from a Notion error body; fall back to
+/// the raw text if extraction fails.
 fn extract_message(text: &str) -> String {
     serde_json::from_str::<serde_json::Value>(text)
         .ok()
@@ -162,7 +169,7 @@ mod tests {
 
     #[test]
     fn builds_client_with_token() {
-        // 构造不应 unwrap/panic。
+        // Construction must not unwrap/panic.
         let _c = NotionClient::new("ntn_test".into()).unwrap();
     }
 

@@ -1,13 +1,15 @@
-//! 短唯一 ID 生成工具。
+//! Short unique ID generation utilities.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 进程内单调递增计数器，保证纳秒相同时仍唯一。
+/// Process-local monotonic counter; guarantees uniqueness even when two
+/// calls share the same nanosecond timestamp.
 static COUNTER: AtomicU64 = AtomicU64::new(0);
 
-/// 生成带前缀的短唯一 ID（纳秒时间戳 + 进程内计数器，循环内亦唯一）。
+/// Generate a prefixed short unique ID (nanosecond timestamp + process-local
+/// counter; stays unique even inside a tight loop).
 ///
-/// 例：`gen_id("n")` → `n17abc...-1`、`gen_id("t")` → `t17abc...-2`。
+/// Example: `gen_id("n")` → `n17abc...-1`, `gen_id("t")` → `t17abc...-2`.
 pub fn gen_id(prefix: &str) -> String {
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -30,7 +32,8 @@ mod tests {
 
     #[test]
     fn gen_id_unique_within_loop() {
-        // 关键回归：纳秒相同时（旧实现会撞）必须仍唯一。
+        // Key regression: when nanosecond timestamps coincide (the old
+        // implementation collided), IDs must still be unique.
         let mut seen = HashSet::new();
         for _ in 0..1000 {
             let id = gen_id("x");

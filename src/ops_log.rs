@@ -1,12 +1,15 @@
-//! Ops-log AOP hook：在 dispatch 层记录 CLI 对 notion 账户的写操作。
+//! Ops-log AOP hook: record CLI write operations against Notion accounts
+//! at the dispatch layer.
 //!
-//! 设计要点（ADR [L007](../docs/adr/L007-notion-ops-log.md)）：
-//! - 仅 `todo`/`note`/`bookmark` 模块的写操作记录。
-//! - 仅 `provider = "notion"` 的账户记录（local 账户的 timeline provider 直接拉 SQLite）。
-//! - 从 Output 的 JSON 提取 `id`（→ ref_id）和 `title`（可能缺失，取空）。
-//! - 写入失败不阻断用户命令。
+//! Design points (ADR [L007](../docs/adr/L007-notion-ops-log.md)):
+//! - Only write operations on `todo` / `note` / `bookmark` modules are logged.
+//! - Only accounts with `provider = "notion"` (local accounts are pulled
+//!   straight from SQLite by their timeline provider).
+//! - `id` (→ ref_id) and `title` are extracted from the Output JSON
+//!   (title may be absent → stored empty).
+//! - A write failure does not block the user's command.
 //!
-//! Ops-log 数据库：`~/.config/everyday/ops-log.db`。
+//! Ops-log database: `~/.config/everyday/ops-log.db`.
 
 use std::path::PathBuf;
 
@@ -31,13 +34,13 @@ const CREATE_OPS_LOG_SQL: &str = "CREATE TABLE IF NOT EXISTS ops_log (\
 const IX_OPS_SQL: &str = "CREATE INDEX IF NOT EXISTS ix_ops_module_account_time \
     ON ops_log(module, account, occurred_at)";
 
-/// 需要记录 ops-log 的模块。
+/// Modules whose ops are recorded.
 const LOGGED_MODULES: &[&str] = &["todo", "note", "bookmark"];
 
-/// 需要记录 ops-log 的写操作（非查询类）。
+/// Write actions that are recorded (non-query ops).
 const LOGGED_ACTIONS: &[&str] = &["add", "start", "complete", "delete", "create", "update"];
 
-/// 解析 ops-log.db 路径。
+/// Resolve the ops-log.db path.
 pub(crate) fn ops_log_path() -> Result<PathBuf> {
     let dir = dirs::config_dir().ok_or_else(|| {
         crate::error::AgentError::Config("cannot determine config directory".into())
@@ -45,7 +48,7 @@ pub(crate) fn ops_log_path() -> Result<PathBuf> {
     Ok(dir.join("everyday").join("ops-log.db"))
 }
 
-/// 打开（必要时创建）ops-log.db 连接池。
+/// Open (creating if needed) the ops-log.db connection pool.
 pub(crate) async fn open() -> Result<SqlitePool> {
     let path = ops_log_path()?;
     if let Some(parent) = path.parent()
@@ -65,9 +68,11 @@ pub(crate) async fn open() -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// 在模块动作成功执行后调用。若是 notion 账户的写操作，记录到 ops-log。
+/// Called after a module action succeeds. If it is a Notion-account write,
+/// record it to the ops-log.
 ///
-/// 失败不阻断：`main.rs` 用 `let _ =` 吞掉错误。
+/// Failure is non-blocking: `main.rs` swallows the error with `let _ =`.
+/// See [L007](../docs/adr/L007-notion-ops-log.md).
 pub async fn maybe_log_op(
     module: &str,
     action: &str,
@@ -75,37 +80,37 @@ pub async fn maybe_log_op(
     config: &Config,
     output: &Output,
 ) -> Result<()> {
-    // 1. 只记录 todo/note/bookmark 模块。
+    // 1. Only todo/note/bookmark modules are logged.
     if !LOGGED_MODULES.contains(&module) {
         return Ok(());
     }
 
-    // 2. 只记录写操作。
+    // 2. Only write actions.
     if !LOGGED_ACTIONS.contains(&action) {
         return Ok(());
     }
 
-    // 3. 解析账户名。
+    // 3. Resolve the account name.
     let account_name = resolve_account_name(module, account_override, config)?;
     let Some(account_name) = account_name else {
-        return Ok(()); // 无账户配置，跳过
+        return Ok(()); // no account configured → skip
     };
 
-    // 4. 检查 provider 是否为 notion。
+    // 4. Check whether the provider is notion.
     let is_notion = check_notion_provider(module, &account_name, config);
     if !is_notion {
-        return Ok(()); // local provider 走 SQLite 直拉，不需要 ops-log
+        return Ok(()); // local provider pulls SQLite directly; no ops-log needed
     }
 
-    // 5. 从 Output 提取 ref_id 和 title。
+    // 5. Extract ref_id and title from the Output.
     let (ref_id, title, metadata) = extract_from_output(module, action, output)?;
 
     if ref_id.is_empty() {
-        // 无 ref_id 无法记录，跳过。
+        // Nothing addressable to record → skip.
         return Ok(());
     }
 
-    // 6. 写入 ops-log。
+    // 6. Write the ops-log row.
     let pool = open().await?;
     let now = chrono::Utc::now().to_rfc3339();
     let metadata_str = serde_json::to_string(&metadata).unwrap_or_else(|_| "{}".into());
@@ -127,7 +132,7 @@ pub async fn maybe_log_op(
     Ok(())
 }
 
-/// 解析账户名：优先 override，其次 config 默认。
+/// Resolve the account name: override wins, else the config default.
 fn resolve_account_name(
     module: &str,
     override_name: Option<&str>,
@@ -148,7 +153,7 @@ fn resolve_account_name(
     Ok(name)
 }
 
-/// 检查某 (module, account) 的 provider 是否为 notion。
+/// Check whether a (module, account)'s provider is notion.
 fn check_notion_provider(module: &str, account_name: &str, config: &Config) -> bool {
     match module {
         "todo" => config
@@ -176,11 +181,12 @@ fn check_notion_provider(module: &str, account_name: &str, config: &Config) -> b
     }
 }
 
-/// 从 Output 提取 ref_id（id 字段）和 title。
+/// Extract `ref_id` (the `id` field) and `title` from an Output.
 ///
-/// 非 JSON 输出转 JSON 后提取。缺失字段取空串。
+/// Non-JSON output is converted to JSON first; missing fields become empty strings.
 ///
-/// Text 模式：手工解析常见格式（见 [`parse_text_ref_id_and_title`]）。
+/// Text mode: hand-parsed against the common formats (see
+/// [`parse_text_ref_id_and_title`]).
 fn extract_from_output(
     module: &str,
     action: &str,
@@ -190,7 +196,8 @@ fn extract_from_output(
         Output::Json(v) => v.clone(),
         Output::Text(s) => {
             let (ref_id, title) = parse_text_ref_id_and_title(s);
-            // Text 模式没有 json 结构, 用最小元数据包装, 同样经过 metadata 构造。
+            // Text mode has no JSON shape; wrap with minimal metadata, still
+            // routed through the metadata builder below.
             let mut obj = serde_json::Map::new();
             if !ref_id.is_empty() {
                 obj.insert("id".into(), Value::String(ref_id));
@@ -201,7 +208,7 @@ fn extract_from_output(
             Value::Object(obj)
         }
         Output::Records { headers, rows } => {
-            // 表格输出转 JSON 对象数组，取第一行。
+            // Table output → array of JSON objects; take the first row.
             if rows.is_empty() {
                 return Ok((String::new(), String::new(), Value::Null));
             }
@@ -224,7 +231,7 @@ fn extract_from_output(
         .unwrap_or("")
         .to_string();
 
-    // 构造 metadata（记录模块特有字段）。
+    // Build metadata (module-specific fields).
     let metadata = match module {
         "todo" => {
             let status = json_val.get("status").cloned().unwrap_or(Value::Null);
@@ -242,17 +249,19 @@ fn extract_from_output(
     Ok((ref_id, title, metadata))
 }
 
-/// 从文本输出里提取 `(ref_id, title)`。
+/// Extract `(ref_id, title)` from text output.
 ///
-/// 覆盖 `everyday` 各模块文本输出格式：
-/// - `added todo 'Title' (id=UUID)`、`created page 'Title' (id=UUID, ...)`
+/// Covers `everyday`'s text output formats:
+/// - `added todo 'Title' (id=UUID)`, `created page 'Title' (id=UUID, ...)`
 /// - `added bookmark 'Title' (id=UUID)`
-/// - `set todo UUID -> status 'Done'`、`appended N block(s) to page UUID`、
-///   `updated N propert(ies) on page UUID` —— id 位置不固定,回退到首个 UUID 形 token。
+/// - `set todo UUID -> status 'Done'`, `appended N block(s) to page UUID`,
+///   `updated N propert(ies) on page UUID` —— the id position varies, so fall
+///   back to the first UUID-shaped token.
 ///
-/// title 取第一对单引号内容;ref_id 优先匹配 `id=UUID`,否则取首个 UUID 形 token。
+/// title = text inside the first pair of single quotes; ref_id prefers `id=UUID`,
+/// otherwise the first UUID-shaped token.
 fn parse_text_ref_id_and_title(text: &str) -> (String, String) {
-    // title: 第一对单引号内文本
+    // title: text inside the first pair of single quotes
     let title = text
         .find('\'')
         .and_then(|start| {
@@ -261,7 +270,7 @@ fn parse_text_ref_id_and_title(text: &str) -> (String, String) {
         })
         .unwrap_or_default();
 
-    // ref_id: 优先 'id=UUID' 形式;否则扫首个 UUID 形 token
+    // ref_id: prefer the `id=UUID` form; else scan for the first UUID token
     let mut ref_id = extract_id_after_eq(text)
         .filter(|s| !s.is_empty())
         .unwrap_or_default();
@@ -272,7 +281,7 @@ fn parse_text_ref_id_and_title(text: &str) -> (String, String) {
     (ref_id, title)
 }
 
-/// 找 `id=UUID` 紧跟的 uuid 形 token;找不到返空。
+/// Grab the UUID-shaped token immediately after `id=`; none → None.
 fn extract_id_after_eq(text: &str) -> Option<String> {
     let pos = text.find("id=")?;
     let tail = &text[pos + 3..];
@@ -287,7 +296,7 @@ fn extract_id_after_eq(text: &str) -> Option<String> {
     }
 }
 
-/// 扫 text 首个 UUID 形 token (8-4-4-4-12 hex, 连字符分隔)。
+/// Scan text for the first UUID-shaped token (8-4-4-4-12 hex, hyphen-separated).
 fn first_uuid_token(text: &str) -> String {
     text.split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
         .find(|t| is_uuid_shaped(t))
@@ -295,7 +304,7 @@ fn first_uuid_token(text: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 8-4-4-4-12 hex 分组 + 4 个连字符 → 共 36 字符。
+/// 8-4-4-4-12 hex groups + 4 hyphens → 36 characters total.
 fn is_uuid_shaped(s: &str) -> bool {
     let parts: Vec<&str> = s.split('-').collect();
     parts.len() == 5
@@ -309,33 +318,37 @@ fn is_uuid_shaped(s: &str) -> bool {
             .all(|p| p.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
-// ============ 读取（用于 timeline 投影） ============
+// ---- READ path (projected into the timeline) ----
 
-/// ops-log 行投影供 timeline 使用的形态。
+/// Shape of an ops-log row once projected for the timeline.
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // module 已通过 source 暴露给 timeline,保留供未来过滤
+#[allow(dead_code)] // already exposed to the timeline via its source; kept for future filtering
 pub struct OpsLogEntry {
-    /// 模块名（`todo` / `note` / `bookmark`），同时作为 timeline source。
+    /// Module name (`todo` / `note` / `bookmark`), also used as the timeline source.
     pub module: String,
     pub account: String,
-    /// 操作类型（`add` / `create` / `update` / `complete` / `start` / `delete`），
-    /// 作为 timeline `event_type`。
+    /// Operation type (`add` / `create` / `update` / `complete` / `start` / `delete`),
+    /// used as the timeline `event_type`.
     pub action: String,
     pub ref_id: String,
     pub title: String,
     pub metadata: Value,
-    /// RFC3339 字符串，timeline 端 parse 为 UTC DateTime。
+    /// RFC3339 string, parsed back into a UTC DateTime on the timeline side.
     pub occurred_at: String,
 }
 
-/// 读取 ops-log.db 中指定 module 在 `[from, to]` 窗口内的所有条目。
+/// Read all ops-log rows for `module` inside the `[from, to]` window.
 ///
-/// - `module`：`todo` / `note` / `bookmark` 之一。
-/// - `from`：UTC 时间，inclusive；entries with `occurred_at >= from`。
-/// - `to`：UTC 时间，inclusive（None = 不设上限）。
+/// - `module`: one of `todo` / `note` / `bookmark`.
+/// - `from`: UTC time, inclusive; entries with `occurred_at >= from`.
+/// - `to`: UTC time, inclusive (None = no upper bound).
 ///
-/// 用于 [`OpsLogProvider`] 在每次 sync 时把 ops-log 行投影到 timeline events 表。
-/// DB 不存在时返回 `Ok(vec![])`（不报错），让 `--sync` 在新用户环境也能用。
+/// Used by [`OpsLogProvider`] to project ops-log rows into the timeline
+/// events table on every sync.
+/// See [L010](../docs/adr/L010-ops-log-provider.md).
+///
+/// If the DB does not exist, returns `Ok(vec![])` (no error) so `--sync`
+/// also works in a fresh-user environment.
 pub async fn fetch_ops_log_for_timeline(
     module: &str,
     from: DateTime<Utc>,
@@ -351,7 +364,7 @@ pub async fn fetch_ops_log_for_timeline(
     let from_str = from.to_rfc3339();
     let to_str = to.map(|t: DateTime<Utc>| t.to_rfc3339());
 
-    // 动态 SQL：`to` 可能是 None。
+    // Dynamic SQL: `to` may be None.
     let rows = if let Some(ref to_s) = to_str {
         sqlx::query_as::<_, OpsRow>(
             "SELECT module, account, action, ref_id, title, metadata, occurred_at \
@@ -380,7 +393,7 @@ pub async fn fetch_ops_log_for_timeline(
     Ok(rows.into_iter().map(Into::into).collect())
 }
 
-/// sqlx 行中间结构（手写 FromRow 避免依赖 sqlx macros feature）。
+/// sqlx row intermediary (hand-written FromRow to avoid the sqlx macros feature).
 struct OpsRow {
     module: String,
     account: String,

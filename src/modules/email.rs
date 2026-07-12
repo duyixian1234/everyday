@@ -1,8 +1,10 @@
-//! 邮件模块：IMAP 收件（list / read / search）+ SMTP 发件（send）+ keyring 凭证（login）。
+//! Mail module: IMAP receiving (list / read / search) + SMTP sending (send)
+//! + keyring credentials (login). See [M001](../../docs/adr/M001-imap-stack.md).
 //!
-//! 流程：配置文件存账户元数据（host/port/username）→ `everyday mail login` 存密码到
-//! 系统密钥环 → `everyday mail list/read/search/send` 自动读取密码连接。
-//! 密码绝不落盘 config.toml。
+//! Flow: the config file stores account metadata (host/port/username) →
+//! `everyday mail login` stores the password in the system keyring →
+//! `everyday mail list/read/search/send` automatically reads it to connect.
+//! The password never lands in config.toml.
 
 use std::cmp::Reverse;
 use std::collections::HashMap;
@@ -181,7 +183,7 @@ impl Executor for EmailModule {
             .mail_account(flags.get("account").map(|s| s.as_str()))?;
 
         match action {
-            // login 不需要密码，只需账户元数据 + 交互输入
+            // login needs no password, only account metadata + interactive input
             "login" => mail_login(account).await,
             _ => {
                 let password = get_password(account)?;
@@ -198,9 +200,9 @@ impl Executor for EmailModule {
     }
 }
 
-// ============ keyring 凭证 ============
+// ============ keyring credentials ============
 
-/// 从系统密钥环读取账户密码。
+/// Read the account password from the system keyring.
 fn get_password(account: &MailAccount) -> Result<String> {
     let service = Config::keyring_service("mail", &account.name);
     let entry = keyring::Entry::new(&service, &account.username)
@@ -214,12 +216,12 @@ fn get_password(account: &MailAccount) -> Result<String> {
     })
 }
 
-/// 交互式输入密码并存入系统密钥环。
+/// Interactively prompt for the password and store it in the system keyring.
 async fn mail_login(account: &MailAccount) -> Result<Output> {
     let service = Config::keyring_service("mail", &account.name);
     let entry = keyring::Entry::new(&service, &account.username)
         .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    // rpassword 是同步的，放进 spawn_blocking 避免阻塞运行时。
+    // rpassword is sync; wrap in spawn_blocking to avoid blocking the runtime.
     let username = account.username.clone();
     let account_name = account.name.clone();
     let password = tokio::task::spawn_blocking(move || {
@@ -237,15 +239,15 @@ async fn mail_login(account: &MailAccount) -> Result<Output> {
     )))
 }
 
-// ============ IMAP 连接 ============
+// ============ IMAP connection ============
 
-// async-imap 基于 futures 的 AsyncRead/AsyncWrite，而 tokio-rustls 实现的是 tokio 的，
-// 用 tokio-util compat 桥接。
+// async-imap is built on futures' AsyncRead/AsyncWrite, while tokio-rustls
+// implements tokio's; bridge them with tokio-util compat.
 pub(crate) type ImapSession = async_imap::Session<Compat<TlsStream<TcpStream>>>;
 
-/// 建立 IMAPS（implicit TLS, 993）连接并登录。
+/// Establish an IMAPS (implicit TLS, 993) connection and log in.
 pub(crate) async fn imap_connect(account: &MailAccount, password: &str) -> Result<ImapSession> {
-    // 安装 rustls ring crypto provider（重复安装返回 Err，忽略即可）。
+    // Install the rustls ring crypto provider (re-installing returns Err; ignore it).
     let _ = rustls::crypto::ring::default_provider().install_default();
 
     let mut root_store = rustls::RootCertStore::empty();
@@ -279,9 +281,9 @@ pub(crate) async fn imap_connect(account: &MailAccount, password: &str) -> Resul
     Ok(session)
 }
 
-// ============ 动作实现 ============
+// ============ action implementations ============
 
-/// 列出邮箱所有文件夹（IMAP LIST）。
+/// List all mailbox folders (IMAP LIST).
 async fn mail_folders(account: &MailAccount, password: &str) -> Result<Output> {
     let mut session = imap_connect(account, password).await?;
     let folders = list_all_folders(&mut session).await?;
@@ -293,7 +295,7 @@ async fn mail_folders(account: &MailAccount, password: &str) -> Result<Output> {
     Ok(Output::records(vec!["folder".into()], rows))
 }
 
-/// 调用 IMAP LIST 列出所有文件夹名（过滤 \NoSelect）。
+/// Call IMAP LIST to list all folder names (filtering out \NoSelect).
 async fn list_all_folders(session: &mut ImapSession) -> Result<Vec<String>> {
     let names: Vec<async_imap::types::Name> = session
         .list(None, Some("*"))
@@ -305,7 +307,7 @@ async fn list_all_folders(session: &mut ImapSession) -> Result<Vec<String>> {
     let folders = names
         .iter()
         .filter(|n| {
-            // 跳过标记为 \NoSelect 的文件夹（无法 SELECT）
+            // Skip folders marked \NoSelect (cannot be SELECTed)
             !n.attributes()
                 .iter()
                 .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect))
@@ -315,10 +317,10 @@ async fn list_all_folders(session: &mut ImapSession) -> Result<Vec<String>> {
     Ok(folders)
 }
 
-/// 根据命令行 flags 解析要遍历的文件夹列表。
-/// - `--folder NAME`：仅该文件夹
-/// - 默认（递归）：所有文件夹
-/// - `--no-recursive`：仅 INBOX
+/// Resolve the folder list to traverse from CLI flags.
+/// - `--folder NAME`: only that folder
+/// - default (recursive): all folders
+/// - `--no-recursive`: only INBOX
 async fn resolve_folders(
     session: &mut ImapSession,
     flags: &HashMap<String, String>,
@@ -332,8 +334,9 @@ async fn resolve_folders(
     list_all_folders(session).await
 }
 
-/// 跨多个文件夹收集邮件摘要，合并、按 UID 降序、截断到 limit。
-/// 无法 SELECT 的文件夹（如 \NoSelect）会被跳过。
+/// Collect mail summaries across multiple folders, merge them, sort by UID
+/// descending and truncate to `limit`.
+/// Folders that cannot be SELECTed (e.g. \NoSelect) are skipped.
 async fn collect_across_folders(
     session: &mut ImapSession,
     folders: Vec<String>,
@@ -342,27 +345,27 @@ async fn collect_across_folders(
 ) -> Result<Vec<Vec<String>>> {
     let mut all_rows: Vec<Vec<String>> = Vec::new();
     for folder in &folders {
-        // select_folder 兼容原始编码名与解码后的中文名（用户 --folder 输入）
+        // select_folder accepts both the raw encoded name and the decoded Chinese name (user's --folder input)
         if select_folder(session, folder).await.is_err() {
-            continue; // 跳过无法选中的文件夹
+            continue; // skip folders that cannot be selected
         }
         let uids = match search_uids(session, search_query).await {
             Ok(u) => u,
-            Err(_) => continue, // 单个文件夹搜索失败不致命
+            Err(_) => continue, // a single folder's search failure is non-fatal
         };
-        // 显示用解码后的中文名，select 用原始编码名
+        // display uses the decoded Chinese name; select uses the raw encoded name
         let display_folder = decode_imap_utf7(folder);
-        // 每个文件夹取最近 limit 条作为全局候选，不提前 break —— 确保所有文件夹都参与
+        // take the most recent `limit` per folder as global candidates; do not break early so every folder participates
         let rows = fetch_summaries(session, uids, limit, &display_folder).await?;
         all_rows.extend(rows);
     }
-    // 全局按邮件日期降序（跨文件夹 UID 不连续，日期更准确）
+    // global sort by message date descending (cross-folder UIDs are not contiguous, so date is more accurate)
     all_rows.sort_by(|a, b| {
         let da = a.get(2).and_then(|s| parse_mail_date(s));
         let db = b.get(2).and_then(|s| parse_mail_date(s));
         match (da, db) {
             (Some(da), Some(db)) => db.cmp(&da),
-            (Some(_), None) => std::cmp::Ordering::Less, // 有日期的排前
+            (Some(_), None) => std::cmp::Ordering::Less, // dated entries sort first
             (None, Some(_)) => std::cmp::Ordering::Greater,
             (None, None) => std::cmp::Ordering::Equal,
         }
@@ -371,15 +374,18 @@ async fn collect_across_folders(
     Ok(all_rows)
 }
 
-/// 列出邮件摘要（默认递归所有文件夹）。
+/// List message summaries (recursively across all folders by default).
 ///
-/// 实现按 ADR [M002](../docs/adr/M002-imap-connection-pool.md)–[M005](../docs/adr/M005-staleness-auto-sync.md)：
-/// 1. 打开 `mail_cache.db`。
-/// 2. 解析目标 folders（一次临时 IMAP session 拿 LIST）。
-/// 3. staleness 检查（任一 folder `last_sync_at > 15min` 或无水位 → 触发 sync）。
-/// 4. `--sync` flag 强制立即 sync。
-/// 5. sync 走 `email_pool::Pool`（M=4）并发跨 folder 写 envelope + 更新水位。
-/// 6. 查本地 `envelopes` 表返回。
+/// Implementation per ADR [M002](../../docs/adr/M002-imap-connection-pool.md)–
+/// [M005](../../docs/adr/M005-staleness-auto-sync.md):
+/// 1. open `mail_cache.db`.
+/// 2. resolve target folders (one ad-hoc IMAP session to get LIST).
+/// 3. staleness check (any folder with `last_sync_at > 15min` or no watermark
+///    → trigger sync).
+/// 4. `--sync` flag forces an immediate sync.
+/// 5. sync goes through `email_pool::Pool` (M=4) concurrently across folders,
+///    writing envelopes + updating watermarks.
+/// 6. query the local `envelopes` table and return.
 async fn mail_list(
     account: &MailAccount,
     password: &str,
@@ -392,22 +398,22 @@ async fn mail_list(
         .unwrap_or(20);
     let force_sync = flags.contains_key("sync");
 
-    // 1. 打开本地缓存
+    // 1. open the local cache
     let cache = email_cache::open().await?;
 
-    // 2. 解析 folders（一次性临时 session；list 不持久化）
+    // 2. resolve folders (one-shot ad-hoc session; list is not persisted)
     let mut list_session = imap_connect(account, password).await?;
     let folders = resolve_folders(&mut list_session, flags).await?;
     list_session.logout().await.ok();
 
-    // 3. staleness 检查
+    // 3. staleness check
     let now = chrono::Utc::now();
     let mut needs_sync = force_sync;
     if !needs_sync {
         for folder in &folders {
             match email_cache::get_folder_state(&cache, &account.name, folder).await? {
                 None => {
-                    // 无水位 → 首次 sync
+                    // no watermark → first-time sync
                     needs_sync = true;
                     break;
                 }
@@ -420,17 +426,17 @@ async fn mail_list(
         }
     }
 
-    // 4. 必要时 sync（并发跨 folder，best-effort）
+    // 4. sync if needed (concurrent across folders, best-effort)
     let _sync_stats = if needs_sync {
         let pool = email_pool::Pool::new(account.clone(), password.to_string()).await?;
         let stats = sync_folders_concurrent(&pool, &cache, &account.name, &folders).await?;
-        // pool drop 时 session 静默丢弃
+        // sessions are dropped silently when the pool drops
         Some(stats)
     } else {
         None
     };
 
-    // 5. 查本地 envelope
+    // 5. query local envelopes
     let query = email_cache::EnvelopeQuery {
         folder: flags.get("folder").cloned(),
         unread_only: unread,
@@ -439,7 +445,7 @@ async fn mail_list(
     };
     let envelopes = email_cache::query_envelopes(&cache, &account.name, &query).await?;
 
-    // 6. 渲染表格行
+    // 6. render table rows
     let rows: Vec<Vec<String>> = envelopes
         .into_iter()
         .map(|e| {
@@ -465,14 +471,14 @@ async fn mail_list(
     ))
 }
 
-/// 读取单封邮件完整内容。
-/// - `--folder NAME`：仅在该文件夹查
-/// - 默认（递归）：遍历所有文件夹，返回首个命中该 UID 的邮件
-/// - `--no-recursive`：仅 INBOX
+/// Read a single message's full content.
+/// - `--folder NAME`: look only in that folder
+/// - default (recursive): walk all folders, return the first hit for the UID
+/// - `--no-recursive`: only INBOX
 ///
-/// 注意：IMAP UID 仅在单个文件夹内唯一，跨文件夹不唯一。`mail list` 默认递归
-/// 所有文件夹，故 `mail read` 不带 `--folder` 时也递归查找，保证 list 给出的
-/// uid 总能被 read 读到。
+/// Note: IMAP UIDs are unique only within a single folder, not across folders.
+/// `mail list` recurses by default, so `mail read` without `--folder` also
+/// recurses, guaranteeing any uid shown by list can be read.
 async fn mail_read(
     account: &MailAccount,
     password: &str,
@@ -488,15 +494,15 @@ async fn mail_read(
         .map_err(|_| AgentError::InvalidArgument("uid must be a number".into()))?;
 
     let mut session = imap_connect(account, password).await?;
-    // 与 list/search 一致：默认递归所有文件夹，--folder 指定单个，--no-recursive 仅 INBOX
+    // consistent with list/search: recurse all folders by default, --folder picks one, --no-recursive is INBOX only
     let folders = resolve_folders(&mut session, flags).await?;
 
-    // 遍历文件夹逐个尝试 uid_fetch，返回首个命中。UID 不存在的文件夹返回空集（不报错）。
+    // try uid_fetch per folder, return the first hit. Folders without the UID yield an empty set (no error).
     let mut last_err: Option<AgentError> = None;
     let mut found: Option<(async_imap::types::Fetch, String)> = None;
     for folder in &folders {
         if select_folder(&mut session, folder).await.is_err() {
-            continue; // 跳过无法 SELECT 的文件夹（如 \NoSelect）
+            continue; // skip folders that cannot be SELECTed (e.g. \NoSelect)
         }
         match session.uid_fetch(uid.to_string(), "(UID BODY[])").await {
             Ok(stream) => match stream.try_collect::<Vec<_>>().await {
@@ -505,7 +511,7 @@ async fn mail_read(
                         found = Some((f, decode_imap_utf7(folder)));
                         break;
                     }
-                    // 该文件夹无此 UID，继续下一个
+                    // this folder has no such UID; try the next
                 }
                 Err(e) => last_err = Some(AgentError::Network(format!("fetch collect: {e}"))),
             },
@@ -545,7 +551,7 @@ async fn mail_read(
     })
 }
 
-/// 搜索邮件（默认递归所有文件夹）。
+/// Search messages (recursively across all folders by default).
 async fn mail_search(
     account: &MailAccount,
     password: &str,
@@ -561,7 +567,7 @@ async fn mail_search(
 
     let mut session = imap_connect(account, password).await?;
     let folders = resolve_folders(&mut session, flags).await?;
-    // IMAP SEARCH TEXT "query" —— 转义双引号与反斜杠
+    // IMAP SEARCH TEXT "query" — escape double quotes and backslashes
     let escaped = query.replace('\\', "\\\\").replace('"', "\\\"");
     let search = format!("TEXT \"{escaped}\"");
     let rows = collect_across_folders(&mut session, folders, &search, limit).await?;
@@ -579,7 +585,7 @@ async fn mail_search(
     ))
 }
 
-/// 发送邮件（SMTP via lettre，STARTTLS）。
+/// Send a message (SMTP via lettre, STARTTLS).
 async fn mail_send(
     account: &MailAccount,
     password: &str,
@@ -635,9 +641,9 @@ async fn mail_send(
     Ok(Output::text(format!("sent to {to}")))
 }
 
-// ============ 辅助函数 ============
+// ============ helper functions ============
 
-/// 执行 IMAP SEARCH，返回 UID 列表（降序，最近的在前）。
+/// Run IMAP SEARCH, return UIDs in descending order (most recent first).
 async fn search_uids(session: &mut ImapSession, query: &str) -> Result<Vec<u32>> {
     let set: std::collections::HashSet<u32> = session
         .uid_search(query)
@@ -648,7 +654,7 @@ async fn search_uids(session: &mut ImapSession, query: &str) -> Result<Vec<u32>>
     Ok(uids)
 }
 
-/// 按 UID 批量 fetch 摘要，限制条数，返回表格行（含 folder 列）。
+/// Batch-fetch summaries by UID, capped to a count, returning table rows (with a folder column).
 async fn fetch_summaries(
     session: &mut ImapSession,
     mut uids: Vec<u32>,
@@ -674,7 +680,7 @@ async fn fetch_summaries(
 
     let mut rows: Vec<(u32, Vec<String>)> = Vec::with_capacity(fetches.len());
     for f in &fetches {
-        // 没 uid 或没 envelope 的 fetch 跳过（之前是 `let env = f.envelope(); ... continue`）
+        // skip fetches with no uid or no envelope (previously `let env = f.envelope(); ... continue`)
         let Some(fields) = extract_envelope_fields(f) else {
             continue;
         };
@@ -689,19 +695,21 @@ async fn fetch_summaries(
             ],
         ));
     }
-    // 按 UID 降序排列（fetch 顺序不保证）
+    // sort by UID descending (fetch order is not guaranteed)
     rows.sort_by_key(|r| Reverse(r.0));
     Ok(rows.into_iter().map(|(_, r)| r).collect())
 }
 
-/// IMAP `Envelope` 字段的统一提取。
+/// Unified extraction of IMAP `Envelope` fields.
 ///
-/// date / subject / from / to / message_id 都是 `Option<Cow<[u8]>>`，需要
-/// `from_utf8_lossy` 转 String；from/to 还要按"取首个 address + 拼 mailbox@host"。
+/// date / subject / from / to / message_id are all `Option<Cow<[u8]>>` and
+/// need `from_utf8_lossy` to become `String`; from/to additionally take the
+/// first address and build `mailbox@host`.
 ///
-/// 之前三个 fetch 函数（`fetch_summaries` / `fetch_envelopes_for_cache` /
-/// `fetch_timeline_summaries`）每处都重新写一遍这套 ~25 行模板。
-/// 集中到此处，三处调用即可。
+/// Previously the three fetch functions (`fetch_summaries` /
+/// `fetch_envelopes_for_cache` / `fetch_timeline_summaries`) each re-wrote
+/// this ~25-line template. Consolidated here; the three call sites just call
+/// it.
 struct EnvelopeFields {
     uid: u32,
     date: String,
@@ -753,7 +761,7 @@ fn extract_envelope_fields(f: &async_imap::types::Fetch) -> Option<EnvelopeField
     })
 }
 
-/// 格式化邮箱地址为 `mailbox@host`。
+/// Format a mailbox address as `mailbox@host`.
 fn format_mailbox(mailbox: Option<&str>, host: Option<&str>) -> String {
     let m = mailbox.unwrap_or("");
     let h = host.unwrap_or("");
@@ -764,12 +772,12 @@ fn format_mailbox(mailbox: Option<&str>, host: Option<&str>) -> String {
     }
 }
 
-/// 解码 MIME encoded-word（=?charset?B/Q?...?=）。
+/// Decode a MIME encoded-word (=?charset?B/Q?...?=).
 fn decode_mime_header(s: &str) -> String {
     if !s.contains("=?") {
         return s.to_string();
     }
-    // 借用 mailparse 解码：构造一个伪 header 让它解析。
+    // borrow mailparse's decoder: build a fake header for it to parse.
     let fake = format!("X-Decoded: {s}\r\n\r\n");
     if let Ok(parsed) = mailparse::parse_mail(fake.as_bytes()) {
         for h in &parsed.headers {
@@ -781,7 +789,7 @@ fn decode_mime_header(s: &str) -> String {
     s.to_string()
 }
 
-/// 从已解析邮件中取指定 header 的值（不区分大小写）。
+/// Get a header value from a parsed mail (case-insensitive).
 fn header_value(parsed: &mailparse::ParsedMail, key: &str) -> String {
     parsed
         .headers
@@ -791,8 +799,9 @@ fn header_value(parsed: &mailparse::ParsedMail, key: &str) -> String {
         .unwrap_or_default()
 }
 
-/// 提取邮件正文：优先 text/plain；为空则回退到 text/html 并转纯文本。
-/// 解决营销/通知类邮件（HTML-only）正文为空的问题。
+/// Extract the message body: prefer text/plain; if empty, fall back to
+/// text/html and strip it to plain text. Fixes empty bodies for
+/// marketing/notification mails (HTML-only).
 fn extract_body(parsed: &mailparse::ParsedMail) -> String {
     if let Some(plain) = find_body_by_type(parsed, "text/plain")
         && !plain.trim().is_empty()
@@ -805,7 +814,7 @@ fn extract_body(parsed: &mailparse::ParsedMail) -> String {
     parsed.get_body().unwrap_or_default()
 }
 
-/// 递归查找第一个指定 Content-Type 的叶子部分的正文。
+/// Recursively find the body of the first leaf part with the given Content-Type.
 fn find_body_by_type(part: &mailparse::ParsedMail, mime: &str) -> Option<String> {
     if part.ctype.mimetype == mime
         && let Ok(body) = part.get_body()
@@ -820,29 +829,30 @@ fn find_body_by_type(part: &mailparse::ParsedMail, mime: &str) -> Option<String>
     None
 }
 
-/// HTML → 纯文本：去标签、跳过 script/style、块级元素转换行、
-/// 解码常见实体（&amp; &lt; &gt; &quot; &apos; &#39; &nbsp;）、折叠空白。
+/// HTML → plain text: strip tags, skip script/style, convert block elements
+/// to newlines, decode common entities (&amp; &lt; &gt; &quot; &apos; &#39;
+/// &nbsp;), and collapse whitespace.
 fn html_to_text(html: &str) -> String {
     let mut out = String::with_capacity(html.len());
     let mut chars = html.chars().peekable();
-    let mut skip_content = false; // 处于 script/style 内，丢弃文本
+    let mut skip_content = false; // inside script/style; discard text
     while let Some(c) = chars.next() {
         if c == '<' {
             let mut name = String::new();
-            // '<' 之后若紧跟 '/' 则为闭合标签
+            // a '/' immediately after '<' means a closing tag
             let closing = matches!(chars.peek(), Some(&'/'));
             if closing {
                 chars.next();
             }
             while let Some(&nc) = chars.peek() {
-                // 标签名在 '>', '/'（自闭合如 <br/>）, 或空白处结束
+                // tag name ends at '>', '/' (self-closing like <br/>), or whitespace
                 if nc == '>' || nc == '/' || nc.is_whitespace() {
                     break;
                 }
                 name.push(nc);
                 chars.next();
             }
-            // 跳到 '>' 结束标签
+            // skip to the '>' that closes the tag
             while let Some(&nc) = chars.peek() {
                 chars.next();
                 if nc == '>' {
@@ -868,8 +878,9 @@ fn html_to_text(html: &str) -> String {
     collapse_whitespace(&out)
 }
 
-/// 从 chars 当前位置（紧跟在 '&' 之后）读取一个 HTML 实体到 ';' 或空白。
-/// 已知实体返回解码字符；未知原样返回（含前导 '&')。
+/// Read an HTML entity from the current position (right after '&') up to ';'
+/// or whitespace. Known entities return the decoded char; unknown ones are
+/// returned verbatim (including the leading '&').
 fn decode_entity(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
     let mut ent = String::new();
     let mut terminated = false;
@@ -885,7 +896,7 @@ fn decode_entity(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
         ent.push(c);
         chars.next();
         if ent.len() > 10 {
-            break; // 安全上限，防畸形输入
+            break; // safety cap against malformed input
         }
     }
     let with_amp = format!("&{ent}{}", if terminated { ";" } else { "" });
@@ -900,7 +911,8 @@ fn decode_entity(chars: &mut std::iter::Peekable<std::str::Chars>) -> String {
     }
 }
 
-/// 折叠空白：行内连续空白压成单空格，连续空行压成单空行，去首尾空白。
+/// Collapse whitespace: inline runs become a single space, consecutive blank
+/// lines become a single blank line, trim leading/trailing.
 fn collapse_whitespace(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let mut prev_blank = false;
@@ -935,11 +947,13 @@ fn collapse_whitespace(s: &str) -> String {
     out.trim().to_string()
 }
 
-/// 解码 IMAP UTF-7 文件夹名（RFC 3501 §5.1.3）为可读 UTF-8。
+/// Decode an IMAP UTF-7 folder name (RFC 3501 §5.1.3) into readable UTF-8.
 ///
-/// 规则：`&` 起始、`-` 结尾的段是 modified base64 编码的 UTF-16BE；`&-` 表示字面 `&`；
-/// 其余字符透传。用 `char` 迭代以正确处理 UTF-8（用户可能直接传入中文名，无 `&` 段）。
-/// 例如 `&UXZO1mWHTvZZOQ-/Github&kBp35Q-` → `其他文件夹/Github通知`。
+/// Rule: a segment starting with `&` and ending with `-` is modified base64
+/// encoding of UTF-16BE; `&-` means a literal `&`; all other characters pass
+/// through. We iterate by `char` to handle UTF-8 correctly (the user may pass a
+/// Chinese name directly, with no `&` segment).
+/// Example: `&UXZO1mWHTvZZOQ-/Github&kBp35Q-` → `其他文件夹/Github通知`.
 fn decode_imap_utf7(s: &str) -> String {
     let mut out = String::new();
     let mut chars = s.chars().peekable();
@@ -956,17 +970,17 @@ fn decode_imap_utf7(s: &str) -> String {
                 segment.push(nc);
             }
             if !found_terminator {
-                // 无结束 '-'，原样输出
+                // no terminating '-', emit as-is
                 out.push('&');
                 out.push_str(&segment);
                 break;
             }
             if segment.is_empty() {
-                out.push('&'); // &- → 字面 &
+                out.push('&'); // &- → literal &
             } else if let Some(decoded) = decode_modified_base64_utf16(segment.as_bytes()) {
                 out.push_str(&decoded);
             } else {
-                // 解码失败，保留原始段
+                // decode failed, keep the original segment
                 out.push('&');
                 out.push_str(&segment);
                 out.push('-');
@@ -978,7 +992,7 @@ fn decode_imap_utf7(s: &str) -> String {
     out
 }
 
-/// modified base64（`,` 替代 `/`，无 padding）→ UTF-16BE → String。
+/// modified base64 (`,` replaces `/`, no padding) → UTF-16BE → String.
 fn decode_modified_base64_utf16(b64: &[u8]) -> Option<String> {
     let raw = decode_base64_modified(b64)?;
     if raw.len() % 2 != 0 {
@@ -991,7 +1005,7 @@ fn decode_modified_base64_utf16(b64: &[u8]) -> Option<String> {
     String::from_utf16(&u16s).ok()
 }
 
-/// modified base64 解码（无依赖，手写）。
+/// modified base64 decode (dependency-free, hand-written).
 fn decode_base64_modified(input: &[u8]) -> Option<Vec<u8>> {
     const TABLE: [i8; 256] = build_b64_table();
     let mut out = Vec::new();
@@ -1015,7 +1029,8 @@ fn decode_base64_modified(input: &[u8]) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// 构建 base64 查找表（const fn，编译期计算）。`,` 映射到 63（modified base64 用 `,` 替 `/`）。
+/// Build the base64 lookup table (const fn, computed at compile time).
+/// `,` maps to 63 (modified base64 uses `,` instead of `/`).
 const fn build_b64_table() -> [i8; 256] {
     let mut t = [-1i8; 256];
     let alpha = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -1028,7 +1043,8 @@ const fn build_b64_table() -> [i8; 256] {
     t
 }
 
-/// 解析 RFC 2822 邮件日期，用于跨文件夹按时间排序。容错：去掉括号注释如 "(UTC)"。
+/// Parse an RFC 2822 mail date, used for cross-folder time sorting.
+/// Tolerant: strips parenthesis comments like "(UTC)".
 fn parse_mail_date(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
     let cleaned = s.split('(').next().unwrap_or("").trim_end();
     chrono::DateTime::parse_from_rfc2822(cleaned)
@@ -1036,11 +1052,13 @@ fn parse_mail_date(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
         .or_else(|| chrono::DateTime::parse_from_rfc2822(s).ok())
 }
 
-/// 选中文件夹：先直接尝试（INBOX / ASCII / 原始编码名），
-/// 失败则遍历所有文件夹匹配解码后的中文名。兼容用户输入中文或原始名。
+/// Select a folder: try directly first (INBOX / ASCII / raw encoded name),
+/// then fall back to scanning all folders and matching the decoded Chinese name.
+/// Accepts either a Chinese name or a raw name supplied by the user.
 ///
-/// IMAP `SELECT` 始终返回 `Mailbox`（含 `uid_validity` 等元数据），
-/// 一并返回。多数调用方不需要 Mailbox，用 `select_folder()` 包装即可。
+/// IMAP `SELECT` always returns a `Mailbox` (with `uid_validity` and other
+/// metadata), which we also return. Most callers don't need the Mailbox, so use
+/// the `select_folder()` wrapper instead.
 async fn select_folder_inner(
     session: &mut ImapSession,
     folder: &str,
@@ -1062,13 +1080,13 @@ async fn select_folder_inner(
     )))
 }
 
-/// `select_folder_inner` 的 `Result<()>` 版本，丢弃 Mailbox 元数据。
+/// `Result<()>` wrapper around `select_folder_inner`, discarding the Mailbox metadata.
 async fn select_folder(session: &mut ImapSession, folder: &str) -> Result<()> {
     select_folder_inner(session, folder).await.map(|_| ())
 }
 
-/// 把 `Flag` 迭代器格式化为 IMAP 风格的空格分隔字符串（如 `\Seen \Answered`）。
-/// 自定义 keyword 不带 `\` 前缀。
+/// Format a `Flag` iterator into an IMAP-style space-separated string
+/// (e.g. `\Seen \Answered`). Custom keywords carry no `\` prefix.
 fn format_imap_flags<'a, I>(flags: I) -> String
 where
     I: Iterator<Item = async_imap::types::Flag<'a>>,
@@ -1088,8 +1106,8 @@ where
         .join(" ")
 }
 
-/// 把 IMAP envelope date 字符串（RFC 2822）解析为 RFC3339 UTC。
-/// 解析失败时回退原字符串（避免 sync 中断）。
+/// Parse an IMAP envelope date string (RFC 2822) into RFC3339 UTC.
+/// On parse failure, fall back to the original string (to avoid breaking sync).
 fn parse_envelope_date_utc(raw: &str) -> String {
     if let Some(cleaned) = raw.split('(').next() {
         let cleaned = cleaned.trim();
@@ -1103,8 +1121,9 @@ fn parse_envelope_date_utc(raw: &str) -> String {
     raw.to_string()
 }
 
-/// 按 UID 批量 fetch envelope + flags + size，返回 `CachedEnvelope` 列表。
-/// `account` / `fetched_at` 字段由 sync_one_folder 在 upsert 前填。
+/// Batch-fetch envelope + flags + size by UID, returning a list of
+/// `CachedEnvelope`. The `account` / `fetched_at` fields are filled by
+/// sync_one_folder before the upsert.
 async fn fetch_envelopes_for_cache(
     session: &mut ImapSession,
     uids: &[u32],
@@ -1135,7 +1154,7 @@ async fn fetch_envelopes_for_cache(
         let flags = format_imap_flags(f.flags());
 
         envelopes.push(crate::modules::email_cache::CachedEnvelope {
-            account: String::new(), // 由 sync_one_folder 填
+            account: String::new(), // filled by sync_one_folder
             folder: folder.to_string(),
             uid: fields.uid,
             date: parse_envelope_date_utc(&decode_mime_header(&fields.date)),
@@ -1149,13 +1168,13 @@ async fn fetch_envelopes_for_cache(
             } else {
                 Some(fields.to)
             },
-            fetched_at: String::new(), // 由 upsert_envelopes 填
+            fetched_at: String::new(), // filled by upsert_envelopes
         });
     }
     Ok(envelopes)
 }
 
-/// 单 folder sync 结果（用于汇总输出 / 调试）。
+/// Per-folder sync result (used for summary output / debugging).
 #[derive(Debug, Default)]
 struct SyncStats {
     folders_synced: usize,
@@ -1163,8 +1182,10 @@ struct SyncStats {
     errors: Vec<(String, String)>,
 }
 
-/// 单 folder sync：SELECT 拿 uid_validity → 比对水位 → UIDSEARCH → UID FETCH → upsert。
-/// best-effort：失败时 `invalidate()` session + 计入 errors，水位不前进。
+/// Sync a single folder: SELECT to read uid_validity → compare the watermark →
+/// UIDSEARCH → UID FETCH → upsert.
+/// Best-effort: on failure `invalidate()` the session and record the error into
+/// `errors`, but do not advance the watermark.
 async fn sync_one_folder(
     pool: &email_pool::Pool,
     cache: &sqlx::SqlitePool,
@@ -1177,7 +1198,7 @@ async fn sync_one_folder(
     };
     let session = guard.session()?;
 
-    // SELECT folder → uid_validity
+    // SELECT folder → read uid_validity
     let mailbox = match select_folder_inner(session, folder).await {
         Ok(mb) => mb,
         Err(e) => {
@@ -1187,11 +1208,11 @@ async fn sync_one_folder(
     };
     let new_uid_validity = mailbox.uid_validity.unwrap_or(0) as u32;
 
-    // 读本地水位，决定 search query
+    // read the local watermark to decide the search query
     let search_query = match email_cache::get_folder_state(cache, account, folder).await? {
         None => "UID 1:*".to_string(),
         Some(state) if state.uid_validity != new_uid_validity => {
-            // UIDVALIDITY 失效 → 清空水位，下一轮当首次处理
+            // UIDVALIDITY changed → clear watermark, treat as first pass next round
             email_cache::clear_folder(cache, account, folder).await?;
             "UID 1:*".to_string()
         }
@@ -1208,7 +1229,7 @@ async fn sync_one_folder(
     };
 
     if uids.is_empty() {
-        // 无新邮件，仍更新 last_sync_at + uid_validity（空水位 max_uid=0）
+        // no new mail; still update last_sync_at + uid_validity (empty watermark has max_uid=0)
         email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &[]).await?;
         return Ok(0);
     }
@@ -1223,13 +1244,14 @@ async fn sync_one_folder(
     };
 
     let count = envelopes.len();
-    // 写 envelope + 更新水位（事务原子，ADR M004 强一致）
+    // write envelopes + advance watermark (atomic transaction, strong consistency per [M004](../../docs/adr/M004-uid-watermark-sync.md))
     email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &envelopes).await?;
     Ok(count)
 }
 
-/// 并发跨 folder sync：使用 `futures::future::join_all` 等待全部结束。
-/// 单 folder 失败不阻塞其他，结果汇入 `SyncStats.errors`。
+/// Sync across folders concurrently, using `futures::future::join_all` to await
+/// all of them. A single folder's failure does not block the others; failures are
+/// accumulated into `SyncStats.errors`.
 async fn sync_folders_concurrent(
     pool: &email_pool::Pool,
     cache: &sqlx::SqlitePool,
@@ -1261,9 +1283,9 @@ async fn sync_folders_concurrent(
     Ok(stats)
 }
 
-// ============ Timeline 数据拉取 ============
+// ============ Timeline data fetch ============
 
-/// Timeline 拉取用：邮件条目原始数据。
+/// Raw mail entry data used for Timeline fetching.
 pub struct MailTimelineEntry {
     pub uid: u32,
     pub folder: String,
@@ -1272,11 +1294,11 @@ pub struct MailTimelineEntry {
     pub subject: String,
 }
 
-/// Timeline 增量拉取：IMAP SEARCH SINCE <from_date>，跨所有文件夹，
-/// 返回窗口内收到的邮件。
+/// Incremental Timeline fetch: IMAP SEARCH SINCE <from_date>, across all folders,
+/// returning the mails received within the window.
 ///
-/// IMAP SEARCH SINCE 只支持日期（无时间），客户端侧按精确 timestamp 过滤。
-/// 需要从 keyring 读取密码。
+/// IMAP SEARCH SINCE only supports dates (no time), so the client filters by the
+/// exact timestamp. The password is read from the keyring.
 pub async fn fetch_for_timeline(
     account: &MailAccount,
     from: chrono::DateTime<chrono::Utc>,
@@ -1296,7 +1318,7 @@ pub async fn fetch_for_timeline(
         if select_folder(&mut session, folder).await.is_err() {
             continue;
         }
-        // IMAP SEARCH SINCE <date>（date-only，返回当天及以后的邮件）
+        // IMAP SEARCH SINCE <date> (date-only, returns mails from that day onward)
         let search = format!("SINCE {from_date}");
         let uids = match search_uids(&mut session, &search).await {
             Ok(u) => u,
@@ -1310,13 +1332,13 @@ pub async fn fetch_for_timeline(
     Ok(all_entries)
 }
 
-/// 按 UID 批量 fetch 摘要（timeline 用），只取 envelope 字段。
+/// Batch-fetch summaries by UID (for Timeline use), taking only envelope fields.
 async fn fetch_timeline_summaries(
     session: &mut ImapSession,
     mut uids: Vec<u32>,
     folder: &str,
 ) -> Result<Vec<MailTimelineEntry>> {
-    uids.truncate(500); // 防止过大 fetch
+    uids.truncate(500); // cap the fetch size
     if uids.is_empty() {
         return Ok(Vec::new());
     }
@@ -1360,7 +1382,7 @@ mod tests {
 
     #[test]
     fn decode_utf8_base64_subject() {
-        // =?UTF-8?B?5L2g5aW9? = "你好"
+        // =?UTF-8?B?5L2g5aW9? decodes to "你好"
         let s = "=?UTF-8?B?5L2g5aW9?=";
         assert_eq!(decode_mime_header(s), "你好");
     }
@@ -1390,7 +1412,8 @@ mod tests {
 
     #[test]
     fn imap_utf7_chinese_passthrough() {
-        // 用户直接传入中文名（无 & 段），应原样透传不破坏 UTF-8
+        // user passes a Chinese name directly (no & segment); it should pass
+        // through verbatim without corrupting UTF-8
         assert_eq!(
             decode_imap_utf7("其他文件夹/Github通知"),
             "其他文件夹/Github通知"
@@ -1399,7 +1422,7 @@ mod tests {
 
     #[test]
     fn imap_utf7_ampersand_escape() {
-        // &- 表示字面 &
+        // &- means a literal &
         assert_eq!(decode_imap_utf7("A&-B"), "A&B");
     }
 
@@ -1411,7 +1434,7 @@ mod tests {
 
     #[test]
     fn imap_utf7_mixed_chinese_and_ascii() {
-        // "其他文件夹" 前缀 + "/Github"
+        // "其他文件夹" prefix + "/Github"
         let decoded = decode_imap_utf7("&UXZO1mWHTvZZOQ-/Github&kBp35Q-");
         assert!(
             decoded.chars().any(|c| c as u32 > 127),
@@ -1422,14 +1445,14 @@ mod tests {
 
     #[test]
     fn imap_utf7_no_terminator_fallback() {
-        // 无结束 '-'，原样输出不 panic
+        // no terminating '-', emit as-is without panicking
         assert_eq!(decode_imap_utf7("test&abc"), "test&abc");
     }
 
     #[test]
     fn imap_utf7_roundtrip_known() {
         // "你好" → UTF-16BE 4F60 597D → base64: 4F 60 59 → 010011 110110 000001 011001 = T 2 B Z
-        // 剩余 7D → 011111 01(pad) = f Q → "T2BZfQ"
+        // remaining 7D → 011111 01(pad) = f Q → "T2BZfQ"
         assert_eq!(decode_imap_utf7("&T2BZfQ-"), "你好");
     }
 
@@ -1454,7 +1477,7 @@ mod tests {
 
     #[test]
     fn search_query_escapes_quotes() {
-        // 验证转义逻辑（间接：构造与断言）
+        // verify the escaping logic (indirectly: construct and assert)
         let q = "he said \"hi\"";
         let escaped = q.replace('\\', "\\\\").replace('"', "\\\"");
         assert_eq!(escaped, "he said \\\"hi\\\"");
@@ -1479,7 +1502,7 @@ mod tests {
     #[test]
     fn html_to_text_skips_script_style() {
         let html = "<style>body{}</style>x<script>alert(1)</script>y";
-        // script/style 内容被丢弃，但标签本身不引入换行
+        // script/style content is dropped, but the tags themselves introduce no newline
         assert_eq!(html_to_text(html), "xy");
     }
 
@@ -1498,7 +1521,8 @@ mod tests {
     #[test]
     fn html_to_text_collapses_whitespace() {
         let html = "<p>  spaced   out  </p>\n\n\n<p>next</p>";
-        // 源中多个空行 → 压成单个空行做段落分隔；行内连续空白压成单空格
+        // multiple blank lines in source → collapsed to a single blank line as
+        // paragraph separator; inline whitespace runs → a single space
         assert_eq!(html_to_text(html), "spaced out\n\nnext");
     }
 
@@ -1519,7 +1543,7 @@ mod tests {
 
     #[test]
     fn extract_body_falls_back_to_html() {
-        // text/plain 为空 → 回退 html 并去标签
+        // text/plain empty → fall back to html with tags stripped
         let raw = b"Content-Type: multipart/alternative; boundary=\"b\"\r\n\r\n\
 --b\r\nContent-Type: text/plain; charset=utf-8\r\n\r\n\r\n\
 --b\r\nContent-Type: text/html\r\n\r\n<p>html <b>only</b> body</p>\r\n\

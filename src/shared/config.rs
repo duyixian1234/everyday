@@ -1,8 +1,10 @@
-//! 配置加载与多账户管理。
+//! Config loading and multi-account management.
 //!
-//! 配置文件路径：`~/.config/everyday/config.toml`（跨平台经 `dirs` 解析）。
-//! 每个模块支持多个命名账户，顶层 `default_account` 指定默认账户名。
-//! **密码绝不存配置文件**，走系统密钥环（见 `agents.md` 安全红线）。
+//! Config file: `~/.config/everyday/config.toml` (resolved cross-platform
+//! via `dirs`). Each module supports multiple named accounts; the top-level
+//! `default_account` selects the default account name.
+//! **Secrets are never stored in the config file** — they live in the OS
+//! keyring (see the security red line in [agents.md](../../agents.md)).
 
 use std::path::{Path, PathBuf};
 
@@ -10,14 +12,17 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AgentError, Result};
 
-/// 宏：展开 5 个 `X_account()` 模板方法（mail/calendar/note/todo/bookmark）。
+/// Macro: expands the 5 `X_account()` template methods
+/// (mail/calendar/note/todo/bookmark).
 ///
-/// 每个方法做三件事：
-/// 1. 选 `override_name` > 默认 > 报错
-/// 2. 在对应模块的 accounts 里按名字找
-/// 3. 没找到 → AccountNotFound
+/// Each method does three things:
+/// 1. pick `override_name` > default > error
+/// 2. find by name within the module's accounts
+/// 3. not found → AccountNotFound
 ///
-/// 之前 5 个方法逐字复制约 75 行，宏展开后 5 行调用。
+/// The 5 methods used to be ~75 lines of copy-paste; the macro
+/// collapses that to 5 call sites.
+/// See [R007](../../docs/adr/R007-config-account-macro.md).
 macro_rules! impl_account_lookup {
     ($name:ident, $module:literal, $field:ident, $account:ty) => {
         #[doc = concat!("解析 ", $module, " 账户：优先 `override_name`，其次默认，最后报错。")]
@@ -38,75 +43,75 @@ macro_rules! impl_account_lookup {
     };
 }
 
-/// 顶层配置。
+/// Top-level configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
-    /// 各模块的默认账户名映射。
+    /// Per-module default account name mapping.
     #[serde(default)]
     pub default_account: DefaultAccount,
 
-    /// 邮件模块配置。
+    /// Mail module configuration.
     #[serde(default)]
     pub mail: MailConfig,
 
-    /// 日历模块配置。
+    /// Calendar module configuration.
     #[serde(default)]
     pub calendar: CalendarConfig,
 
-    /// RSS 模块配置。
+    /// RSS module configuration.
     #[serde(default)]
     pub rss: RssConfig,
 
-    /// 笔记模块配置。
+    /// Note module configuration.
     #[serde(default)]
     pub note: NoteConfig,
 
-    /// 待办模块配置（基于 Notion）。
+    /// Todo module configuration (Notion-backed).
     #[serde(default)]
     pub todo: TodoConfig,
 
-    /// 书签模块配置。
+    /// Bookmark module configuration.
     #[serde(default)]
     pub bookmark: BookmarkConfig,
 }
 
-/// 各模块默认账户名。
+/// Per-module default account names.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct DefaultAccount {
-    /// 默认邮件账户名。
+    /// Default mail account name.
     #[serde(default)]
     pub mail: Option<String>,
-    /// 默认日历账户名。
+    /// Default calendar account name.
     #[serde(default)]
     pub calendar: Option<String>,
 
-    /// 默认笔记账户名。
+    /// Default note account name.
     #[serde(default)]
     pub note: Option<String>,
 
-    /// 默认待办账户名。
+    /// Default todo account name.
     #[serde(default)]
     pub todo: Option<String>,
 
-    /// 默认书签账户名。
+    /// Default bookmark account name.
     #[serde(default)]
     pub bookmark: Option<String>,
 }
 
-// ---- 邮件 ----
+// ---- Mail ----
 
-/// 邮件模块配置。
+/// Mail module configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct MailConfig {
-    /// 命名账户列表。
+    /// Named account list.
     #[serde(default)]
     pub accounts: Vec<MailAccount>,
 }
 
-/// 单个邮件账户。密码不存这里，走 keyring。
+/// A single mail account. Password is NOT stored here — it lives in the keyring.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MailAccount {
-    /// 账户名（如 `work`、`personal`）。
+    /// Account name (e.g. `work`, `personal`).
     pub name: String,
     pub imap_host: String,
     #[serde(default = "default_imap_port")]
@@ -115,7 +120,7 @@ pub struct MailAccount {
     #[serde(default = "default_smtp_port")]
     pub smtp_port: u16,
     pub username: String,
-    /// 可选：是否使用 SSL/TLS。
+    /// Optional: whether to use SSL/TLS.
     #[serde(default = "default_true")]
     pub tls: bool,
 }
@@ -130,41 +135,42 @@ fn default_true() -> bool {
     true
 }
 
-// ---- 日历 ----
+// ---- Calendar ----
 
-/// 日历模块配置。
+/// Calendar module configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct CalendarConfig {
     #[serde(default)]
     pub accounts: Vec<CalendarAccount>,
 }
 
-/// 单个日历账户（CalDAV）。
+/// A single calendar account (CalDAV).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CalendarAccount {
     pub name: String,
     pub caldav_url: String,
     pub username: String,
-    /// 该账户需要忽略的日历名称（按 displayname 匹配，不区分大小写）。
+    /// Calendar names to ignore for this account (matched case-insensitively
+    /// against the display name).
     ///
-    /// 配置示例（写在 `[[calendar.accounts]]` 下）：
-    /// `ignore_calendars = ["好友生日", "Tasks"]`
-    /// 被忽略的日历不会出现在 `cal calendars` / `cal list` / `cal add` 中。
+    /// Config example (under `[[calendar.accounts]]`):
+    /// `ignore_calendars = ["friend's birthday", "Tasks"]`
+    /// Ignored calendars never appear in `cal calendars` / `cal list` / `cal add`.
     #[serde(default)]
     pub ignore_calendars: Vec<String>,
 }
 
 // ---- RSS ----
 
-/// RSS 模块配置。
+/// RSS module configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct RssConfig {
-    /// 订阅源列表。
+    /// Subscription feed list.
     #[serde(default)]
     pub feeds: Vec<RssFeed>,
 }
 
-/// 单个 RSS 源。
+/// A single RSS feed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RssFeed {
     pub name: String,
@@ -173,36 +179,40 @@ pub struct RssFeed {
     pub category: Option<String>,
 }
 
-// ---- 笔记 (note) ----
+// ---- Note ----
 
-/// 笔记模块配置。
+/// Note module configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct NoteConfig {
-    /// 命名账户列表。
+    /// Named account list.
     #[serde(default)]
     pub accounts: Vec<NoteAccount>,
 }
 
-/// 单个笔记账户。
+/// A single note account.
 ///
-/// `provider` 字段支持 `local`/`sqlite`（本地 SQLite，**默认**）与 `notion`
-/// （远程 Notion）。为未来扩展预留（如 `obsidian` 本地目录、`feishu` 文档等）。
-/// 凭证（Notion Integration Token）绝不存配置文件，走 keyring（service = `everyday/note/<account>`）。
+/// The `provider` field accepts `local`/`sqlite` (local SQLite, **default**)
+/// and `notion` (remote Notion). Reserved for future backends
+/// (e.g. `obsidian` local dir, `feishu` docs).
+/// Credentials (Notion Integration Token) are never stored in the config
+/// file — they live in the keyring (service = `everyday/note/<account>`).
+/// See [F005](../../docs/adr/F005-default-provider-local.md).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteAccount {
-    /// 账户名（如 `personal`、`work`）。
+    /// Account name (e.g. `personal`, `work`).
     pub name: String,
-    /// 后端提供方：`local`/`sqlite`（本地 SQLite，默认）或 `notion`（远程 Notion）。
+    /// Backend provider: `local`/`sqlite` (local SQLite, default) or
+    /// `notion` (remote Notion).
     #[serde(default = "default_provider")]
     pub provider: String,
-    /// 默认数据库 ID：用于 `note create` 未显式指定 `--db` 时。
+    /// Default database ID: used when `note create` omits `--db`.
     #[serde(default)]
     pub default_database_id: Option<String>,
-    /// 默认页面 ID：用于 `note append`/`note read` 未显式指定 page_id 时。
+    /// Default page ID: used when `note append`/`note read` omit page_id.
     #[serde(default)]
     pub default_page_id: Option<String>,
-    /// 本地 provider 的 SQLite 文件路径（仅 `local`/`sqlite` provider 使用）。
-    /// 缺省时用 `~/.config/everyday/note-<account>.db`。
+    /// SQLite file path for the local provider (only `local`/`sqlite`).
+    /// Defaults to `~/.config/everyday/note-<account>.db`.
     #[serde(default)]
     pub db_path: Option<String>,
 }
@@ -211,73 +221,80 @@ fn default_provider() -> String {
     "local".to_string()
 }
 
-// ---- 待办 (todo) ----
+// ---- Todo ----
 
-/// 待办模块配置（基于 Notion 的任务数据库）。
+/// Todo module configuration (Notion-backed task database).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TodoConfig {
-    /// 命名账户列表。
+    /// Named account list.
     #[serde(default)]
     pub accounts: Vec<TodoAccount>,
 }
 
-/// 单个 notion+local provider 账户的公共字段。
+/// Shared fields for a Notion + local provider account.
 ///
-/// `TodoAccount` 与 `BookmarkAccount` 之前是逐字复制的关系（5 个字段完全一致）；
-/// 共享此 struct + type alias。`NoteAccount` 暂保留独立类型，因为它有
-/// `default_page_id` 字段（"新笔记写到哪个页面"），与 todo/bookmark 的
-/// `parent_page_id`（"init-db 时把数据库建在哪个页面下"）语义不同。
+/// `TodoAccount` and `BookmarkAccount` used to be byte-for-byte copies
+/// (all 5 fields identical); this struct + type alias dedup them.
+/// `NoteAccount` stays a separate type because its `default_page_id`
+/// ("which page new notes go to") differs in meaning from the
+/// `parent_page_id` ("which page the DB is built under at init-db")
+/// used by todo/bookmark.
+/// See [R010](../../docs/adr/R010-notion-local-account.md).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotionLocalAccount {
-    /// 账户名（如 `personal`、`work`）。
+    /// Account name (e.g. `personal`, `work`).
     pub name: String,
-    /// 后端提供方：`local`/`sqlite`（本地 SQLite，默认）或 `notion`（远程 Notion）。
+    /// Backend provider: `local`/`sqlite` (local SQLite, default) or
+    /// `notion` (remote Notion).
     #[serde(default = "default_provider")]
     pub provider: String,
-    /// 创建数据库时的父级页面 ID（非机密，可落盘）。
+    /// Parent page ID when creating the database (non-secret, on-disk).
     #[serde(default)]
     pub parent_page_id: Option<String>,
-    /// 默认数据库 ID（`init-db` 后回填；缺省时由 `--db` 显式指定）。
+    /// Default database ID (filled back after `init-db`; explicit
+    /// `--db` when absent).
     #[serde(default)]
     pub default_database_id: Option<String>,
-    /// 本地 provider 的 SQLite 文件路径（仅 `local`/`sqlite` provider 使用）。
-    /// 缺省时用 `~/.config/everyday/<module>-<account>.db`。
+    /// SQLite file path for the local provider (only `local`/`sqlite`).
+    /// Defaults to `~/.config/everyday/<module>-<account>.db`.
     #[serde(default)]
     pub db_path: Option<String>,
 }
 
-/// 单个待办账户。
+/// A single todo account.
 ///
-/// 共享 `NotionLocalAccount` 字段；type alias 保留向后兼容（构造代码用
-/// `TodoAccount { .. }` 仍可工作 —— 通过 Default 实现填充零值）。
+/// Shares `NotionLocalAccount` fields; the type alias keeps
+/// backward compat (constructors using `TodoAccount { .. }` still
+/// work — zero fields are filled by the Default impl).
 pub type TodoAccount = NotionLocalAccount;
 
-// ---- 书签 (bookmark) ----
+// ---- Bookmark ----
 
-/// 书签模块配置。
+/// Bookmark module configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct BookmarkConfig {
-    /// 命名账户列表。
+    /// Named account list.
     #[serde(default)]
     pub accounts: Vec<BookmarkAccount>,
 }
 
-/// 单个书签账户。
+/// A single bookmark account.
 ///
-/// 共享 `NotionLocalAccount` 字段；type alias 保留向后兼容。
+/// Shares `NotionLocalAccount` fields; the type alias keeps
+/// backward compat.
 pub type BookmarkAccount = NotionLocalAccount;
 
-// ---- 加载 / 保存 ----
+// ---- Load / Save ----
 
 impl Config {
-    /// 返回配置文件标准路径。
+    /// Return the canonical config file path.
     pub fn config_path() -> Result<PathBuf> {
         let dir = dirs::config_dir()
             .ok_or_else(|| AgentError::Config("cannot determine config directory".into()))?;
         Ok(dir.join("everyday").join("config.toml"))
     }
 
-    /// 从指定路径加载。
+    /// Load from an explicit path.
     pub fn load_from(path: &Path) -> Result<Self> {
         let text = std::fs::read_to_string(path)?;
         if text.trim().is_empty() {
@@ -287,7 +304,7 @@ impl Config {
         Ok(cfg)
     }
 
-    /// 从默认路径加载；文件不存在则返回默认配置（不报错）。
+    /// Load from the default path; missing file → default config (no error).
     pub fn load_or_default() -> Result<Self> {
         let path = Self::config_path()?;
         if !path.exists() {
@@ -296,17 +313,20 @@ impl Config {
         Self::load_from(&path)
     }
 
-    // ---- 账户查找 ----
+    // ---- Account lookup ----
 
-    // 五个 `X_account()` 方法原本逐字复制这一段约 15 行模板代码。
-    // 用宏抽出来：编译期展开，无运行时开销。
+    // The five `X_account()` methods used to copy-paste this ~15-line
+    // template. Factored into a macro: expands at compile time,
+    // zero runtime cost.
+    // See [R007](../../docs/adr/R007-config-account-macro.md).
     impl_account_lookup!(mail_account, "mail", mail, MailAccount);
     impl_account_lookup!(calendar_account, "calendar", calendar, CalendarAccount);
     impl_account_lookup!(note_account, "note", note, NoteAccount);
     impl_account_lookup!(todo_account, "todo", todo, TodoAccount);
     impl_account_lookup!(bookmark_account, "bookmark", bookmark, BookmarkAccount);
 
-    /// keyring 服务名约定：`everyday/<module>/<account>`。
+    /// keyring service-name convention: `everyday/<module>/<account>`.
+    /// See [F002](../../docs/adr/F002-multi-account-keyring.md).
     pub fn keyring_service(module: &str, account: &str) -> String {
         format!("everyday/{module}/{account}")
     }
@@ -466,7 +486,8 @@ name = "x"
 
     #[test]
     fn note_provider_explicit_notion_preserved() {
-        // 旧版本兼容：显式声明 provider = "notion" 必须原样保留。
+        // Backward-compat: an explicit `provider = "notion"` must be
+        // preserved verbatim.
         let cfg: Config = toml::from_str(
             r#"
 [[note.accounts]]
@@ -536,7 +557,8 @@ name = "x"
 
     #[test]
     fn todo_provider_explicit_notion_preserved() {
-        // 旧版本兼容：显式声明 provider = "notion" 必须原样保留。
+        // Backward-compat: an explicit `provider = "notion"` must be
+        // preserved verbatim.
         let cfg: Config = toml::from_str(
             r#"
 [[todo.accounts]]

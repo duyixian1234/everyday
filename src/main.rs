@@ -1,8 +1,12 @@
-//! Everyday 入口点。
+//! Entry point for the `everyday` binary.
 //!
-//! 流程：构建 clap 子命令树 → 解析 → 查找模块 → 执行 → 渲染 → 退出码。
-//! clap 负责参数校验与 `--help`（原生子命令帮助，无需重建 registry）；
-//! 模块仍通过 `Executor` trait + `ModuleRegistry` 动态分发。
+//! Pipeline: build the clap subcommand tree → parse → resolve module →
+//! execute → render → exit code.
+//!
+//! clap handles argument validation and `--help` natively (no need to
+//! rebuild a registry for help; see [F007](../docs/adr/F007-clap-subcommand-tree.md)),
+//! while modules are still dispatched dynamically through the `Executor` trait
+//! + `ModuleRegistry` (see [F001](../docs/adr/F001-cli-shape.md)).
 
 mod cli;
 mod modules;
@@ -10,7 +14,8 @@ mod ops_log;
 mod shared;
 mod util;
 
-// 让共享设施保持稳定的 crate::X 路径（物理位置在 shared/ 下，对上层透明）。
+// Keep a stable `crate::X` path for shared facilities even though they live
+// physically under `shared/` — transparent to upper layers.
 pub(crate) use shared::{config, error, keyring_user, notion_client, output};
 
 use std::sync::Arc;
@@ -24,11 +29,13 @@ use crate::output::{RenderMode, finalize, mode_from_json_flag, render_error};
 
 #[tokio::main]
 async fn main() {
-    // 统一安装 rustls ring crypto provider（见原 cli.rs 注释）。重复安装返回 Err 是 no-op。
+    // Install the rustls ring crypto provider once. Re-installing returns Err,
+    // which is a harmless no-op here.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    // 用默认配置（不读磁盘）构建注册表，仅为生成 clap 子命令树。
-    // 这样即使磁盘 config 损坏，`--help` 仍可用（clap 在解析阶段就处理 --help 并退出）。
+    // Build a registry from the *default* config (no disk read) purely to
+    // generate the clap subcommand tree. This keeps `--help` working even
+    // when the on-disk config is corrupted (clap handles --help at parse time).
     let tree_registry = match ModuleRegistry::build(Arc::new(Config::default())) {
         Ok(r) => r,
         Err(e) => {
@@ -39,10 +46,10 @@ async fn main() {
     let cmd = build_root_command(&tree_registry);
     let matches = cmd.get_matches();
 
-    // 全局 flag。
     let json_flag = matches.get_one::<bool>("json").copied().unwrap_or(false);
     let mode = mode_from_json_flag(json_flag);
-    // 把 JSON 模式同步到线程局部变量，供模块深层辅助函数查询（避免再次扫描 env::args）。
+    // Mirror the JSON mode into a thread-local flag so deep helper functions
+    // can query it without re-scanning `env::args`.
     crate::util::json_mode::set_json_mode(json_flag);
 
     let (code, output) = run(matches, mode).await;
@@ -51,7 +58,8 @@ async fn main() {
 }
 
 async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
-    // 解析出 module / action。clap 已确保 module 子命令存在（subcommand_required）。
+    // Resolve module / action. clap guarantees the module subcommand exists
+    // (subcommand_required), so the empty case is only a defensive fallback.
     let Some((module_name, module_matches)) = matches.subcommand() else {
         return (
             2,
@@ -59,31 +67,33 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         );
     };
 
-    // 加载真实配置（文件不存在则默认空配置，不报错；损坏则报错）。
+    // Load the real config: missing file → empty default (no error);
+    // corrupted file → error surfaced to the user.
     let config = match Config::load_or_default() {
         Ok(c) => Arc::new(c),
         Err(e) => return (1, render_error(&e, mode)),
     };
 
-    // 构建真实注册表（注入真实配置）。
+    // Build the real registry (inject the real config).
     let registry = match ModuleRegistry::build(config.clone()) {
         Ok(r) => r,
         Err(e) => return (1, render_error(&e, mode)),
     };
 
-    // 查找模块。
     let module = match registry.get(module_name) {
         Ok(m) => m,
         Err(e) => return (1, render_error(&e, mode)),
     };
 
-    // 解析 action（module 级 subcommand_required 保证存在；无 action 时 clap 已显示帮助并退出）。
+    // Resolve the action. The module-level subcommand_required guarantees it
+    // exists; when absent, clap has already shown help and exited.
     let (action_name, action_matches) = module_matches
         .subcommand()
         .unwrap_or((module_name, module_matches));
 
-    // 按声明把 action 的 ArgMatches 还原成模块预期的 `Vec<String>`（类型安全，不 panic），
-    // 并注入全局 `--account`（main.rs 单独处理，避免 matches_to_args 重复生成）。
+    // Reconstruct the action's `ArgMatches` into the `Vec<String>` the module
+    // expects (type-safe, no panic), then inject the global `--account`
+    // (handled here to avoid `matches_to_args` regenerating it).
     let spec = module.module_arg_spec();
     let action_spec = spec.actions.iter().find(|a| a.name == action_name);
     let mut args: Vec<String> = match action_spec {
@@ -97,8 +107,11 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
 
     let result = module.execute(action_name, &args).await;
 
-    // Ops-log AOP hook：成功执行后，若是 notion 账户的写操作，记录到 ops-log。
-    // 失败不阻断用户命令，但 ops-log 写失败不应静默 —— 按模式分流到 stderr / JSON。
+    // Ops-log AOP hook: after a successful execution that is a Notion-account
+    // write, record it to the ops-log. Failure does not block the user command,
+    // but an ops-log write failure must not be silent — route it by mode to
+    // stderr / JSON (see [L007](../docs/adr/L007-notion-ops-log.md),
+    // [R001](../docs/adr/R001-thread-local-json-mode.md)).
     if let Ok(ref output) = result
         && let Err(e) = ops_log::maybe_log_op(
             module_name,

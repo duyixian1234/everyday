@@ -1,10 +1,12 @@
-//! Timeline 的 SQLite 存储层。
+//! SQLite storage layer for the Timeline.
 //!
-//! 管理 `~/.config/everyday/timeline.db`，包含：
-//! - `events` 表：不可变事件日志，自然键幂等去重。
-//! - `sync_state` 表：各 (source, account) 的同步水位。
+//! Manages `~/.config/everyday/timeline.db`, which contains:
+//! - `events` table: the immutable event log, idempotently de-duplicated by a natural key
+//!   [L001](../../../docs/adr/L001-append-only-event-log.md).
+//! - `sync_state` table: the sync watermark of each (source, account).
 //!
-//! 所有 timestamp 存 UTC RFC3339 字符串（字典序 = 时间序）。
+//! All timestamps are stored as UTC RFC3339 strings (lexicographic order = chronological order)
+//! [L006](../../../docs/adr/L006-utc-storage-local-query.md).
 
 use std::path::PathBuf;
 
@@ -17,7 +19,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use crate::error::{AgentError, Result};
 use crate::modules::timeline::{SyncMode, TimelineEvent};
 
-// ============ SQL 常量 ============
+// ============ SQL constants ============
 
 const CREATE_EVENTS_SQL: &str = "CREATE TABLE IF NOT EXISTS events (\
     id TEXT PRIMARY KEY, \
@@ -44,16 +46,16 @@ const UX_EVENTS_NATURAL_SQL: &str = "CREATE UNIQUE INDEX IF NOT EXISTS ux_events
 const IX_EVENTS_TIME_SOURCE_SQL: &str = "CREATE INDEX IF NOT EXISTS ix_events_time_source \
     ON events(timestamp, source)";
 
-// ============ 连接 ============
+// ============ connection ============
 
-/// 解析 timeline.db 路径：`~/.config/everyday/timeline.db`。
+/// Resolve the timeline.db path: `~/.config/everyday/timeline.db`.
 fn timeline_db_path() -> Result<PathBuf> {
     let dir = dirs::config_dir()
         .ok_or_else(|| AgentError::Config("cannot determine config directory".into()))?;
     Ok(dir.join("everyday").join("timeline.db"))
 }
 
-/// 打开（必要时创建）timeline.db 连接池，并确保表和索引存在。
+/// Open (creating if necessary) the timeline.db connection pool and ensure tables and indexes exist.
 pub async fn open() -> Result<SqlitePool> {
     let path = timeline_db_path()?;
     if let Some(parent) = path.parent()
@@ -77,12 +79,14 @@ pub async fn open() -> Result<SqlitePool> {
     Ok(pool)
 }
 
-// ============ 事件写入 ============
+// ============ event writes ============
 
-/// 批量写入事件。
+/// Batch-write events.
 ///
-/// - `SyncMode::Append`：`INSERT OR IGNORE`，靠自然键去重。
-/// - `SyncMode::WindowRefresh`：先删除该窗口内同 source 的旧行，再插入。
+/// - `SyncMode::Append`: `INSERT OR IGNORE`, de-duplicated by the natural key
+///   [L001](../../../docs/adr/L001-append-only-event-log.md).
+/// - `SyncMode::WindowRefresh`: delete the old rows of the same source in the window first,
+///   then insert [L002](../../../docs/adr/L002-calendar-window-refresh.md).
 pub async fn insert_events(
     pool: &SqlitePool,
     events: &[TimelineEvent],
@@ -91,7 +95,7 @@ pub async fn insert_events(
     window_to: DateTime<Utc>,
 ) -> Result<usize> {
     if events.is_empty() {
-        // WindowRefresh 模式即使无新事件也要清理窗口内旧行。
+        // WindowRefresh mode must still clean up old rows in the window even with no new events.
         if mode == SyncMode::WindowRefresh {
             delete_window_events(pool, "cal", window_from, window_to).await?;
         }
@@ -134,7 +138,7 @@ pub async fn insert_events(
     Ok(count)
 }
 
-/// 删除指定 source 在时间窗口内的所有事件（WindowRefresh 用）。
+/// Delete all events of a source within the time window (used by WindowRefresh) [L002](../../../docs/adr/L002-calendar-window-refresh.md).
 async fn delete_window_events(
     pool: &SqlitePool,
     source: &str,
@@ -152,24 +156,24 @@ async fn delete_window_events(
     Ok(())
 }
 
-// ============ 事件查询 ============
+// ============ event query ============
 
-/// 查询参数。
+/// Query parameters.
 #[derive(Debug, Clone, Default)]
 pub struct QueryParams {
-    /// UTC 时间下限（含）。
+    /// Lower UTC time bound (inclusive).
     pub from: Option<DateTime<Utc>>,
-    /// UTC 时间上限（含）。
+    /// Upper UTC time bound (inclusive).
     pub to: Option<DateTime<Utc>>,
-    /// 来源过滤（IN 列表）。
+    /// Source filter (IN list).
     pub sources: Vec<String>,
-    /// 账户过滤。
+    /// Account filter.
     pub account: Option<String>,
-    /// 结果上限（0 = 无限制）。
+    /// Result cap (0 = unlimited).
     pub limit: usize,
 }
 
-/// 查询结果行。
+/// Query result row.
 #[derive(Debug, Clone, Serialize)]
 pub struct EventRow {
     pub id: String,
@@ -183,7 +187,7 @@ pub struct EventRow {
     pub metadata: Value,
 }
 
-/// 按条件查询事件，按 timestamp 降序。
+/// Query events by conditions, ordered by timestamp descending [L006](../../../docs/adr/L006-utc-storage-local-query.md).
 pub async fn query_events(pool: &SqlitePool, params: &QueryParams) -> Result<Vec<EventRow>> {
     let mut sql = String::from(
         "SELECT id, source, account, event_type, timestamp, title, summary, ref_id, metadata \
@@ -221,7 +225,7 @@ pub async fn query_events(pool: &SqlitePool, params: &QueryParams) -> Result<Vec
     sql.push_str(" ORDER BY timestamp DESC");
 
     if params.limit > 0 {
-        // LIMIT 接字面整数（SQLite + sqlx 可靠），不作为占位符绑定。
+        // LIMIT takes a literal integer (reliable with SQLite + sqlx), not a bound placeholder.
         sql.push_str(&format!(" LIMIT {}", params.limit));
     }
 
@@ -248,7 +252,7 @@ pub async fn query_events(pool: &SqlitePool, params: &QueryParams) -> Result<Vec
     Ok(result)
 }
 
-/// 将 EventRow 序列化为 JSON 数组。
+/// Serialize EventRow into a JSON array.
 pub fn rows_to_json(rows: &[EventRow]) -> Value {
     let arr: Vec<Value> = rows
         .iter()
@@ -269,7 +273,7 @@ pub fn rows_to_json(rows: &[EventRow]) -> Value {
     Value::Array(arr)
 }
 
-/// 将 EventRow 渲染为表格行（time 本地化显示）。
+/// Render EventRow into table rows (time shown localized).
 pub fn rows_to_table_rows(rows: &[EventRow]) -> (Vec<String>, Vec<Vec<String>>) {
     let headers = vec![
         "time".to_string(),
@@ -294,15 +298,15 @@ pub fn rows_to_table_rows(rows: &[EventRow]) -> (Vec<String>, Vec<Vec<String>>) 
     (headers, table_rows)
 }
 
-/// 解析 RFC3339 时间字符串。
+/// Parse an RFC3339 time string.
 fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
     crate::util::datetime::parse_rfc3339(s)
 }
 
-// ============ 水位管理 ============
+// ============ watermark management ============
 
-/// 读取某 (source, account) 的水位。
-/// 返回 None 表示尚未同步过。
+/// Read the watermark of a (source, account).
+/// Returns None if it has never been synced.
 pub async fn get_watermark(
     pool: &SqlitePool,
     source: &str,
@@ -331,17 +335,17 @@ pub async fn get_watermark(
     }
 }
 
-/// 水位信息。
+/// Watermark info.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct Watermark {
-    /// 上次同步时间（可能为 None 如果解析失败）。
+    /// Last sync time (may be None if parsing failed).
     pub last_sync: Option<DateTime<Utc>>,
-    /// 是否已完成首次同步。
+    /// Whether the first sync has completed.
     pub first_sync_done: bool,
 }
 
-/// 更新水位。
+/// Update the watermark.
 pub async fn set_watermark(
     pool: &SqlitePool,
     source: &str,
@@ -464,11 +468,11 @@ mod tests {
         insert_events(&pool, std::slice::from_ref(&ev), SyncMode::Append, now, now)
             .await
             .unwrap();
-        // 重复插入 → INSERT OR IGNORE，不增加行数。
+        // Re-insert -> INSERT OR IGNORE, row count unchanged.
         let n = insert_events(&pool, &[ev], SyncMode::Append, now, now)
             .await
             .unwrap();
-        assert_eq!(n, 1); // 返回尝试插入的行数（SQL INSERT OR IGNORE 不报错）
+        assert_eq!(n, 1); // returns the number of rows attempted (SQL INSERT OR IGNORE does not error)
 
         let rows = query_events(
             &pool,
@@ -479,7 +483,7 @@ mod tests {
         )
         .await
         .unwrap();
-        assert_eq!(rows.len(), 1); // 实际只有 1 行
+        assert_eq!(rows.len(), 1); // actually only 1 row
     }
 
     #[tokio::test]
@@ -512,7 +516,7 @@ mod tests {
             "evt-new",
             json!({}),
         )];
-        // 窗口覆盖 t1..t2，旧 t1 行会被删除。
+        // Window covers t1..t2; the old t1 row is deleted.
         insert_events(&pool, &new, SyncMode::WindowRefresh, t1, t2)
             .await
             .unwrap();
@@ -536,7 +540,7 @@ mod tests {
         let pool = tmp_pool().await;
         let now = Utc::now();
 
-        // 初始无水位。
+        // Initially no watermark.
         let wm = get_watermark(&pool, "mail", Some("work")).await.unwrap();
         assert!(wm.is_none());
 

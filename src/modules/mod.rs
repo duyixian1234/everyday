@@ -1,10 +1,14 @@
-//! 模块层：定义 [`Executor`] trait 与 [`ModuleRegistry`]。
+//! Module layer: defines the [`Executor`] trait and [`ModuleRegistry`].
 //!
-//! 每个功能模块（邮件、日历、RSS）实现 `Executor`，
-//! 主程序只通过 `Box<dyn Executor>` 调度，保持 `main.rs` 极简。
+//! Each feature module (mail, calendar, RSS) implements `Executor`; the
+//! main program dispatches only through `Box<dyn Executor>`, keeping
+//! `main.rs` minimal.
 //!
-//! 定位：everyday 是 AI Agent 连接外部世界（邮件/日历/资讯）的统一接口，
-//! 不内置文件搜索、HTTP、系统监控等代理可用 shell 直接完成的通用能力。
+//! Positioning: `everyday` is the unified interface through which an AI
+//! Agent reaches the outside world (mail / calendar / news). It does not
+//! embed generic capabilities an agent can do directly via the shell —
+//! file search, HTTP, system monitoring, etc. See
+//! [F003](../../docs/adr/F003-module-scope-external-integration.md).
 
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -14,90 +18,99 @@ use crate::config::Config;
 use crate::error::{AgentError, Result};
 use crate::output::Output;
 
-/// 模块执行器 trait。
+/// Module executor trait.
 ///
-/// 模块自身持有配置（构造时注入对应账户配置）。
-/// 主程序通过 [`ModuleRegistry`] 按 name 查找 trait object 并调用 [`Executor::execute`].
+/// Each module holds its own config (injected at construction with the
+/// relevant account config). The main program looks up the trait object by
+/// name via [`ModuleRegistry`] and calls [`Executor::execute`].
 #[async_trait]
 pub trait Executor: Send + Sync {
-    /// 一句话描述。
+    /// One-line description.
     fn description(&self) -> &'static str;
 
-    /// 返回该模块的参数结构声明（clap 子命令化的单一事实来源）。
+    /// Returns the module's argument-structure declaration (the single
+    /// source of truth for clap subcommanding).
     ///
-    /// 由 `cli.rs` 据此构建 `clap::Command` 树（module → action → flags），
-    /// 模块自身无需感知 clap；`--account` 是全局 flag，不在此声明。
+    /// `cli.rs` builds the `clap::Command` tree from this (module → action →
+    /// flags); the module itself need not know about clap. `--account` is a
+    /// global flag and is not declared here. See
+    /// [F007](../../docs/adr/F007-clap-subcommand-tree.md).
     fn module_arg_spec(&self) -> ModuleArgSpec;
 
-    /// 执行指定 action。
+    /// Execute the given action.
     ///
-    /// - `action`：动作名（如 `list`、`send`、`status`）
-    /// - `args`：剩余命令行参数（模块自行解析）
+    /// - `action`: the action name (e.g. `list`, `send`, `status`)
+    /// - `args`: the remaining command-line arguments (parsed by the module)
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output>;
 }
 
-/// clap 子命令化：每个模块以「数据」形式声明自己的参数结构，
-/// 由 `cli.rs` 统一转成 `clap::Command` 树。单一事实来源，避免散落在 execute 里重复解析。
+/// clap subcommanding: each module declares its argument structure as data,
+/// and `cli.rs` converts it into a `clap::Command` tree. Single source of
+/// truth, avoiding duplicated parsing scattered inside `execute`. See
+/// [F007](../../docs/adr/F007-clap-subcommand-tree.md).
 #[derive(Debug, Clone, Copy)]
 pub enum ArgKind {
-    /// 取值 flag：`--name VALUE`
+    /// Value flag: `--name VALUE`
     Value,
-    /// 布尔开关：`--name`（无值）
+    /// Boolean switch: `--name` (no value)
     Bool,
-    /// 可重复取值 flag：`--name V` 可多次，收集为列表（如 note 的 `--prop`）
+    /// Repeatable value flag: `--name V` may appear multiple times, collected
+    /// into a list (e.g. note's `--prop`)
     Multi,
 }
 
-/// 单个参数声明。
+/// A single argument declaration.
 pub struct ArgSpec {
     pub name: &'static str,
     pub help: &'static str,
     pub kind: ArgKind,
 }
 
-/// 位置参数形态。
+/// Positional-argument shape.
 #[derive(Debug, Clone, Copy)]
 pub enum Positional {
-    /// 无位置参数（纯 flag 命令）。
+    /// No positional arguments (pure flag command).
     None,
-    /// 恰好 N 个位置参数（如 `config set <path> <value>` 为 `Exactly(2)`）。
+    /// Exactly N positional arguments (e.g. `config set <path> <value>` is `Exactly(2)`).
     Exactly(u8),
-    /// 可选单个位置参数（0 或 1，如 `note read [<page_id>]`）。
+    /// Optional single positional argument (0 or 1, e.g. `note read [<page_id>]`).
     OptionalSingle,
 }
 
-/// 单个 action（子命令）的参数声明。
+/// Argument declaration for a single action (subcommand).
 pub struct ActionArgSpec {
     pub name: &'static str,
     pub description: &'static str,
     pub usage: &'static str,
     pub args: &'static [ArgSpec],
-    /// 位置参数声明（如 `config set <path> <value>`、`note read <page_id>`）。
-    /// 位置参数统一以 `args` 这个 clap id 捕获，由 `matches_to_args` 原样还原。
+    /// Positional-argument declaration (e.g. `config set <path> <value>`,
+    /// `note read <page_id>`). Positionals are captured under the single
+    /// clap id `args` and reconstructed verbatim by `matches_to_args`.
     pub positional: Positional,
 }
 
-/// 模块级参数声明（clap 子命令化的单一事实来源）。
+/// Module-level argument declaration (single source of truth for clap subcommanding).
 pub struct ModuleArgSpec {
     pub name: &'static str,
     pub description: &'static str,
     pub actions: &'static [ActionArgSpec],
 }
 
-/// 模块注册表。
+/// Module registry.
 ///
-/// 构建时注入配置与（可选的）`--account` 覆盖，
-/// 各模块按需读取自己所需的账户配置。
+/// Built by injecting config and an optional `--account` override; each
+/// module reads only the account config it needs.
 pub struct ModuleRegistry {
     pub(crate) modules: HashMap<&'static str, Box<dyn Executor>>,
 }
 
 impl ModuleRegistry {
-    /// 根据配置构建所有模块。
+    /// Build all modules from config.
     pub fn build(config: Arc<Config>) -> Result<Self> {
         let mut modules: HashMap<&'static str, Box<dyn Executor>> = HashMap::new();
 
-        // 注册各模块。模块内部决定是否需要账户配置、是否容忍缺失。
+        // Register each module. The module itself decides whether it needs
+        // account config and whether missing config is tolerated.
         modules.insert(
             "config",
             Box::new(crate::modules::config::ConfigModule::new()),
@@ -140,7 +153,7 @@ impl ModuleRegistry {
         Ok(Self { modules })
     }
 
-    /// 按名查找模块。
+    /// Look up a module by name.
     pub fn get(&self, name: &str) -> Result<&dyn Executor> {
         self.modules
             .get(name)
@@ -149,7 +162,7 @@ impl ModuleRegistry {
     }
 }
 
-// ---- 模块子模块声明 ----
+// ---- module submodule declarations ----
 pub mod bookmark;
 pub mod bookmark_local;
 pub mod calendar;
@@ -165,8 +178,9 @@ pub mod timeline;
 pub mod todo;
 pub mod todo_local;
 
-/// 通用简单参数解析器。为兼容既有调用方（`crate::modules::parse_simple_args`），
-/// 从 [`crate::util::args`] re-export。
+/// Generic simple-argument parser, re-exported from [`crate::util::args`]
+/// for backward compatibility with existing callers
+/// (`crate::modules::parse_simple_args`).
 pub use crate::util::args::parse_simple_args;
 
 #[cfg(test)]

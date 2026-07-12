@@ -1,12 +1,14 @@
-//! mail 模块的本地 envelope 缓存层。
+//! Local envelope cache layer for the mail module.
 //!
-//! 管理 `~/.config/everyday/mail_cache.db`，包含：
-//! - `envelopes` 表：邮件摘要缓存，主键 `(account, folder, uid)`（IMAP UID folder-scoped）。
-//! - `folder_state` 表：每文件夹水位元数据，主键 `(account, folder)`。
+//! Manages `~/.config/everyday/mail_cache.db`, containing:
+//! - `envelopes` table: cached mail summaries, primary key `(account, folder, uid)`
+//!   (IMAP UID is folder-scoped).
+//! - `folder_state` table: per-folder watermark metadata, primary key `(account, folder)`.
 //!
-//! 设计依据：`docs/adr/0011` (envelope 存储) + `0012` (UID 水位 + UIDVALIDITY) + `0013` (staleness)。
+//! Design basis: `docs/adr/0011` (envelope storage) + `0012` (UID watermark +
+//! UIDVALIDITY) + `0013` (staleness).
 //!
-//! 与 `timeline.db` / `ops-log.db` 完全独立。
+//! Fully independent from `timeline.db` / `ops-log.db`.
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
@@ -15,58 +17,60 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use crate::error::{AgentError, Result};
 
-// ============ 类型 ============
+// ============ Types ============
 
-/// 单封邮件的 envelope 缓存行（主键 `(account, folder, uid)`）。
+/// Cache row for a single mail envelope (primary key `(account, folder, uid)`).
 #[derive(Debug, Clone, Serialize)]
 pub struct CachedEnvelope {
     pub account: String,
     pub folder: String,
     pub uid: u32,
-    /// RFC3339 UTC 字符串（IMAP ENVELOPE.date 解析后转 UTC）。
+    /// RFC3339 UTC string (parsed from the IMAP ENVELOPE.date, converted to UTC).
     pub date: String,
-    /// `mailbox@host`，已解码。
+    /// `mailbox@host`, decoded.
     pub from_addr: String,
-    /// 已解码 MIME。
+    /// Decoded MIME.
     pub subject: String,
-    /// IMAP flags，空格分隔（`\Seen \Answered ...`）。
+    /// IMAP flags, space-separated (`\Seen \Answered ...`).
     pub flags: String,
-    /// RFC 5322 Message-ID header，可能缺失。
+    /// RFC 5322 Message-ID header, may be absent.
     pub message_id: Option<String>,
-    /// RFC822.SIZE in bytes。
+    /// RFC822.SIZE in bytes.
     pub size: Option<i64>,
-    /// 第一收件人 `mailbox@host`。
+    /// First recipient `mailbox@host`.
     pub to_addr: Option<String>,
-    /// 本次写入时刻（RFC3339 UTC）。
+    /// Moment this row was written (RFC3339 UTC).
     pub fetched_at: String,
 }
 
-/// 单文件夹水位（`folder_state` 行）。
+/// Per-folder watermark (`folder_state` row).
 #[derive(Debug, Clone)]
 pub struct FolderState {
     pub uid_validity: u32,
     pub max_uid: u32,
-    /// `None` 表示水位行存在但 `last_sync_at` 解析失败（DB 损坏 / 旧 schema），
-    /// 按 stale 处理强制重新 sync；不再用 `Utc::now()` 静默掩盖（之前的实现
-    /// 让"刚刚 sync 过"和"水位损坏"无法区分）。
+    /// `None` means the watermark row exists but `last_sync_at` failed to parse
+    /// (DB corruption / old schema); treated as stale and forces a re-sync.
+    /// We no longer silently hide this behind `Utc::now()` — the old behavior
+    /// made "just synced" and "corrupted watermark" indistinguishable.
     pub last_sync_at: Option<DateTime<Utc>>,
 }
 
-/// `mail list` 查询过滤条件。
+/// Query filter for `mail list`.
 #[derive(Debug, Clone, Default)]
 pub struct EnvelopeQuery {
-    /// `None` = 跨文件夹；`Some(name)` = 单文件夹。
+    /// `None` = cross-folder; `Some(name)` = single folder.
     pub folder: Option<String>,
-    /// true = `flags NOT GLOB '*\\Seen*'`（按 IMAP flag token 整词匹配，
-    /// 不会被 subject / from 里的 "Seen" 误判）。
+    /// true = `flags NOT GLOB '*\\Seen*'` (matches by whole IMAP flag token, so a
+    /// "Seen" inside subject / from is never misclassified).
     pub unread_only: bool,
-    /// `date >= since`。
+    /// `date >= since`.
     pub since: Option<DateTime<Utc>>,
-    /// 截断条数；SQL 中字面拼接（与 timeline/store.rs::query_events 同处理）。
+    /// Row cap; concatenated literally into the SQL (same handling as
+    /// timeline/store.rs::query_events).
     pub limit: Option<usize>,
 }
 
-// ============ SQL 常量 ============
+// ============ SQL constants ============
 
 const CREATE_ENVELOPES_SQL: &str = "CREATE TABLE IF NOT EXISTS envelopes (\
     account TEXT NOT NULL, \
@@ -96,7 +100,7 @@ const IX_ENVELOPES_DATE_SQL: &str = "CREATE INDEX IF NOT EXISTS ix_envelopes_acc
 const IX_ENVELOPES_FOLDER_SQL: &str = "CREATE INDEX IF NOT EXISTS ix_envelopes_account_folder \
     ON envelopes(account, folder)";
 
-// ============ 连接 ============
+// ============ Connection ============
 
 fn mail_cache_db_path() -> Result<std::path::PathBuf> {
     let dir = dirs::config_dir()
@@ -104,7 +108,8 @@ fn mail_cache_db_path() -> Result<std::path::PathBuf> {
     Ok(dir.join("everyday").join("mail_cache.db"))
 }
 
-/// 打开（必要时创建）mail_cache.db 连接池，并确保表和索引存在。
+/// Open (creating if needed) the mail_cache.db connection pool and ensure tables
+/// and indexes exist.
 pub async fn open() -> Result<SqlitePool> {
     let path = mail_cache_db_path()?;
     if let Some(parent) = path.parent()
@@ -127,9 +132,9 @@ pub async fn open() -> Result<SqlitePool> {
     Ok(pool)
 }
 
-// ============ folder_state 操作 ============
+// ============ folder_state operations ============
 
-/// 读单 folder 水位；不存在返回 `None`。
+/// Read a single folder's watermark; returns `None` if absent.
 pub async fn get_folder_state(
     pool: &SqlitePool,
     account: &str,
@@ -154,10 +159,13 @@ pub async fn get_folder_state(
     }))
 }
 
-/// 事务：upsert envelopes + 更新水位 `max_uid` 与 `last_sync_at`。
-/// 失败原子回滚——水位不会超前于实际 envelope（ADR [M004](../docs/adr/M004-uid-watermark-sync.md) 强一致要求）。
+/// Transaction: upsert envelopes + advance the watermark `max_uid` and `last_sync_at`.
+/// On failure it rolls back atomically — the watermark never gets ahead of the
+/// actual envelopes (strong-consistency requirement of
+/// [M004](../../docs/adr/M004-uid-watermark-sync.md)).
 ///
-/// `envelopes` 为空时仍更新 `last_sync_at`（`max_uid` 通过 `MAX()` 不变）。
+/// When `envelopes` is empty, `last_sync_at` is still updated (`max_uid` stays
+/// unchanged via `MAX()`).
 pub async fn upsert_envelopes(
     pool: &SqlitePool,
     account: &str,
@@ -219,8 +227,8 @@ pub async fn upsert_envelopes(
     Ok(max_uid_in_batch)
 }
 
-/// UIDVALIDITY 失效处理：清空 folder 全部 envelope + 删水位行。
-/// 下次 sync 将水位视为 0，回退全量 `UIDSEARCH UID 1:*`。
+/// UIDVALIDITY invalidation: delete all envelopes of the folder + drop the watermark row.
+/// The next sync treats the watermark as 0 and falls back to a full `UIDSEARCH UID 1:*`.
 pub async fn clear_folder(pool: &SqlitePool, account: &str, folder: &str) -> Result<()> {
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM envelopes WHERE account = ? AND folder = ?")
@@ -237,9 +245,10 @@ pub async fn clear_folder(pool: &SqlitePool, account: &str, folder: &str) -> Res
     Ok(())
 }
 
-// ============ envelopes 查询 ============
+// ============ envelope queries ============
 
-/// 查询 envelopes：按 (account, 可选 folder, unread?, since?, limit) 过滤，全局按 `date DESC`。
+/// Query envelopes: filter by (account, optional folder, unread?, since?, limit),
+/// globally ordered by `date DESC`.
 pub async fn query_envelopes(
     pool: &SqlitePool,
     account: &str,
@@ -255,11 +264,11 @@ pub async fn query_envelopes(
         binds.push(f.clone());
     }
     if q.unread_only {
-        // IMAP \Seen 是已读标志；flags 列是空格分隔的 token 列表。
-        // 用 GLOB 按 token 边界匹配 `*\Seen*`，避免 LIKE 全文模糊把
-        // subject / from 字段里的 "Seen" 误判为已读标志。
-        // 修复前：`flags NOT LIKE '%\Seen%'` 会被 subject 含 "Seen" 的邮件
-        // 错误判为已读。
+        // IMAP \Seen marks read; flags is a space-separated token list.
+        // Match on token boundaries with GLOB `*\Seen*` to avoid LIKE's substring
+        // match misclassifying a "Seen" inside subject / from as the read flag.
+        // Before the fix, `flags NOT LIKE '%\Seen%'` would wrongly mark a mail whose
+        // subject contains "Seen" as read.
         sql.push_str(" AND flags NOT GLOB '*\\Seen*'");
     }
     if let Some(since) = q.since {
@@ -268,7 +277,8 @@ pub async fn query_envelopes(
     }
     sql.push_str(" ORDER BY date DESC");
     if let Some(limit) = q.limit {
-        // LIMIT 子句直接拼字面整数（与 timeline/store.rs 同处理；占位符在某些 sqlx 版本下对 LIMIT 不稳）。
+        // The LIMIT clause is concatenated as a literal integer (same handling as
+        // timeline/store.rs; bind placeholders are unstable for LIMIT in some sqlx versions).
         sql.push_str(&format!(" LIMIT {}", limit));
     }
     let mut query = sqlx::query(&sql);
@@ -297,20 +307,22 @@ pub async fn query_envelopes(
     Ok(out)
 }
 
-// ============ 工具 ============
+// ============ Utilities ============
 
 fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
     crate::util::datetime::parse_rfc3339(s)
 }
 
-/// staleness 阈值（ADR [M005](../docs/adr/M005-staleness-auto-sync.md)：写死 15 分钟，无 flag / config）。
+/// Staleness threshold (ADR [M005](../../docs/adr/M005-staleness-auto-sync.md):
+/// hard-coded to 15 minutes, no flag / config).
 pub const STALENESS_THRESHOLD_SECS: i64 = 15 * 60;
 
-/// folder 是否 stale（last_sync_at 距 now > 阈值）。边界：恰 = 阈值不 stale。
+/// Whether a folder is stale (last_sync_at further from now than the threshold).
+/// Boundary: exactly equal to the threshold is NOT stale.
 ///
-/// `last_sync_at == None`（DB 损坏 / 旧 schema / 解析失败）一律视为 stale，
-/// 强制重新 sync；不再静默用 `Utc::now()` 兜底导致"刚 sync 过"和"水位损坏"
-/// 表现一样。
+/// `last_sync_at == None` (DB corruption / old schema / parse failure) is always
+/// treated as stale, forcing a re-sync; we no longer silently fall back to
+/// `Utc::now()`, which made "just synced" and "corrupted watermark" indistinguishable.
 pub fn is_stale(state: &FolderState, now: DateTime<Utc>) -> bool {
     match state.last_sync_at {
         None => true,
@@ -318,7 +330,7 @@ pub fn is_stale(state: &FolderState, now: DateTime<Utc>) -> bool {
     }
 }
 
-// ============ 测试 ============
+// ============ Tests ============
 
 #[cfg(test)]
 mod tests {
@@ -354,7 +366,7 @@ mod tests {
     #[test]
     fn staleness_at_threshold_boundary() {
         let now = Utc::now();
-        // 恰 900 秒（阈值）— 不 stale（要求严格 >）
+        // Exactly 900 seconds (the threshold) — not stale (strict > required)
         let state = FolderState {
             uid_validity: 1,
             max_uid: 100,
@@ -364,7 +376,7 @@ mod tests {
             !is_stale(&state, now),
             "exactly at threshold should not be stale"
         );
-        // 901 秒 — stale
+        // 901 seconds — stale
         let state = FolderState {
             uid_validity: 1,
             max_uid: 100,
@@ -380,23 +392,23 @@ mod tests {
     fn parse_rfc3339_valid() {
         let s = "2026-07-11T14:30:00Z";
         let dt = parse_rfc3339(s);
-        // chrono::DateTime::to_rfc3339 对 UTC 输出 "+00:00" 而非 "Z"，
-        // 仅校验语义等价（同一时刻），不强求字面。
+        // chrono::DateTime::to_rfc3339 emits "+00:00" (not "Z") for UTC;
+        // only check semantic equivalence (same instant), not the literal form.
         let expected = chrono::DateTime::parse_from_rfc3339(s).unwrap();
         assert_eq!(dt, Some(expected.with_timezone(&chrono::Utc)));
     }
 
     #[test]
     fn parse_rfc3339_invalid_returns_none() {
-        // 修复：之前 parse_rfc3339 失败时静默回退到 Utc::now()，
-        // 让"刚 sync 过"和"水位损坏"无法区分。
-        // 改为 None，由调用方决定如何处理（is_stale 直接视为 stale）。
+        // Fix: previously parse_rfc3339 silently fell back to Utc::now() on failure,
+        // making "just synced" and "corrupted watermark" indistinguishable.
+        // Now it returns None, and the caller decides (is_stale treats it as stale).
         assert!(parse_rfc3339("not a date").is_none());
     }
 
     #[test]
     fn stale_when_last_sync_at_corrupt() {
-        // None 强制 stale —— DB 损坏时不再被静默用 now() 掩盖。
+        // None forces stale — DB corruption is no longer silently hidden behind now().
         let now = Utc::now();
         let state = FolderState {
             uid_validity: 1,
@@ -406,14 +418,14 @@ mod tests {
         assert!(is_stale(&state, now));
     }
 
-    // ============ SQL 集成测试 ============
+    // ============ SQL integration tests ============
     //
-    // 用临时文件 SQLite 测事务原子性 / UIDVALIDITY 失效 / K1 ghost / flags 过滤。
-    // 不依赖网络（仅 SQLite + sqlx）。
+    // Use a temp-file SQLite to test transaction atomicity / UIDVALIDITY
+    // invalidation / K1 ghost / flag filtering. No network needed (only SQLite + sqlx).
 
     use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 
-    /// 创建临时 mail_cache 测试库（含 schema），返回连接池。
+    /// Create a temporary mail_cache test DB (with schema) and return the pool.
     async fn tmp_pool() -> SqlitePool {
         let file = std::env::temp_dir().join(format!(
             "everyday-mailcache-test-{}.db",
@@ -484,14 +496,14 @@ mod tests {
         };
         let rows = query_envelopes(&pool, "acc", &q).await.unwrap();
         assert_eq!(rows.len(), 2);
-        // fetched_at 由 upsert 写入，应非空
+        // fetched_at is written by upsert, must be non-empty
         assert!(!rows[0].fetched_at.is_empty());
     }
 
     #[tokio::test]
     async fn upsert_empty_advances_last_sync_only() {
         let pool = tmp_pool().await;
-        // 先写入一个 envelope 把水位抬到 100
+        // Write one envelope first to raise the watermark to 100
         let envs = vec![sample_envelope(100, "\\Seen")];
         upsert_envelopes(&pool, "acc", "INBOX", 7, &envs)
             .await
@@ -501,7 +513,7 @@ mod tests {
             .unwrap()
             .unwrap();
 
-        // 空 batch 再 upsert：max_uid 不变，last_sync_at 前进
+        // Upsert an empty batch: max_uid stays, last_sync_at advances
         std::thread::sleep(std::time::Duration::from_millis(10));
         upsert_envelopes(&pool, "acc", "INBOX", 7, &[])
             .await
@@ -524,11 +536,11 @@ mod tests {
     #[tokio::test]
     async fn upsert_upserts_on_conflict_by_pk() {
         let pool = tmp_pool().await;
-        // 首次写
+        // First write
         upsert_envelopes(&pool, "acc", "INBOX", 1, &[sample_envelope(50, "\\Seen")])
             .await
             .unwrap();
-        // 再写同 (account, folder, uid) 但不同 subject/flags —— 应 UPDATE
+        // Write the same (account, folder, uid) with a different subject/flags — should UPDATE
         let mut updated = sample_envelope(50, "");
         updated.subject = "updated subject".to_string();
         upsert_envelopes(&pool, "acc", "INBOX", 1, &[updated])
@@ -575,13 +587,14 @@ mod tests {
 
     #[tokio::test]
     async fn uidvalidity_change_simulates_full_reset() {
-        // 模拟 sync 路径：水位有效 → 检查 UIDVALIDITY → 不一致 → clear + 全量
+        // Simulate the sync path: watermark valid → check UIDVALIDITY → mismatch →
+        // clear + full re-sync
         let pool = tmp_pool().await;
         upsert_envelopes(&pool, "acc", "INBOX", 100, &[sample_envelope(10, "")])
             .await
             .unwrap();
 
-        // server 端重建文件夹 → UIDVALIDITY 变到 200
+        // Server rebuilds the folder → UIDVALIDITY changes to 200
         let local = get_folder_state(&pool, "acc", "INBOX")
             .await
             .unwrap()
@@ -590,7 +603,7 @@ mod tests {
         if local.uid_validity != 200 {
             clear_folder(&pool, "acc", "INBOX").await.unwrap();
         }
-        // 重新全量
+        // Full re-sync
         upsert_envelopes(&pool, "acc", "INBOX", 200, &[sample_envelope(1, "")])
             .await
             .unwrap();
@@ -641,15 +654,18 @@ mod tests {
 
     #[tokio::test]
     async fn query_unread_does_not_false_positive_on_seen_in_subject() {
-        // 修复前用 `flags NOT LIKE '%\Seen%'` —— 但 subject 字段也会参与 LIKE，
-        // 不影响这里因为 LIKE 只看 flags 列。真正的问题是 GLOB 整词匹配 vs LIKE 子串匹配：
-        // 之前如果 flags 出现 "\\SeenFoo"（连字符 IMAP flag）也会被 LIKE 判为已读，
-        // 而 GLOB `*\Seen*` 同样包含它。差异在于 GLOB 不会把 token 边界弄错。
+        // Before the fix, `flags NOT LIKE '%\Seen%'` was used — but the subject field
+        // also participates in LIKE, which doesn't matter here since LIKE only looks at
+        // the flags column. The real issue is whole-token GLOB matching vs substring LIKE:
+        // previously, if flags contained "\\SeenFoo" (a hyphenated IMAP flag), LIKE would
+        // still judge it as read, whereas GLOB `*\Seen*` also includes it. The difference
+        // is that GLOB never misaligns token boundaries.
         //
-        // 这个测试验证 flags 列中 token "SeenSomething"（不是 IMAP \Seen）
-        // 不会被 GLOB 误判为已读 —— flags 列是 token 列表，\"\\Seen\" 是单独 token。
+        // This test verifies that a token "SeenSomething" in the flags column (not the
+        // IMAP \Seen) is not misclassified as read by GLOB — flags is a token list and
+        // "\\Seen" is a separate token.
         let pool = tmp_pool().await;
-        // 构造一条 flags 字符串：\"\\Seen SomethingElse\" —— 含 \\Seen 与另一 token。
+        // Build a flags string: \"\\Seen SomethingElse\" — contains \\Seen and another token.
         upsert_envelopes(
             &pool,
             "acc",
@@ -665,16 +681,17 @@ mod tests {
             unread_only: true,
             ..Default::default()
         };
-        // \\Seen 出现 → 已读 → unread_only 应过滤掉，结果 0 行。
+        // \\Seen present → read → unread_only should filter it out, 0 rows.
         let unread = query_envelopes(&pool, "acc,", &q_unread).await.unwrap();
         assert_eq!(unread.len(), 0);
     }
 
     #[tokio::test]
     async fn ghost_envelope_persists_after_k1_no_cleanup() {
-        // K1: sync 只追加不删除。Server 端删除/移动的邮件，本地 envelope 仍留着。
+        // K1: sync only appends, never deletes. Mails deleted/moved on the server remain
+        // in the local envelope cache.
         let pool = tmp_pool().await;
-        // 模拟 server 端有 3 封邮件，本地全部缓存
+        // Simulate 3 mails on the server, all cached locally
         upsert_envelopes(
             &pool,
             "acc",
@@ -689,14 +706,14 @@ mod tests {
         .await
         .unwrap();
 
-        // 模拟下一次 sync：水位 3 → UIDSEARCH UID 4:* → 0 个新邮件
-        // 但我们不主动清理 uid=1,2,3（K1）
+        // Simulate the next sync: watermark 3 → UIDSEARCH UID 4:* → 0 new mails
+        // but we don't actively clean up uid=1,2,3 (K1)
         let next_max = upsert_envelopes(&pool, "acc", "INBOX", 1, &[])
             .await
             .unwrap();
         assert_eq!(next_max, 0, "empty batch returns 0 max_uid_in_batch");
 
-        // 本地仍有 3 个 envelope（ghost）—— 默认 list 仍能列出
+        // Locally the 3 envelopes (ghost) are still present — the default list still returns them
         let q = EnvelopeQuery {
             folder: Some("INBOX".to_string()),
             ..Default::default()

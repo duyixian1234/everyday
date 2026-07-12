@@ -1,19 +1,20 @@
-//! 统一错误类型 `AgentError`。
+//! Unified error type `AgentError`.
 //!
-//! JSON 模式下序列化为 `agents.md` 规定的格式：
+//! In JSON mode it serializes to the format mandated by
+//! [agents.md](../../agents.md):
 //! `{"error": "ErrorType", "message": "Details..."}`
 
 use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 
-/// 全项目统一 Result 别名。
+/// Project-wide unified `Result` alias.
 pub type Result<T> = std::result::Result<T, AgentError>;
 
-/// 统一错误枚举。
+/// Unified error enum.
 ///
-/// 每个变体对应一个稳定的 `ErrorType` 字符串（见 [`AgentError::type_name`]），
-/// 供 JSON 输出与程序化判断使用。
+/// Each variant maps to a stable `ErrorType` string (see
+/// [`AgentError::type_name`]), used by JSON output and programmatic checks.
 #[derive(Debug, Error)]
 pub enum AgentError {
     #[error("config error: {0}")]
@@ -48,7 +49,7 @@ pub enum AgentError {
 }
 
 impl AgentError {
-    /// 返回稳定的错误类型名（PascalCase），用于 JSON 的 `error` 字段。
+    /// Return the stable error type name (PascalCase), used for the JSON `error` field.
     pub fn type_name(&self) -> &'static str {
         match self {
             Self::Config(_) => "ConfigError",
@@ -64,7 +65,7 @@ impl AgentError {
         }
     }
 
-    /// 返回人类可读的错误详情，用于 JSON 的 `message` 字段。
+    /// Return a human-readable error detail, used for the JSON `message` field.
     pub fn message(&self) -> String {
         self.to_string()
     }
@@ -104,7 +105,7 @@ impl From<sqlx::Error> for AgentError {
     }
 }
 
-// 自定义 Serialize：输出 {"error": "...", "message": "..."}
+// Custom Serialize: emit `{"error": "...", "message": "..."}`.
 impl Serialize for AgentError {
     fn serialize<S: Serializer>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error> {
         let mut s = serializer.serialize_struct("AgentError", 2)?;

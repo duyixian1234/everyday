@@ -1,7 +1,8 @@
-//! config 模块：读写 `~/.config/everyday/config.toml`。
+//! config module: reads and writes `~/.config/everyday/config.toml`.
 //!
-//! 实现 `Executor` trait，与其它模块统一通过 `ModuleRegistry` 分发，
-//! 消除 main.rs 中的特殊分支（`if cli.module == "config"`）。
+//! Implements the `Executor` trait so config is dispatched uniformly through
+//! `ModuleRegistry` like every other module, removing the special branch in
+//! main.rs (`if cli.module == "config"`) [R012](../../docs/adr/R012-config-executor-trait.md).
 
 use async_trait::async_trait;
 use std::path::Path;
@@ -11,7 +12,7 @@ use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::output::{Output, RenderMode};
 
-/// config 模块：无配置依赖（直接读 / 写文件），构造时不需要 Arc<Config>。
+/// config module: has no config dependency (reads/writes the file directly), so construction needs no Arc<Config>.
 pub struct ConfigModule;
 
 impl ConfigModule {
@@ -79,8 +80,8 @@ impl Executor for ConfigModule {
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
-        // config 模块需要 RenderMode 来决定 list 的输出格式（TOML 文本 / JSON）。
-        // 与其它模块一样，通过 thread-local 读取（main.rs 在启动时设置）。
+        // config needs RenderMode to choose the `list` output format (TOML text / JSON).
+        // Like other modules, it reads the mode via the thread-local set by main.rs at startup [R001](../../docs/adr/R001-thread-local-json-mode.md).
         let mode = if crate::util::json_mode::is_json() {
             RenderMode::Json
         } else {
@@ -91,7 +92,7 @@ impl Executor for ConfigModule {
     }
 }
 
-/// 与原 main.rs::run_config 同语义；Executor::execute 调用此处。
+/// Same semantics as the original main.rs::run_config; called by Executor::execute.
 pub(crate) async fn run_config(action: &str, args: &[String], mode: RenderMode) -> Result<Output> {
     let action = if action.is_empty() { "list" } else { action };
     match action {
@@ -159,7 +160,7 @@ pub(crate) async fn run_config(action: &str, args: &[String], mode: RenderMode) 
     }
 }
 
-/// 沿点分路径读取 toml::Value，支持 table 字段与 array 索引（如 `mail.accounts.0.name`）。
+/// Read a toml::Value by walking a dotted path; supports table fields and array indices (e.g. `mail.accounts.0.name`).
 fn get_dotted(root: &toml::Value, path: &str) -> Result<toml::Value> {
     let mut cur = root.clone();
     for seg in path.split('.') {
@@ -183,11 +184,11 @@ fn get_dotted(root: &toml::Value, path: &str) -> Result<toml::Value> {
     Ok(cur)
 }
 
-/// 设置点分路径的值并保存。自动推断值类型（bool / int / float / string）。
-/// 支持 table 字段与 array 索引（自动扩展数组）。
+/// Set the value at a dotted path and persist it. The value type is inferred automatically (bool / int / float / string).
+/// Supports table fields and array indices (arrays are extended automatically).
 fn set_config_path(path: &str, raw_value: &str) -> Result<()> {
     let cfg_path = Config::config_path()?;
-    // 读现有文件为 toml::Value（不存在则空表）。
+    // Read the existing file into a toml::Value (empty table if absent).
     let mut root: toml::Value = if cfg_path.exists() {
         let text = std::fs::read_to_string(&cfg_path)?;
         if text.trim().is_empty() {
@@ -212,7 +213,7 @@ fn set_config_path(path: &str, raw_value: &str) -> Result<()> {
     Ok(())
 }
 
-/// 在 toml::Value 上按路径段插入值；自动创建中间 table 与 array。
+/// Insert a value into a toml::Value following the path segments; intermediate tables and arrays are created automatically.
 fn upsert_dotted(root: &mut toml::Value, segs: &[&str], val: toml::Value) -> Result<()> {
     if segs.is_empty() {
         return Err(AgentError::InvalidArgument("empty path".into()));
@@ -220,14 +221,14 @@ fn upsert_dotted(root: &mut toml::Value, segs: &[&str], val: toml::Value) -> Res
     let (last, rest) = segs.split_last().unwrap();
     let mut cur = root;
     for seg in rest {
-        // 数组索引（纯数字）。
+        // Array index (pure number).
         if let Ok(idx) = seg.parse::<usize>() {
             cur = ensure_array_index(cur, idx)?;
         } else {
             let table = cur
                 .as_table_mut()
                 .ok_or_else(|| AgentError::InvalidArgument(format!("'{seg}' not a table")))?;
-            // key 不存在则创建空 table（最后一段会覆盖）。
+            // If the key is absent, create an empty table (the final segment overwrites).
             if !table.contains_key(*seg) {
                 table.insert(
                     (*seg).to_string(),
@@ -266,7 +267,7 @@ fn ensure_array_len(arr: &mut Vec<toml::Value>, len: usize) {
     }
 }
 
-/// 把字符串 raw_value 解析成最合适的 toml 值类型。
+/// Parse a raw string into the most appropriate toml value type.
 fn parse_value(raw: &str) -> toml::Value {
     if raw == "true" {
         return toml::Value::Boolean(true);
@@ -283,17 +284,17 @@ fn parse_value(raw: &str) -> toml::Value {
     toml::Value::String(raw.to_string())
 }
 
-/// toml::Value 转终端友好字符串。
+/// Convert a toml::Value into a terminal-friendly string.
 fn value_to_display_string(v: &toml::Value) -> String {
     match v {
         toml::Value::String(s) => s.clone(),
-        // 其它类型走 toml Display（与 list 模式风格一致）。
+        // Other types use toml's Display (consistent with the `list` mode style).
         other => other.to_string(),
     }
 }
 
-/// `everyday config init` 写入的示例 config。
-/// 与 config.example.toml 保持同步（手写避免 include_str 依赖）。
+/// Sample config written by `everyday config init`.
+/// Kept in sync with config.example.toml (hand-written to avoid an include_str dependency).
 fn example_config() -> String {
     include_str!("../../config.example.toml").to_string()
 }

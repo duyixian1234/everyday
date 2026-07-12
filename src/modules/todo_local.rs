@@ -1,11 +1,14 @@
-//! todo 模块的本地 SQLite provider。
+//! Local SQLite provider for the `todo` module.
 //!
-//! 与 Notion provider 对等实现 `list` / `add` / `start` / `complete` 语义，
-//! 数据落在账户配置的本地 SQLite 文件中。`login` 对本地 provider 无意义
-//! （无需凭证），`init-db` 仅建表并汇报路径。
+//! Parity implementation of `list` / `add` / `start` / `complete` semantics
+//! alongside the Notion provider [T001](../../docs/adr/T001-notion-todo-module.md),
+//! with data persisted in the account's local SQLite file. `login` is a no-op
+//! for the local provider (no credentials), and `init-db` only creates the
+//! table and reports its path.
 //!
-//! 输出形态（列名 / JSON key）刻意与 `todo.rs` 的 Notion 版本保持一致，
-//! 使 Agent 在两种 provider 间切换时无需改变解析逻辑。
+//! Output shape (column names / JSON keys) is deliberately kept identical to
+//! the Notion version in `todo.rs` [F005](../../docs/adr/F005-default-provider-local.md),
+//! so an Agent can switch providers without changing its parsing logic.
 
 use std::collections::HashMap;
 
@@ -17,12 +20,12 @@ use crate::error::{AgentError, Result};
 use crate::modules::local::{connect, mode_json, resolve_db_path};
 use crate::output::Output;
 
-/// 状态选项名（与 Notion provider 一致）。
+/// Status option names (kept identical to the Notion provider).
 const STATUS_TODO: &str = "Todo";
 pub const STATUS_IN_PROGRESS: &str = "In Progress";
 pub const STATUS_DONE: &str = "Done";
 
-/// 建表语句：任务表（含 updated_at 列，timeline 增量拉取用）。
+/// Table creation SQL: the todos table (includes the `updated_at` column used for timeline incremental pulls).
 const CREATE_SQL: &str = "CREATE TABLE IF NOT EXISTS todos (\
     id TEXT PRIMARY KEY, \
     title TEXT NOT NULL, \
@@ -32,12 +35,12 @@ const CREATE_SQL: &str = "CREATE TABLE IF NOT EXISTS todos (\
     created_at TEXT NOT NULL, \
     updated_at TEXT NOT NULL DEFAULT '')";
 
-/// 打开连接并确保表存在（含 updated_at 列迁移）。
+/// Open a connection and ensure the table exists (including the `updated_at` column migration).
 async fn open(account: &TodoAccount) -> Result<sqlx::SqlitePool> {
     let path = resolve_db_path("todo", &account.name, account.db_path.as_deref())?;
     let pool = connect(&path).await?;
     sqlx::query(CREATE_SQL).execute(&pool).await?;
-    // 迁移：旧版表无 updated_at 列，幂等添加。
+    // Migration: older tables lack the `updated_at` column; add it idempotently.
     let has_col: Option<(i64,)> =
         sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('todos') WHERE name='updated_at'")
             .fetch_optional(&pool)
@@ -52,14 +55,14 @@ async fn open(account: &TodoAccount) -> Result<sqlx::SqlitePool> {
     Ok(pool)
 }
 
-/// 生成短唯一 ID（todo 前缀 `t`；实现见 [`crate::util::id::gen_id`]）。
+/// Generate a short unique ID (todo prefix `t`; see [`crate::util::id::gen_id`]).
 fn gen_id() -> String {
     crate::util::id::gen_id("t")
 }
 
 // ============ actions ============
 
-/// `todo login`（本地）：本地 provider 无需凭证。
+/// `todo login` (local): the local provider needs no credentials.
 pub fn login(account: &TodoAccount) -> Result<Output> {
     Ok(Output::text(format!(
         "todo account '{}' uses the local sqlite provider; no login required",
@@ -67,7 +70,7 @@ pub fn login(account: &TodoAccount) -> Result<Output> {
     )))
 }
 
-/// `todo init-db`（本地）：建表并汇报数据库路径。
+/// `todo init-db` (local): create the table and report the database path.
 pub async fn init_db(account: &TodoAccount) -> Result<Output> {
     let path = resolve_db_path("todo", &account.name, account.db_path.as_deref())?;
     let _ = open(account).await?;
@@ -84,12 +87,12 @@ pub async fn init_db(account: &TodoAccount) -> Result<Output> {
     }
 }
 
-/// `todo list [--all]`（本地）：列出任务，默认过滤已完成，按 due 升序（null 排最后）。
+/// `todo list [--all]` (local): list tasks, filtering done by default, ordered by due ascending (nulls last).
 pub async fn list(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let pool = open(account).await?;
     let show_all = flags.contains_key("all");
 
-    // due 升序、null 最后；同 due 再按 created_at。
+    // Order by due ascending, nulls last; tie-break by created_at.
     let sql = if show_all {
         "SELECT id, title, status, due, priority FROM todos \
          ORDER BY (due IS NULL), due ASC, created_at ASC"
@@ -145,7 +148,7 @@ pub async fn list(account: &TodoAccount, flags: &HashMap<String, String>) -> Res
     }
 }
 
-/// `todo add --title T [--due DATE] [--priority P]`（本地）：新增任务。
+/// `todo add --title T [--due DATE] [--priority P]` (local): create a new task.
 pub async fn add(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let title = flags
         .get("title")
@@ -178,7 +181,7 @@ pub async fn add(account: &TodoAccount, flags: &HashMap<String, String>) -> Resu
     }
 }
 
-/// `todo start/complete <id>`（本地）：更新任务状态。
+/// `todo start/complete <id>` (local): update the task status.
 pub async fn set_status(
     account: &TodoAccount,
     id: Option<&String>,
@@ -205,10 +208,12 @@ pub async fn set_status(
     }
 }
 
-/// `todo delete <id>`（本地）：物理删除任务。
+/// `todo delete <id>` (local): physically delete a task.
 ///
-/// 先 SELECT 取出标题,再 DELETE;rows_affected == 0 视为 "id 不存在" 报错。
-/// 多一次读换取 ops-log 上 delete 事件带标题,Notion 版已对齐同一规约。
+/// SELECT the title first, then DELETE; `rows_affected == 0` is treated as
+/// "id not found" and reported as an error. The extra read lets the ops-log
+/// delete event carry the title, matching the Notion version's convention
+/// [T002](../../docs/adr/T002-todo-delete-action.md).
 pub async fn delete(account: &TodoAccount, id: Option<&String>) -> Result<Output> {
     let id = id.ok_or_else(|| AgentError::InvalidArgument("`delete` requires <id>".into()))?;
     let pool = open(account).await?;
@@ -243,9 +248,9 @@ pub async fn delete(account: &TodoAccount, id: Option<&String>) -> Result<Output
     }
 }
 
-// ============ Timeline 数据拉取 ============
+// ============ Timeline data fetch ============
 
-/// Timeline 拉取用：todo 条目原始数据。
+/// Raw todo entry data for timeline pulls.
 pub struct TodoTimelineEntry {
     pub id: String,
     pub title: String,
@@ -256,11 +261,13 @@ pub struct TodoTimelineEntry {
     pub updated_at: String,
 }
 
-/// Timeline 增量拉取：返回 `created_at` 或 `updated_at` 落在窗口内的 todo。
+/// Timeline incremental pull: return todos whose `created_at` or `updated_at`
+/// falls within the window.
 ///
-/// 本地 provider 降级语义：从当前态快照拉取，非完整转移历史。
-/// - 新增 todo → `created` 事件
-/// - 状态变化的 todo → 当前状态映射的事件（如 `completed`）
+/// Local provider degraded semantics: pulled from the current-state snapshot,
+/// not the full transfer history [L001](../../docs/adr/L001-append-only-event-log.md).
+/// - newly added todo -> `created` event
+/// - status-changed todo -> event mapped from current status (e.g. `completed`)
 pub async fn fetch_for_timeline(
     account: &TodoAccount,
     from: chrono::DateTime<chrono::Utc>,
@@ -269,7 +276,7 @@ pub async fn fetch_for_timeline(
     let pool = open(account).await?;
     let from_str = from.to_rfc3339();
     let to_str = to.to_rfc3339();
-    // created_at 在窗口内（新创建）或 updated_at 在窗口内（状态变化）。
+    // created_at in window (newly created) or updated_at in window (status changed).
     let rows = sqlx::query(
         "SELECT id, title, status, due, priority, created_at, updated_at FROM todos \
          WHERE (created_at >= ?1 AND created_at <= ?2) \

@@ -1,12 +1,13 @@
-//! 日历模块（CalDAV）：login / calendars / list / add / delete。
+//! Calendar module (CalDAV): login / calendars / list / add / delete.
 //!
-//! 流程：config.toml 存账户元数据（caldav_url/username）→ `everyday cal login` 存密码到
-//! 系统密钥环 → `everyday cal calendars/list/add/delete` 自动读取密码连接 CalDAV。
-//! 密码绝不落盘 config.toml。
+//! Flow: config.toml holds account metadata (caldav_url/username) → `everyday cal login`
+//! stores the password in the system keyring → `everyday cal calendars/list/add/delete`
+//! auto-reads the password to connect to CalDAV. The password never touches config.toml.
 //!
-//! 技术栈：libdav 0.10（CalDAV 协议，request API）+ icalendar 0.17（iCalendar 解析/生成）
-//! + hyper 1.x（HTTP，body=String 满足 libdav 的 HttpClient trait）+ hyper-rustls（ring
-//!   TLS，webpki 根证书）+ tower-http（Basic Auth 中间件，覆盖式插 Authorization header）。
+//! Stack: libdav 0.10 (CalDAV protocol, request API) + icalendar 0.17 (iCalendar
+//! parse/generate) + hyper 1.x (HTTP, body=String to satisfy libdav's HttpClient trait)
+//! + hyper-rustls (ring TLS, webpki roots) + tower-http (Basic Auth middleware that
+//! overwrites the Authorization header).
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,14 +29,14 @@ use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
 
-/// hyper-rustls 的 HTTPS connector（webpki 根证书 + http1）。
+/// hyper-rustls HTTPS connector (webpki roots + http1).
 type HttpsConnector =
     hyper_rustls::HttpsConnector<hyper_util::client::legacy::connect::HttpConnector>;
-/// 带 Basic Auth 的 hyper legacy client，body 类型为 String。
-/// libdav 的 HttpClient blanket impl 要求 `Service<Request<String>, Response=Response<Incoming>>`，
-/// 故 body 泛型参数固定为 String（http-body 1.0 实现了 `impl Body for String`）。
+/// hyper legacy client with Basic Auth, body type `String`.
+/// libdav's HttpClient blanket impl requires `Service<Request<String>, Response=Response<Incoming>>`,
+/// so the body generic is pinned to `String` (http-body 1.0 implements `impl Body for String`).
 type HttpsClient = AddAuthorization<HyperClient<HttpsConnector, String>>;
-/// CalDavClient 的具体类型（用 type alias 避免泛型签名传染）。
+/// Concrete type of CalDavClient (type alias to avoid leaking generics into signatures).
 type CalDav = CalDavClient<HttpsClient>;
 
 pub struct CalendarModule {
@@ -162,8 +163,10 @@ impl Executor for CalendarModule {
             .config
             .calendar_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // 未知 action 提前识别（坑10：避免空密码时优先报 AuthError 而非 UnknownAction）。
-        // 忽略日历列表归属于账户（[[calendar.accounts]] 的 ignore_calendars）。
+        // Recognize an unknown action early (pitfall 10: avoid surfacing AuthError instead
+        // of UnknownAction when the password is empty).
+        // The ignored-calendar list belongs to the account ([[calendar.accounts]]'s
+        // ignore_calendars).
         let ignored = &account.ignore_calendars;
         match action {
             "login" => cal_login(account).await,
@@ -182,9 +185,9 @@ impl Executor for CalendarModule {
     }
 }
 
-// ============ keyring 凭证 ============
+// ============ keyring credentials ============
 
-/// 从系统密钥环读取账户密码。
+/// Read the account password from the system keyring.
 fn get_password(account: &CalendarAccount) -> Result<String> {
     let service = Config::keyring_service("cal", &account.name);
     let entry = keyring::Entry::new(&service, &account.username)
@@ -198,7 +201,7 @@ fn get_password(account: &CalendarAccount) -> Result<String> {
     })
 }
 
-/// 交互式输入密码并存入系统密钥环。
+/// Prompt for the password interactively and store it in the system keyring.
 async fn cal_login(account: &CalendarAccount) -> Result<Output> {
     let service = Config::keyring_service("cal", &account.name);
     let entry = keyring::Entry::new(&service, &account.username)
@@ -212,7 +215,8 @@ async fn cal_login(account: &CalendarAccount) -> Result<Output> {
     .map_err(|e| AgentError::Other(format!("join password prompt: {e}")))?
     .map_err(|e| AgentError::Other(format!("read password: {e}")))?;
 
-    // 坑9：空密码校验。set_password("") 会成功，但 base64 成 "Basic Og==" 后服务端返 401。
+    // Pitfall 9: empty-password guard. set_password("") succeeds, but base64-encodes
+    // to "Basic Og==" and the server then returns 401.
     if password.is_empty() {
         return Err(AgentError::InvalidArgument(
             "password cannot be empty".into(),
@@ -226,14 +230,17 @@ async fn cal_login(account: &CalendarAccount) -> Result<Output> {
     )))
 }
 
-// ============ CalDAV 客户端构建 ============
+// ============ CalDAV client construction ============
 
-/// 构建 CalDavClient：hyper + rustls(ring, webpki) + Basic Auth + well-known 探测。
+/// Build a CalDavClient: hyper + rustls(ring, webpki) + Basic Auth + well-known discovery.
 ///
-/// **跳过** `bootstrap_via_service_discovery`（坑5：内部 fallback DNS SRV `_caldavs._tcp`，
-/// 国内服务商不实现，远程 DNS 强制关闭连接 os error 10054）。改用 `find_context_path`
-/// 只做 `/.well-known/caldav` 重定向探测（坑6：QQ 根 URL PROPFIND 返 404，well-known
-/// 301 到 `/calendar/`，最多 5 跳）。探测失败静默降级用 base_url。
+/// We **skip** `bootstrap_via_service_discovery` (pitfall 5: its internal DNS SRV
+/// `_caldavs._tcp` fallback is not implemented by domestic providers, and the remote
+/// DNS forcibly closes the connection with os error 10054). Instead we use
+/// `find_context_path` for only the `/.well-known/caldav` redirect probe (pitfall 6: QQ's
+/// root URL PROPFIND returns 404, well-known 301-redirects to `/calendar/`, up to 5 hops).
+/// On probe failure we silently fall back to base_url. See
+/// [C001](../../docs/adr/C001-caldav-stack.md).
 async fn build_client(account: &CalendarAccount, password: &str) -> Result<CalDav> {
     let base: Uri = account.caldav_url.parse().map_err(|e| {
         AgentError::InvalidArgument(format!("invalid caldav_url '{}': {e}", account.caldav_url))
@@ -262,49 +269,53 @@ async fn build_client(account: &CalendarAccount, password: &str) -> Result<CalDa
     let auth_client = AddAuthorization::basic(https_client, &account.username, password);
     let mut webdav = WebDavClient::new(base, auth_client);
 
-    // well-known 探测（RFC 6764 §5），跳过 SRV/TXT。
+    // well-known discovery (RFC 6764 §5), skipping SRV/TXT.
     let service = caldav_service_for_url(&webdav.base_url)
         .map_err(|e| AgentError::Network(format!("determine caldav service: {e}")))?;
-    // 探测失败不致命：降级用 base_url（部分服务器 well-known 不可用但 base_url 直接可用）。
+    // Discovery failure is non-fatal: fall back to base_url (some servers expose no
+    // usable well-known endpoint even though base_url works directly).
     if let Ok(Some(url)) = webdav.find_context_path(service, &host, port).await {
-        // 重定向后的真实 context path（如 https://dav.qq.com:443/calendar/）。
-        // base_url 是 pub 字段，直接覆盖（坑6）。
+        // The real context path after redirection (e.g. https://dav.qq.com:443/calendar/).
+        // base_url is a pub field, overwrite it directly (pitfall 6).
         webdav.base_url = url;
     }
 
     Ok(CalDavClient::new(webdav))
 }
 
-// ============ 日历发现 ============
+// ============ Calendar discovery ============
 
-/// 日历集合的展示信息。
+/// Display info for a calendar collection.
 struct CalendarInfo {
     href: String,
     name: Option<String>,
     colour: Option<String>,
 }
 
-/// 发现并返回所有日历集合（过滤掉 `ignored` 中按 displayname 匹配的日历）。
+/// Discover and return all calendar collections (filtering out calendars whose
+/// displayname matches an entry in `ignored`).
 ///
-/// 流程（RFC 5397 + RFC 4791）：current-user-principal → calendar-home-set → calendars。
-/// 参照 libdav examples/find_calendars.rs。principal 或 home-set 发现失败（如 QQ 不支持
-/// current-user-principal，PROPFIND 返 404）时降级用 base_url 作为 home set。
+/// Flow (RFC 5397 + RFC 4791): current-user-principal → calendar-home-set → calendars.
+/// Based on libdav's examples/find_calendars.rs. When principal or home-set discovery
+/// fails (e.g. QQ doesn't support current-user-principal and PROPFIND returns 404), we
+/// fall back to base_url as the home set.
 async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<CalendarInfo>> {
     let home_sets: Vec<Uri> = match caldav.find_current_user_principal().await {
         Ok(Some(p)) => {
-            // principal 找到 → 查 calendar-home-set；查询失败或为空则降级 base_url。
+            // principal found → query calendar-home-set; on failure or empty, fall back to base_url.
             match caldav.request(FindCalendarHomeSet::new(p.path())).await {
                 Ok(resp) if !resp.home_sets.is_empty() => resp.home_sets,
                 _ => vec![caldav.base_url().clone()],
             }
         }
-        _ => vec![caldav.base_url().clone()], // principal 未找到或查询失败 → 降级 base_url
+        _ => vec![caldav.base_url().clone()], // principal not found or query failed → fall back to base_url
     };
 
     let mut out = Vec::new();
-    // 一次 PROPFIND Depth:1 查 displayname + color + resourcetype。
-    // QQ quirk: 对单日历 Depth:0 查 displayname 返 404，但从 home set Depth:1 批量查返 200。
-    // 参照 Python caldav 库 get_calendars() 的实现。
+    // One PROPFIND Depth:1 to fetch displayname + color + resourcetype.
+    // QQ quirk: a Depth:0 displayname query on a single calendar returns 404, but a
+    // Depth:1 batch query from the home set returns 200.
+    // Based on the Python caldav library's get_calendars() implementation.
     let props = [
         &names::DISPLAY_NAME,
         &names::CALENDAR_COLOUR,
@@ -320,7 +331,7 @@ async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<C
             .await
         {
             Ok(r) => r,
-            Err(_) => continue, // 单个 home set 查询失败不致命
+            Err(_) => continue, // a single home-set query failure is non-fatal
         };
         let doc = match resp.xml_tree() {
             Ok(d) => d,
@@ -337,7 +348,7 @@ async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<C
                 .and_then(|n| n.text())
                 .unwrap_or("")
                 .to_string();
-            // 只保留 calendar 集合（resourcetype 含 C:calendar）。
+            // Keep only calendar collections (resourcetype contains C:calendar).
             let is_calendar = response
                 .descendants()
                 .find(|n| n.tag_name() == names::RESOURCETYPE)
@@ -356,7 +367,7 @@ async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<C
                 .find(|n| n.tag_name() == names::CALENDAR_COLOUR)
                 .and_then(|n| n.text())
                 .map(|s| s.to_string());
-            // 过滤忽略的日历（按 displayname 不区分大小写匹配）。
+            // Filter out ignored calendars (case-insensitive displayname match).
             if let Some(ref n) = name
                 && ignored.iter().any(|ig| ig.eq_ignore_ascii_case(n))
             {
@@ -368,9 +379,9 @@ async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<C
     Ok(out)
 }
 
-// ============ 动作实现 ============
+// ============ Action implementations ============
 
-/// `cal calendars`：列出当前用户的所有日历集合（中文列名 + href 解码 + 无名占位）。
+/// `cal calendars`: list all of the user's calendar collections (decoded href + unnamed placeholder).
 async fn cal_calendars(
     account: &CalendarAccount,
     password: &str,
@@ -394,11 +405,14 @@ async fn cal_calendars(
     ))
 }
 
-/// `cal list`：列出事件，默认返回所有日历的所有日程；`--today` 限今日，`--date YYYY-MM-DD` 限指定日期。
+/// `cal list`: list events. By default returns events from all calendars; `--today`
+/// limits to today, `--date YYYY-MM-DD` limits to a given date.
 ///
-/// 策略：用 `GetCalendarResources`（calendar-query REPORT）全量拉取每个日历的事件
-/// （含 calendar-data），本地用 icalendar 解析 VEVENT，再按可选日期过滤。比服务端
-/// time-range REPORT 更可靠（国内服务端 time-range 实现质量参差，可能返空）。
+/// Strategy: use `GetCalendarResources` (calendar-query REPORT) to pull every calendar's
+/// events in full (with calendar-data), parse VEVENTs locally with icalendar, then filter
+/// by optional date. This is more reliable than a server-side time-range REPORT (domestic
+/// servers vary in time-range quality and may return empty). See
+/// [C002](../../docs/adr/C002-full-pull-local-filter.md).
 async fn cal_list(
     account: &CalendarAccount,
     password: &str,
@@ -411,7 +425,7 @@ async fn cal_list(
         .get("limit")
         .and_then(|s| s.parse().ok())
         .unwrap_or(50);
-    // 默认返回今天及未来；--all 返回所有；--today 限今天；--date YYYY-MM-DD 限指定日期。
+    // Default: today and future; --all: everything; --today: today only; --date YYYY-MM-DD: that day.
     let today = chrono::Local::now().date_naive();
     let (exact_date, min_date): (Option<chrono::NaiveDate>, Option<chrono::NaiveDate>) =
         if flags.contains_key("all") {
@@ -421,21 +435,21 @@ async fn cal_list(
         } else if let Some(d) = flags.get("date") {
             (Some(parse_date(d)?), None)
         } else {
-            (None, Some(today)) // 默认：今天及未来
+            (None, Some(today)) // default: today and the future
         };
 
     let mut events: Vec<EventRow> = Vec::new();
     for cal in &calendars {
         let resp = match caldav.request(GetCalendarResources::new(&cal.href)).await {
             Ok(r) => r,
-            Err(_) => continue, // 单个日历拉取失败不致命
+            Err(_) => continue, // a single calendar's fetch failure is non-fatal
         };
         for res in resp.resources {
             let content = match res.content {
                 Ok(c) => c,
                 Err(_) => continue,
             };
-            // 解析 iCalendar，提取 VEVENT 并按日期过滤。
+            // Parse iCalendar, extract VEVENTs, and apply date filtering.
             if let Ok(parsed) = content.data.parse::<Calendar>() {
                 for event in parsed.events() {
                     if let Some(row) = build_event_row(&res.href, event) {
@@ -451,8 +465,9 @@ async fn cal_list(
         }
     }
 
-    // 排序：未来事件优先（开始时间升序，最近未来在前），过去事件在后（降序，最近过去在前）。
-    // 避免大量历史事件（如联系人生日）占满 limit 导致看不到未来日程。
+    // Sort: future events first (ascending start time, nearest future first), past events
+    // after (descending, nearest past first). This keeps a flood of past events (e.g. contact
+    // birthdays) from filling the limit and hiding upcoming events.
     let now = chrono::Local::now().naive_local();
     events.sort_by(|a, b| {
         let (af, bf) = (a.sort_key >= now, b.sort_key >= now);
@@ -481,7 +496,7 @@ async fn cal_list(
     ))
 }
 
-/// `cal add`：添加事件。用 icalendar 构造 VEVENT，PUT 到目标日历。
+/// `cal add`: add an event. Build a VEVENT with icalendar and PUT it to the target calendar.
 async fn cal_add(
     account: &CalendarAccount,
     password: &str,
@@ -501,7 +516,8 @@ async fn cal_add(
     let start_dt = parse_datetime(start)?;
     let end_dt = parse_datetime(end)?;
 
-    // 构造 VEVENT。Event 的 builder 方法返回 &mut Self，故先 owned 再链式最后 .done()。
+    // Build the VEVENT. Event's builder methods return &mut Self, so we create it owned,
+    // chain, then call .done() at the end.
     let mut event = Event::new();
     event.summary(title).starts(start_dt).ends(end_dt);
     if let Some(loc) = flags.get("location") {
@@ -513,13 +529,14 @@ async fn cal_add(
     let event = event.done();
 
     let calendar = Calendar::new().push(event).done();
-    // icalendar 的 fmt_write 用 write_crlf! 输出 CRLF，但归一化确保整体 CRLF（CalDAV 要求）。
+    // icalendar's fmt_write emits CRLF via write_crlf!, but normalization guarantees the
+    // whole body is CRLF (required by CalDAV).
     let ics = normalize_crlf(&calendar.to_string());
 
     let caldav = build_client(account, password).await?;
     let calendars = list_all_calendars(&caldav, ignored).await?;
 
-    // 选目标日历：--calendar HREF 或 name 匹配，默认第一个。
+    // Pick the target calendar: --calendar HREF or name match, default to the first.
     let target = if let Some(h) = flags.get("calendar") {
         calendars
             .into_iter()
@@ -531,7 +548,7 @@ async fn cal_add(
         })?
     };
 
-    // 生成新 href：<calendar_href>/<timestamp>.ics。UID 由 icalendar 自动生成。
+    // Build the new href: <calendar_href>/<timestamp>.ics. UID is auto-generated by icalendar.
     let new_href = format!(
         "{}{}.ics",
         ensure_trailing_slash(&target.href),
@@ -549,7 +566,7 @@ async fn cal_add(
     )))
 }
 
-/// `cal delete`：按 href 删除事件（无条件 force 删除）。
+/// `cal delete`: delete an event by href (force delete, unconditional).
 async fn cal_delete(
     account: &CalendarAccount,
     password: &str,
@@ -566,9 +583,9 @@ async fn cal_delete(
     Ok(Output::text(format!("deleted: {href}")))
 }
 
-// ============ 辅助函数 ============
+// ============ Helper functions ============
 
-/// 单条事件展示行 + 排序键。
+/// A single event's display row + sort key.
 struct EventRow {
     href: String,
     start: String,
@@ -578,7 +595,8 @@ struct EventRow {
     sort_key: chrono::NaiveDateTime,
 }
 
-/// 从解析出的 VEVENT 构造展示行（不做日期过滤，过滤由调用方 `cal_list` 处理）。
+/// Build a display row from a parsed VEVENT (no date filtering; filtering is done by
+/// the caller `cal_list`).
 fn build_event_row(href: &str, event: &Event) -> Option<EventRow> {
     let start_dpt = event.get_start()?;
     let start_ndt = date_perhaps_time_to_naive(&start_dpt)?;
@@ -597,14 +615,17 @@ fn build_event_row(href: &str, event: &Event) -> Option<EventRow> {
     })
 }
 
-/// 把 [`DatePerhapsTime`] 转为 [`chrono::NaiveDateTime`] 用于排序/过滤（本地时间序）。
+/// Convert [`DatePerhapsTime`] to [`chrono::NaiveDateTime`] for sorting/filtering
+/// (local-time order).
 ///
-/// - `Date` 变体拼 00:00:00（全天事件）。
-/// - `Utc` 取 naive_utc（统一到 UTC 时刻）。
-/// - `Floating` / `WithTimezone` 取 naive 部分（本地时间，对"今日事件"更直观）。
+/// - `Date` variant pads 00:00:00 (all-day event).
+/// - `Utc` takes naive_utc (normalized to the UTC instant).
+/// - `Floating` / `WithTimezone` take the naive part (local time, more intuitive for
+///   "today's events").
 ///
-/// 不启用 icalendar 的 `chrono-tz` feature，故不用 `try_into_utc`；用 NaiveDateTime
-/// 做本地时间排序对单日事件足够且更符合用户预期。
+/// We don't enable icalendar's `chrono-tz` feature, so we avoid `try_into_utc` and use
+/// NaiveDateTime for local-time sorting, which is sufficient for single-day events and
+/// matches user expectations better.
 fn date_perhaps_time_to_naive(dpt: &DatePerhapsTime) -> Option<chrono::NaiveDateTime> {
     match dpt {
         DatePerhapsTime::Date(d) => d.and_hms_opt(0, 0, 0),
@@ -616,7 +637,7 @@ fn date_perhaps_time_to_naive(dpt: &DatePerhapsTime) -> Option<chrono::NaiveDate
     }
 }
 
-/// 格式化 [`DatePerhapsTime`] 为人类可读字符串。
+/// Format a [`DatePerhapsTime`] as a human-readable string.
 fn format_date_perhaps_time(dpt: &DatePerhapsTime) -> String {
     match dpt {
         DatePerhapsTime::Date(d) => d.format("%Y-%m-%d").to_string(),
@@ -632,22 +653,22 @@ fn format_date_perhaps_time(dpt: &DatePerhapsTime) -> String {
     }
 }
 
-/// 解析 `YYYY-MM-DD` 日期。
+/// Parse a `YYYY-MM-DD` date.
 fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
         AgentError::InvalidArgument(format!("invalid date '{s}' (expected YYYY-MM-DD): {e}"))
     })
 }
 
-/// 解析日期时间，兼容三种形式：
-/// - `2026-07-09T14:00:00Z`（UTC，RFC3339）
-/// - `2026-07-09T14:00:00+08:00`（带偏移，RFC3339）
-/// - `2026-07-09T14:00:00`（无时区，按 UTC 处理）
+/// Parse a date-time, accepting three forms:
+/// - `2026-07-09T14:00:00Z` (UTC, RFC3339)
+/// - `2026-07-09T14:00:00+08:00` (with offset, RFC3339)
+/// - `2026-07-09T14:00:00` (no timezone, treated as UTC)
 fn parse_datetime(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return Ok(dt.with_timezone(&chrono::Utc));
     }
-    // 无时区后缀：按 UTC 解析（NaiveDateTime::and_utc 返 DateTime<Utc>，非 Option）。
+    // No timezone suffix: parse as UTC (NaiveDateTime::and_utc returns DateTime<Utc>, not Option).
     if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, "%Y-%m-%dT%H:%M:%S") {
         return Ok(ndt.and_utc());
     }
@@ -656,17 +677,18 @@ fn parse_datetime(s: &str) -> Result<chrono::DateTime<chrono::Utc>> {
     )))
 }
 
-/// 归一化换行为 CRLF：先把 `\r\n` 和 `\r` 都归一到 `\n`，再把 `\n` 转 `\r\n`。
+/// Normalize line endings to CRLF: first collapse `\r\n` and `\r` to `\n`, then turn `\n` into `\r\n`.
 ///
-/// icalendar 的 `fmt_write` 已用 `write_crlf!` 输出 CRLF，但 property 值内部可能混入
-/// 裸 `\n`/`\r`，归一化确保整体 CRLF（CalDAV/RFC 5545 要求 CRLF 行结束）。
+/// icalendar's `fmt_write` already emits CRLF via `write_crlf!`, but property values may embed
+/// bare `\n`/`\r`; normalization guarantees consistently CRLF-terminated lines (required by
+/// CalDAV / RFC 5545).
 fn normalize_crlf(s: &str) -> String {
     s.replace("\r\n", "\n")
         .replace('\r', "\n")
         .replace('\n', "\r\n")
 }
 
-/// 确保 href 以 `/` 结尾（用于拼接事件 href）。
+/// Ensure an href ends with `/` (used when composing event hrefs).
 fn ensure_trailing_slash(s: &str) -> String {
     if s.ends_with('/') {
         s.to_string()
@@ -675,9 +697,9 @@ fn ensure_trailing_slash(s: &str) -> String {
     }
 }
 
-/// 对 percent-encoded 字符串做解码（如 `%40` → `@`、`%20` → 空格），用于展示日历 href。
+/// Decode percent-encoded strings (e.g. `%40` → `@`, `%20` → space) for display of calendar hrefs.
 ///
-/// 非法 `%XX` 序列原样保留。无额外依赖，手写最小实现。
+/// Invalid `%XX` sequences are preserved verbatim. Hand-rolled minimal implementation with no extra deps.
 fn percent_decode(s: &str) -> String {
     let bytes = s.as_bytes();
     let mut out: Vec<u8> = Vec::with_capacity(bytes.len());
@@ -697,7 +719,7 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// 单个十六进制字符转数值。
+/// Convert a single hexadecimal digit to its numeric value.
 fn hex_digit(b: u8) -> Option<u8> {
     match b {
         b'0'..=b'9' => Some(b - b'0'),
@@ -707,16 +729,16 @@ fn hex_digit(b: u8) -> Option<u8> {
     }
 }
 
-/// 生成事件文件名（纳秒时间戳，单用户场景足够唯一）。
+/// Generate an event filename (nanosecond timestamp; unique enough for a single-user scenario).
 fn event_filename() -> String {
     let now = chrono::Utc::now();
     let nanos = now.timestamp_nanos_opt().unwrap_or(0);
     format!("{nanos:x}")
 }
 
-// ============ Timeline 数据拉取 ============
+// ============ Timeline data fetching ============
 
-/// Timeline 拉取用：日历事件原始数据。
+/// Raw calendar event data for Timeline ingestion.
 pub struct CalTimelineEntry {
     pub href: String,
     pub uid: String,
@@ -726,10 +748,10 @@ pub struct CalTimelineEntry {
     pub end: String,
 }
 
-/// Timeline 拉取：CalDAV 全量获取所有日历事件。
+/// Timeline ingestion: fetch all calendar events from CalDAV.
 ///
-/// Cal 使用窗口刷新模式（WindowRefresh），故拉取时返回当前快照，
-/// 编排器负责删除窗口内旧行再插入。
+/// Cal uses a window-refresh model ([C003](../../docs/adr/C003-cal-provider-window-filter.md)), so this
+/// returns the current snapshot; the orchestrator deletes old rows inside the window and re-inserts.
 pub async fn fetch_for_timeline(
     account: &CalendarAccount,
     ignored: &[String],
@@ -763,7 +785,7 @@ pub async fn fetch_for_timeline(
                         .unwrap_or_default();
                     let summary = event.get_summary().unwrap_or("").to_string();
                     let location = event.get_location().unwrap_or("").to_string();
-                    // VEVENT UID 作为 ref_id（iCalendar 标准）。
+                    // VEVENT UID is used as ref_id (per the iCalendar standard).
                     let uid = event.get_uid().unwrap_or(&res.href).to_string();
                     entries.push(CalTimelineEntry {
                         href: res.href.clone(),
@@ -846,7 +868,7 @@ mod tests {
         );
         assert_eq!(percent_decode("a%20b"), "a b");
         assert_eq!(percent_decode("no-encoding"), "no-encoding");
-        // 非法 %XX 原样保留。
+        // Invalid %XX sequences are preserved verbatim.
         assert_eq!(percent_decode("a%ZZb"), "a%ZZb");
         assert_eq!(percent_decode("a%4"), "a%4");
     }
@@ -907,12 +929,12 @@ mod tests {
         let cal = Calendar::new().push(event).done();
         let ics = cal.to_string();
 
-        // 序列化结果含 VEVENT 与 SUMMARY，且为 CRLF 行结束。
+        // Serialized output contains a VEVENT and SUMMARY, and uses CRLF line endings.
         assert!(ics.contains("BEGIN:VEVENT"));
         assert!(ics.contains("SUMMARY:测试会议"));
         assert!(ics.contains("\r\n"));
 
-        // 解析回来，摘要与开始时间一致。
+        // Round-trip parse: summary and start time must match.
         let parsed: Calendar = ics.parse().expect("parse ics");
         let ev = parsed.events().next().expect("one event");
         assert_eq!(ev.get_summary(), Some("测试会议"));

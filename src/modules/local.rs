@@ -1,15 +1,17 @@
-//! 本地 SQLite provider 的共享基础设施。
+//! Shared infrastructure for the local SQLite provider.
 //!
-//! `note` / `todo` 模块的 `local`（别名 `sqlite`）provider 复用此处的连接建立、
-//! 数据库路径解析与 provider 判别逻辑，避免两个模块各写一份。
+//! The `local` (alias `sqlite`) providers of the `note` / `todo` / `bookmark`
+//! modules reuse the connection setup, db-path resolution, and provider
+//! discrimination logic defined here, so each module does not re-implement
+//! them. See [R009](../../docs/adr/R009-notion-common-local-module.md).
 //!
-//! 设计要点：
-//! - 用 [`sqlx`] 的 `SqliteConnectOptions`（而非 URL 字符串）建连，规避 Windows
-//!   反斜杠路径在 `sqlite://` URL 中的转义问题。
-//! - `create_if_missing(true)`：文件不存在时自动创建，配合各模块的建表语句实现
-//!   「首次使用即可用」。
-//! - 连接池限制为单连接：CLI 每次调用是短生命周期进程，单连接足够且避免
-//!   SQLite 写并发锁问题。
+//! Design notes:
+//! - Use [`sqlx`]'s `SqliteConnectOptions` (not a URL string) to avoid the
+//!   Windows backslash escaping problem in `sqlite://` URLs.
+//! - `create_if_missing(true)`: the file is created on demand, combined with
+//!   each module's table creation to achieve "works on first use".
+//! - Single-connection pool: each CLI invocation is a short-lived process, so
+//!   one connection suffices and avoids SQLite write-concurrency locks.
 
 use std::path::{Path, PathBuf};
 
@@ -17,17 +19,17 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 
 use crate::error::{AgentError, Result};
 
-/// 判断某个 provider 字符串是否为本地 SQLite provider。
+/// Whether a provider string denotes the local SQLite provider.
 ///
-/// 接受 `local` 与 `sqlite` 两个别名（大小写不敏感）。
+/// Accepts both `local` and `sqlite` aliases (case-insensitive).
 pub fn is_local_provider(provider: &str) -> bool {
     matches!(provider.to_ascii_lowercase().as_str(), "local" | "sqlite")
 }
 
-/// 解析本地 SQLite 数据库文件路径。
+/// Resolve the local SQLite database file path.
 ///
-/// - `override_path`：账户配置里的 `db_path`，若存在直接使用。
-/// - 否则回退到 `~/.config/everyday/<module>-<account>.db`。
+/// - `override_path`: the account config's `db_path`; used directly if present.
+/// - otherwise falls back to `~/.config/everyday/<module>-<account>.db`.
 pub fn resolve_db_path(
     module: &str,
     account_name: &str,
@@ -43,9 +45,9 @@ pub fn resolve_db_path(
         .join(format!("{module}-{account_name}.db")))
 }
 
-/// 打开（必要时创建）SQLite 连接池。
+/// Open (creating if needed) the SQLite connection pool.
 ///
-/// 自动创建父目录；文件不存在时创建数据库文件。
+/// Creates the parent directory automatically; creates the db file if absent.
 pub async fn connect(path: &Path) -> Result<SqlitePool> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
@@ -62,20 +64,23 @@ pub async fn connect(path: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// 探测当前渲染模式是否为 JSON（与 note/todo 模块保持一致：以线程局部
-/// `is_json()` 为准，由 main.rs 在启动时设置）。
+/// Probe whether the current render mode is JSON (consistent with the
+/// note/todo modules: driven by the thread-local `is_json()`, set by
+/// `main.rs` at startup). See
+/// [R001](../../docs/adr/R001-thread-local-json-mode.md).
 pub fn mode_json() -> bool {
     crate::util::json_mode::is_json()
 }
 
-/// 把逗号分隔的标签字符串解析为清洗后的 `Vec<String>`。
+/// Parse a comma-separated tag string into a cleaned `Vec<String>`.
 ///
-/// - 去每项首尾空白；
-/// - 过滤空项（避免 `"rust, ,cli"` 产生空 tag）；
-/// - `None` 输入返空 Vec。
+/// - trims leading/trailing whitespace per item;
+/// - drops empty items (so `"rust, ,cli"` yields no empty tag);
+/// - `None` input returns an empty `Vec`.
 ///
-/// 之前 bookmark.rs 与 bookmark_local.rs 各有一份相同的实现（`parse_tags`
-/// 与 `parse_tags_local_splits`），集中到此处。
+/// Previously `bookmark.rs` and `bookmark_local.rs` each had an identical
+/// copy (`parse_tags` / `parse_tags_local_splits`); consolidated here. See
+/// [R009](../../docs/adr/R009-notion-common-local-module.md).
 pub fn parse_tags(raw: Option<&String>) -> Vec<String> {
     match raw {
         None => Vec::new(),
@@ -87,18 +92,21 @@ pub fn parse_tags(raw: Option<&String>) -> Vec<String> {
     }
 }
 
-/// Notion 模块统一的交互式 login 流程：
-/// 1. 打开 keyring entry（service = `everyday/<module>/<account>`，user = `KEYRING_USER`）。
-/// 2. spawn_blocking 调 rpassword 提示用户粘贴 Notion Integration Token。
-/// 3. trim 后非空校验。
-/// 4. 写入 keyring。
-/// 5. 返回成功消息。
+/// Unified interactive login flow for Notion modules:
+/// 1. open the keyring entry (service = `everyday/<module>/<account>`, user = `KEYRING_USER`);
+/// 2. `spawn_blocking` drives `rpassword` to prompt the user to paste the
+///    Notion Integration Token;
+/// 3. trim and reject empty input;
+/// 4. write to keyring;
+/// 5. return a success message.
 ///
-/// 之前 note.rs / todo.rs / bookmark.rs 各有一份约 25 行逐字复制
-/// （仅 module 名 + 成功消息文案不同），集中到此处。
+/// Previously `note.rs` / `todo.rs` / `bookmark.rs` each carried a ~25-line
+/// verbatim copy (only the module name and success message differed);
+/// consolidated here. See [R009](../../docs/adr/R009-notion-common-local-module.md).
 ///
-/// 区别于 mail/cal 的 password login：mail/cal 用「Password for X」普通密码 prompt，
-/// 而 notion 用 Notion Integration Token 文案，token 形态不同。
+/// Differs from mail/cal password login: mail/cal use a generic "Password for
+/// X" prompt, whereas Notion uses the Integration Token wording (different
+/// token shape).
 pub async fn login_notion(module: &str, account_name: &str) -> Result<()> {
     use crate::keyring_user::KEYRING_USER;
 
@@ -107,7 +115,7 @@ pub async fn login_notion(module: &str, account_name: &str) -> Result<()> {
         .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
     let prompt =
         format!("Paste Notion Integration Token (ntn_...) for {module} account '{account_name}': ");
-    // rpassword 为同步 API，放进 spawn_blocking 避免阻塞运行时。
+    // rpassword is a sync API; wrap in spawn_blocking to avoid blocking the runtime.
     let password = tokio::task::spawn_blocking(move || rpassword::prompt_password(prompt))
         .await
         .map_err(|e| AgentError::Other(format!("join token prompt: {e}")))?
@@ -124,12 +132,13 @@ pub async fn login_notion(module: &str, account_name: &str) -> Result<()> {
     Ok(())
 }
 
-/// 在 config 的 `<module>.accounts[]` 中找到 `name` 匹配的账户，
-/// 写入 `default_database_id = db_id`。
+/// Find the account whose `name` matches in config's `<module>.accounts[]`
+/// and write `default_database_id = db_id`.
 ///
-/// 局部编辑 config TOML，不动其它账户或其它段落。
-/// 之前 todo.rs 与 bookmark.rs 各有一份约 35 行逐字复制
-/// （`set_todo_database_id` / `set_bookmark_database_id`），集中到此处。
+/// Edits only that account's TOML entry; other accounts and sections are
+/// untouched. Previously `todo.rs` and `bookmark.rs` each had a ~35-line
+/// verbatim copy (`set_todo_database_id` / `set_bookmark_database_id`);
+/// consolidated here. See [R009](../../docs/adr/R009-notion-common-local-module.md).
 pub fn set_module_database_id(
     root: &mut toml::Value,
     module: &str,
@@ -239,7 +248,7 @@ default_database_id = "old_b"
         .unwrap();
         set_module_database_id(&mut root, "todo", "t1", "new_t").unwrap();
 
-        // t1 应被更新；t2 / b1 / default_account 不动。
+        // t1 should be updated; t2 / b1 / default_account untouched.
         let todo_accounts = root.get("todo").unwrap().get("accounts").unwrap();
         let t1 = todo_accounts
             .as_array()
@@ -251,7 +260,7 @@ default_database_id = "old_b"
             Some("new_t")
         );
 
-        // b1 应未变。
+        // b1 should be unchanged.
         let b1 = root
             .get("bookmark")
             .unwrap()

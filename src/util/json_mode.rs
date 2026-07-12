@@ -1,25 +1,28 @@
-//! 渲染模式探测工具。
+//! Render-mode probing utilities.
 //!
-//! 通过线程局部变量传递，由 `main.rs` 在进程启动时设置一次（基于 clap
-//! 解析的 `--json` flag）。模块深层辅助函数可读 `is_json()` 而无需
-//! 把 `RenderMode` 层层下传。
+//! Thread-local state, set once at process startup by `main.rs` from the
+//! clap-parsed `--json` flag. Deep helper functions can read `is_json()`
+//! without threading a `RenderMode` through every call. See
+//! [R001](../../docs/adr/R001-thread-local-json-mode.md).
 //!
-//! 替代旧实现的 `std::env::args()` 二次扫描 —— 旧实现会被宿主进程
-//! 的命令行污染，且与已解析的 `cli.json` 重复探测。
+//! Replaces the old implementation's second `std::env::args()` scan, which
+//! was polluted by the host process's command line and duplicated the
+//! already-parsed `cli.json` probe.
 
 use std::cell::Cell;
 
 thread_local! {
-    /// 进程级 JSON 模式标记。默认 false，main.rs 在启动时按 clap 解析结果设置。
+    /// Process-wide JSON-mode flag. Defaults to false; `main.rs` sets it at
+    /// startup from the clap parse result.
     static JSON_MODE: Cell<bool> = const { Cell::new(false) };
 }
 
-/// 设置当前线程的 JSON 模式标记。由 `main` 在启动时调用一次。
+/// Set the current thread's JSON-mode flag. Called once by `main` at startup.
 pub fn set_json_mode(json: bool) {
     JSON_MODE.with(|c| c.set(json));
 }
 
-/// 当前线程的 JSON 模式标记。模块深层辅助函数查询它。
+/// Current thread's JSON-mode flag. Deep helper functions query this.
 pub fn is_json() -> bool {
     JSON_MODE.with(|c| c.get())
 }
@@ -30,9 +33,11 @@ mod tests {
 
     #[test]
     fn default_is_false() {
-        // 进程默认未设置时为 false。本测试在独立线程跑，TLS 干净。
-        // 注：cargo test 在同一进程串行跑测试，TLS 在每个 #[test] 之间不重置。
-        // 为不互相污染，本测试只验证 set/get 一致性。
+        // Defaults to false when the process has not set it. This test runs
+        // on its own thread, so the TLS is clean.
+        // Note: `cargo test` runs tests serially in one process; the TLS is
+        // not reset between `#[test]`s. To avoid cross-test pollution we only
+        // assert set/get consistency.
         set_json_mode(false);
         assert!(!is_json());
         set_json_mode(true);

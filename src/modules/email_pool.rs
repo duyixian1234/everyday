@@ -1,12 +1,14 @@
-//! mail 模块的 IMAP session 连接池。
+//! IMAP session connection pool for the mail module.
 //!
-//! 固定大小 M=4（ADR [M002](../../docs/adr/M002-imap-connection-pool.md)），所有 session 共享同一份 keyring 密码。
-//! 跨文件夹 sync 时通过 `tokio::Semaphore` 控制并发上限为 4。
+//! Fixed size M=4 (ADR [M002](../../docs/adr/M002-imap-connection-pool.md)); all
+//! sessions share the same keyring password.
+//! Concurrency across folder sync is capped at 4 via `tokio::Semaphore`.
 //!
-//! `acquire()` 返回 `PoolGuard`，内部 take 一个空闲 session；
-//! `Drop` 时归还（除非调用 `invalidate()` 标记为 dirty）。
+//! `acquire()` returns a `PoolGuard`, which takes an idle session; the session is
+//! returned on `Drop` (unless `invalidate()` marked it dirty).
 //!
-//! 启动时同步建满 4 个 session —— 减少首次 list 的 4×TLS 握手延迟叠加。
+//! Sessions are built eagerly (all 4) at startup to avoid stacking 4× TLS
+//! handshake latency on the first list.
 
 use std::collections::VecDeque;
 use std::sync::Arc;
@@ -17,21 +19,21 @@ use crate::config::MailAccount;
 use crate::error::{AgentError, Result};
 use crate::modules::email::{ImapSession, imap_connect};
 
-/// 池大小。ADR [M002](../../docs/adr/M002-imap-connection-pool.md)：写死，无 flag / config 暴露。
+/// Pool size. ADR [M002](../../docs/adr/M002-imap-connection-pool.md): hard-coded, no flag / config exposure.
 pub const POOL_SIZE: usize = 4;
 
-/// IMAP session 池（cheap-clone，内部 `Arc`）。
+/// IMAP session pool (cheap-clone, backed by `Arc`).
 #[derive(Clone)]
 pub struct Pool {
     inner: Arc<PoolInner>,
 }
 
 struct PoolInner {
-    /// 空闲 session 队列。`acquire` pop_front，`Drop` push_back。
+    /// Idle session queue. `acquire` pops from the front, `Drop` pushes to the back.
     sessions: Mutex<VecDeque<ImapSession>>,
-    /// 并发上限（默认 `POOL_SIZE`）。`Arc` 包裹以便 `acquire_owned`。
+    /// Concurrency cap (defaults to `POOL_SIZE`). Wrapped in `Arc` for `acquire_owned`.
     semaphore: Arc<Semaphore>,
-    /// 重建脏 session 用的账号元数据 + 密码（来自 keyring）。
+    /// Account metadata + password (from keyring) used to rebuild dirty sessions.
     #[allow(dead_code)]
     account: MailAccount,
     #[allow(dead_code)]
@@ -39,7 +41,7 @@ struct PoolInner {
 }
 
 impl Pool {
-    /// 建池：启动时同步建立 `POOL_SIZE` 个 IMAP session。
+    /// Build the pool: create `POOL_SIZE` IMAP sessions eagerly at startup.
     pub async fn new(account: MailAccount, password: String) -> Result<Self> {
         let mut sessions = VecDeque::with_capacity(POOL_SIZE);
         for _ in 0..POOL_SIZE {
@@ -55,10 +57,10 @@ impl Pool {
         })
     }
 
-    /// 获取一个 session 的独占所有权（`PoolGuard`）。
+    /// Acquire exclusive ownership of a session (`PoolGuard`).
     ///
-    /// - 阻塞至信号量有空位
-    /// - 池空时报错（防御性，正常不会触发）
+    /// - Blocks until a semaphore slot is free.
+    /// - Errors if the pool is empty (defensive; should never happen in practice).
     pub async fn acquire(&self) -> Result<PoolGuard> {
         let permit = Arc::clone(&self.inner.semaphore)
             .acquire_owned()
@@ -76,31 +78,33 @@ impl Pool {
     }
 }
 
-/// `Pool::acquire` 返回的 session guard。
+/// Session guard returned by `Pool::acquire`.
 ///
-/// - `Drop` 时自动归还 session 到池
-/// - `invalidate()` 标记 session 为 dirty，drop 时不归还（防止坏 session 被复用）
+/// - Returns the session to the pool on `Drop`.
+/// - `invalidate()` marks the session dirty; on drop it is not returned (prevents a
+///   bad session from being reused).
 pub struct PoolGuard {
     pool: Arc<PoolInner>,
-    /// 持有 permit 限制并发；guard drop 时 permit 自动释放。
-    /// 字段从未显式读取，但 drop 语义负责释放 semaphore。
+    /// Holds the permit that bounds concurrency; the permit is released automatically on guard drop.
+    /// The field is never read explicitly, but its drop semantics release the semaphore.
     #[allow(dead_code)]
     permit: OwnedSemaphorePermit,
-    /// `Some` = 持有 session；`None` = 已通过 `invalidate` 消费。
+    /// `Some` = holds a session; `None` = already consumed via `invalidate`.
     session: Option<ImapSession>,
 }
 
 impl PoolGuard {
-    /// 取得内部 session 的可变引用以执行 IMAP 命令。
+    /// Borrow the inner session mutably to run IMAP commands.
     ///
-    /// 已被 `invalidate()` 消费时返回错误而非 panic（生产路径禁止 unwrap）。
+    /// Returns an error instead of panicking when already consumed by `invalidate()`
+    /// (no unwrap on the production path).
     pub fn session(&mut self) -> Result<&mut ImapSession> {
         self.session
             .as_mut()
             .ok_or_else(|| AgentError::Other("pool guard session already consumed".into()))
     }
 
-    /// 标记 session 为 dirty（命令失败后调用），drop 时不归还。
+    /// Mark the session dirty (called after a command failure); not returned on drop.
     pub fn invalidate(mut self) {
         self.session.take();
     }
@@ -109,11 +113,12 @@ impl PoolGuard {
 impl Drop for PoolGuard {
     fn drop(&mut self) {
         if let Some(session) = self.session.take() {
-            // 归还 session 到空闲队列。
-            // 若当前不在 tokio runtime 内（runtime 关闭中 / 测试 teardown / 单线程同步上下文），
-            // tokio::spawn 会 panic，session 永久丢失、池容量漏出。
-            // 用 Handle::try_current 探测，runtime 不可用时直接 drop session（接受泄漏，
-            // 因为这种情况只会发生在进程退出路径）。
+            // Return the session to the idle queue.
+            // If we are not inside a tokio runtime (runtime shutting down / test teardown /
+            // single-threaded sync context), tokio::spawn would panic and the session would
+            // be lost permanently, leaking pool capacity.
+            // Probe with Handle::try_current; if no runtime is available, drop the session
+            // directly (accept the leak, since this only happens on the process-exit path).
             match tokio::runtime::Handle::try_current() {
                 Ok(handle) => {
                     let pool = Arc::clone(&self.pool);
@@ -123,11 +128,12 @@ impl Drop for PoolGuard {
                     });
                 }
                 Err(_) => {
-                    // runtime 已关：放弃归还。permit 仍随 OwnedSemaphorePermit drop 释放。
+                    // Runtime already gone: give up returning it. The permit is still
+                    // released when OwnedSemaphorePermit drops.
                 }
             }
         }
-        // permit 在 OwnedSemaphorePermit drop 时自动释放 → 并发槽 +1
+        // The permit is released automatically when OwnedSemaphorePermit drops → concurrency slot +1
     }
 }
 
@@ -137,15 +143,15 @@ mod tests {
 
     #[test]
     fn capacity_is_4() {
-        // 编译期常量的稳定性测试：ADR M002 写死 M=4
+        // Compile-time constant stability test: ADR M002 hard-codes M=4
         assert_eq!(POOL_SIZE, 4);
     }
 
     #[tokio::test]
     async fn session_after_invalidate_returns_error_not_panic() {
-        // 验证修复：之前 session() 在 invalidate 之后会 .expect() panic。
-        // 现版本必须返回 Result，且 Ok/Err 路径都不 panic。
-        // 这里构造一个空的 PoolGuard 字段等价结构（绕过真实 IMAP 连接）。
+        // Verify the fix: previously session() would .expect() panic after invalidate.
+        // The current version must return a Result, and neither the Ok nor Err path panics.
+        // Here we build an equivalent empty PoolGuard struct (bypassing a real IMAP connection).
         let permit = Arc::new(Semaphore::new(1))
             .acquire_owned()
             .await
@@ -173,6 +179,6 @@ mod tests {
         assert!(result.is_err(), "session() after invalidate must error");
     }
 
-    // 注：完整 Pool 行为测试需要 mock IMAP server，超出单测范围（CI 跳过网络）。
-    // 见 docs/adr/0010 §Consequences — 真实环境验证在集成测试中跑。
+    // Note: full Pool behavior tests need a mock IMAP server, beyond unit-test scope (CI skips network).
+    // See [F010](../../docs/adr/F010-testing-requirements.md) §Consequences — real-env verification runs in integration tests.
 }

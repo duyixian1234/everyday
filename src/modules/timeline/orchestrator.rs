@@ -1,12 +1,15 @@
-//! Sync 编排器：协调所有 provider 的同步。
+//! Sync orchestrator: coordinates the sync of all providers.
 //!
-//! 职责：
-//! 1. 从 `sync_state` 读取各 (source, account) 的水位。
-//! 2. 构造 `TimeWindow`（首次回看 30 天，cal 前看 7 天）。
-//! 3. 按 source 分组并行执行 provider sync（同 source 多账户串行）。
-//! 4. 按 SyncMode 写入 events 表（Append / WindowRefresh）。
-//! 5. 更新水位（成功更新，失败不变）。
-//! 6. 返回统计结果。
+//! Responsibilities:
+//! 1. Read the watermark of each (source, account) from `sync_state`.
+//! 2. Build the `TimeWindow` (first sync looks back 30 days; cal looks ahead 7 days
+//!    [L002](../../../docs/adr/L002-calendar-window-refresh.md)).
+//! 3. Group by source and run provider sync in parallel (multiple accounts of the
+//!    same source run serially).
+//! 4. Write events to the events table by SyncMode (Append / WindowRefresh)
+//!    [L001](../../../docs/adr/L001-append-only-event-log.md).
+//! 5. Advance the watermark (updated on success, unchanged on failure).
+//! 6. Return the statistics.
 
 use std::sync::Arc;
 
@@ -21,16 +24,16 @@ use crate::modules::timeline::store;
 use crate::modules::timeline::{ProviderStatus, ProviderSyncResult, TimelineProvider};
 use crate::output::Output;
 
-/// 默认首同步回看天数。
+/// Default lookback days for the first sync.
 const DEFAULT_LOOKBACK_DAYS: i64 = 30;
-/// Cal 窗口前看天数。
+/// Cal window look-ahead days.
 const CAL_LOOKAHEAD_DAYS: i64 = 7;
 
-/// 执行一次完整 sync。
+/// Run a full sync.
 ///
-/// - `config`：提供账户配置。
-/// - `sources`：来源过滤（空 = 全部）。
-/// - `since`：覆盖回看窗口起点（None = 用水位或默认回看）。
+/// - `config`: provides account configuration.
+/// - `sources`: source filter (empty = all).
+/// - `since`: overrides the lookback window start (None = use watermark or default lookback).
 pub async fn run_sync(
     config: &Arc<Config>,
     sources: &[String],
@@ -44,7 +47,7 @@ pub async fn run_sync(
 
     let now = Utc::now();
 
-    // 按 source 分组（同 source 的 provider 放一组，组内串行，组间并行）。
+    // Group by source (providers of the same source go in one group; serial within a group, parallel across groups).
     let groups = group_by_source(providers);
 
     let group_results: Vec<Vec<ProviderSyncResult>> = join_all(
@@ -54,7 +57,7 @@ pub async fn run_sync(
     )
     .await;
 
-    // 展平结果。
+    // Flatten results.
     let mut results: Vec<ProviderSyncResult> = Vec::new();
     for group in group_results {
         results.extend(group);
@@ -64,7 +67,7 @@ pub async fn run_sync(
     Ok(output)
 }
 
-/// 按 source 分组 provider（保持同 source 在同一组）。
+/// Group providers by source (keeping the same source in one group).
 fn group_by_source(
     providers: Vec<Box<dyn TimelineProvider>>,
 ) -> Vec<Vec<Box<dyn TimelineProvider>>> {
@@ -80,7 +83,7 @@ fn group_by_source(
     groups.into_iter().map(|(_, g)| g).collect()
 }
 
-/// 同步一组 provider（同 source，串行执行）。
+/// Sync a group of providers (same source, serial execution).
 async fn sync_group(
     pool: &sqlx::SqlitePool,
     providers: Vec<Box<dyn TimelineProvider>>,
@@ -95,7 +98,7 @@ async fn sync_group(
     results
 }
 
-/// 同步单个 provider。
+/// Sync a single provider.
 async fn sync_one(
     pool: &sqlx::SqlitePool,
     provider: Box<dyn TimelineProvider>,
@@ -105,18 +108,18 @@ async fn sync_one(
     let source = provider.source().to_string();
     let account = provider.account().map(|s| s.to_string());
 
-    // 读取水位。
+    // Read the watermark.
     let watermark = store::get_watermark(pool, &source, account.as_deref())
         .await
         .ok()
         .flatten();
 
-    // 构造窗口。
+    // Build the window.
     let from = since_override
         .or(watermark.as_ref().and_then(|w| w.last_sync))
         .unwrap_or_else(|| now - Duration::days(DEFAULT_LOOKBACK_DAYS));
 
-    // Cal 前看 7 天。
+    // Cal looks ahead 7 days.
     let to = if source == "cal" {
         now + Duration::days(CAL_LOOKAHEAD_DAYS)
     } else {
@@ -125,11 +128,12 @@ async fn sync_one(
 
     let window = crate::modules::timeline::TimeWindow::new(from, to);
 
-    // 执行 provider sync。
+    // Run provider sync.
     match provider.sync(&window).await {
         Ok((events, mode)) => {
-            // 写入 events 表：失败时标 ProviderStatus::Failed，不再静默吞掉报 Ok
-            // 0 events（之前 .unwrap_or(0) 让 DB 错误伪装成"成功无新事件"）。
+            // Write to the events table: on failure mark ProviderStatus::Failed instead of
+            // silently swallowing it as Ok with 0 events (the old `.unwrap_or(0)` let DB
+            // errors masquerade as "success, no new events") [L009](../../../docs/adr/L009-best-effort-sync.md).
             let count = match store::insert_events(pool, &events, mode, from, to).await {
                 Ok(n) => n,
                 Err(e) => {
@@ -143,8 +147,9 @@ async fn sync_one(
                 }
             };
 
-            // 水位推进：失败仅警告，不阻断（下次 sync 会重跑该窗口，
-            // INSERT OR IGNORE 自然去重，不会重复入库）。
+            // Advance the watermark: failure is only warned, not fatal (next sync re-runs the
+            // window, and INSERT OR IGNORE naturally de-duplicates - no double insertion)
+            // [L009](../../../docs/adr/L009-best-effort-sync.md).
             if let Err(e) = store::set_watermark(pool, &source, account.as_deref(), now, true).await
             {
                 eprintln!("timeline: set_watermark failed for {source}: {e} (will re-sync window)");
@@ -158,7 +163,7 @@ async fn sync_one(
             }
         }
         Err(e) => {
-            // 失败：水位不变，下次重试。
+            // Failure: leave the watermark unchanged and retry next time.
             eprintln!("timeline: sync failed for {source}: {e}");
             ProviderSyncResult {
                 source,
@@ -170,13 +175,13 @@ async fn sync_one(
     }
 }
 
-/// Sync 输出结果。
+/// Sync output result.
 pub struct SyncOutput {
     pub results: Vec<ProviderSyncResult>,
 }
 
 impl SyncOutput {
-    /// 渲染为 Output（文本或 JSON）。
+    /// Render into an Output (text or JSON).
     pub fn to_output(&self, json_mode: bool) -> Output {
         let total = self.results.len();
         let ok_count = self
@@ -248,7 +253,7 @@ mod tests {
     use crate::modules::timeline::{SyncMode, TimelineEvent, TimelineProvider};
     use async_trait::async_trait;
 
-    /// Mock provider，用于测 group_by_source 的分组逻辑。
+    /// Mock provider used to test the grouping logic of `group_by_source`.
     struct MockProvider {
         source_id: &'static str,
         account_name: Option<&'static str>,
@@ -292,16 +297,16 @@ mod tests {
         ];
         let groups = group_by_source(providers);
 
-        // 4 个 providers 应分成 3 组（todo/note/rss）。
+        // 4 providers should split into 3 groups (todo/note/rss).
         assert_eq!(groups.len(), 3, "expected 3 groups");
 
-        // 每组内 providers 数：todo=2, note=1, rss=1。
+        // Provider counts per group: todo=2, note=1, rss=1.
         let sizes: Vec<usize> = groups.iter().map(|g| g.len()).collect();
         let mut sizes_sorted = sizes.clone();
         sizes_sorted.sort_unstable();
         assert_eq!(sizes_sorted, vec![1, 1, 2]);
 
-        // 验证 todo 组含 2 个 accounts。
+        // Verify the todo group contains 2 accounts.
         let todo_group = groups
             .iter()
             .find(|g| g[0].source() == "todo")

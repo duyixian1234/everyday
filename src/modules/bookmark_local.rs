@@ -1,14 +1,15 @@
-//! bookmark 模块的本地 SQLite provider。
+//! Local SQLite provider for the bookmark module [B001](../../docs/adr/B001-bookmark-dual-provider.md).
 //!
-//! 与 Notion provider 对等实现 `add` / `list` 语义，数据落在账户配置的本地 SQLite 文件中。
-//! `login` 对本地 provider 无意义（无需凭证），`init-db` 仅建表并汇报路径。
+//! Parity implementation of `add` / `list` semantics with the Notion provider; data lands in the
+//! account's configured local SQLite file. `login` is meaningless for the local provider (no
+//! credentials needed), and `init-db` only creates the table and reports the path.
 //!
-//! 数据模型：
-//! - `bookmarks(id, url, title, created_at)`：一条书签 = URL + 标题。
-//! - `bookmark_tags(bookmark_id, tag)`：书签的标签（多对多），用于按标签精确过滤。
+//! Data model:
+//! - `bookmarks(id, url, title, created_at)`: one bookmark = URL + title.
+//! - `bookmark_tags(bookmark_id, tag)`: a bookmark's tags (many-to-many), used for exact tag filtering.
 //!
-//! 输出形态（列名 / JSON key）刻意与 `bookmark.rs` 的 Notion 版本保持一致：
-//! `id` / `title` / `url` / `tags`。
+//! The output shape (column names / JSON keys) is deliberately kept in sync with the Notion version
+//! in `bookmark.rs`: `id` / `title` / `url` / `tags`.
 
 use std::collections::HashMap;
 
@@ -21,7 +22,7 @@ use crate::modules::bookmark::BookmarkItem;
 use crate::modules::local::{connect, mode_json, resolve_db_path};
 use crate::output::Output;
 
-/// 建表语句：书签主表 + 标签关联表。
+/// Table creation statements: the bookmark master table + the tag association table.
 const CREATE_BOOKMARKS_SQL: &str = "CREATE TABLE IF NOT EXISTS bookmarks (\
     id TEXT PRIMARY KEY, \
     url TEXT NOT NULL, \
@@ -33,7 +34,7 @@ const CREATE_TAGS_SQL: &str = "CREATE TABLE IF NOT EXISTS bookmark_tags (\
     tag TEXT NOT NULL, \
     PRIMARY KEY (bookmark_id, tag))";
 
-/// 打开连接并确保表存在。
+/// Open the connection and ensure the tables exist.
 async fn open(account: &BookmarkAccount) -> Result<SqlitePool> {
     let path = resolve_db_path("bookmark", &account.name, account.db_path.as_deref())?;
     let pool = connect(&path).await?;
@@ -42,14 +43,14 @@ async fn open(account: &BookmarkAccount) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// 生成短唯一 ID（bookmark 前缀 `b`；实现见 [`crate::util::id::gen_id`]）。
+/// Generate a short unique ID (bookmark prefix `b`; see [`crate::util::id::gen_id`]).
 fn gen_id() -> String {
     crate::util::id::gen_id("b")
 }
 
 // ============ actions ============
 
-/// `bookmark login`（本地）：本地 provider 无需凭证。
+/// `bookmark login` (local): the local provider needs no credentials.
 pub fn login(account: &BookmarkAccount) -> Result<Output> {
     Ok(Output::text(format!(
         "bookmark account '{}' uses the local sqlite provider; no login required",
@@ -57,7 +58,7 @@ pub fn login(account: &BookmarkAccount) -> Result<Output> {
     )))
 }
 
-/// `bookmark init-db`（本地）：建表并汇报数据库路径。
+/// `bookmark init-db` (local): create the table and report the database path.
 pub async fn init_db(account: &BookmarkAccount) -> Result<Output> {
     let path = resolve_db_path("bookmark", &account.name, account.db_path.as_deref())?;
     let _ = open(account).await?;
@@ -74,7 +75,7 @@ pub async fn init_db(account: &BookmarkAccount) -> Result<Output> {
     }
 }
 
-/// `bookmark add --url U --title T [--tags a,b]`（本地）：收藏书签。
+/// `bookmark add --url U --title T [--tags a,b]` (local): collect a bookmark.
 pub async fn add(account: &BookmarkAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let url = flags
         .get("url")
@@ -117,11 +118,11 @@ pub async fn add(account: &BookmarkAccount, flags: &HashMap<String, String>) -> 
     }
 }
 
-/// `bookmark list [--tag TAG]`（本地）：列出书签，可按标签过滤。
+/// `bookmark list [--tag TAG]` (local): list bookmarks, optionally filtered by tag.
 pub async fn list(account: &BookmarkAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let pool = open(account).await?;
 
-    // 基础查询：按标签过滤时 JOIN bookmark_tags，否则取全部。
+    // Base query: JOIN bookmark_tags when filtering by tag, otherwise take all.
     let rows = if let Some(tag) = flags.get("tag") {
         let sql = "SELECT b.id, b.url, b.title, b.created_at FROM bookmarks b \
             JOIN bookmark_tags t ON t.bookmark_id = b.id \
@@ -133,7 +134,7 @@ pub async fn list(account: &BookmarkAccount, flags: &HashMap<String, String>) ->
         sqlx::query(sql).fetch_all(&pool).await?
     };
 
-    // 逐条装载标签，组装 BookmarkItem。
+    // Load tags per row and assemble BookmarkItem.
     let mut items: Vec<BookmarkItem> = Vec::with_capacity(rows.len());
     for r in &rows {
         let id: String = r.get("id");
@@ -179,9 +180,9 @@ pub async fn list(account: &BookmarkAccount, flags: &HashMap<String, String>) ->
     }
 }
 
-// ============ Timeline 数据拉取 ============
+// ============ Timeline data ingestion ============
 
-/// Timeline 拉取用：bookmark 条目原始数据。
+/// Timeline ingestion: raw bookmark entry data.
 pub struct BookmarkTimelineEntry {
     pub id: String,
     pub title: String,
@@ -190,7 +191,7 @@ pub struct BookmarkTimelineEntry {
     pub created_at: String,
 }
 
-/// Timeline 增量拉取：返回 `created_at` 落在窗口内的 bookmark。
+/// Timeline incremental fetch: return bookmarks whose `created_at` falls within the window.
 pub async fn fetch_for_timeline(
     account: &BookmarkAccount,
     from: chrono::DateTime<chrono::Utc>,
@@ -232,9 +233,9 @@ pub async fn fetch_for_timeline(
     Ok(entries)
 }
 
-// ============ 小工具 ============
+// ============ Helpers ============
 
-// parse_tags 见 `crate::modules::local::parse_tags` —— 两处 bookmark provider 共享。
+// parse_tags: see `crate::modules::local::parse_tags` — shared by both bookmark providers [R009](../../docs/adr/R009-notion-common-local-module.md).
 
 #[cfg(test)]
 mod tests {
@@ -251,7 +252,7 @@ mod tests {
         }
     }
 
-    /// 统计某 tag 下的书签数量（JOIN bookmark_tags 精确匹配）。
+    /// Count bookmarks under a given tag (exact match via JOIN bookmark_tags).
     async fn count_tag(pool: &SqlitePool, tag: &str) -> i64 {
         sqlx::query(
             "SELECT COUNT(*) as c FROM bookmarks b \
@@ -282,7 +283,7 @@ mod tests {
 
         let pool = open(&acc).await.unwrap();
 
-        // 全部 2 条。
+        // All 2 rows.
         let all: i64 = sqlx::query("SELECT COUNT(*) as c FROM bookmarks")
             .fetch_one(&pool)
             .await
@@ -290,12 +291,12 @@ mod tests {
             .get("c");
         assert_eq!(all, 2);
 
-        // 按 tag 过滤（JOIN bookmark_tags 精确匹配）：rust -> 2，doc -> 1，lang -> 1。
+        // Filter by tag (exact match via JOIN bookmark_tags): rust -> 2, doc -> 1, lang -> 1.
         assert_eq!(count_tag(&pool, "rust").await, 2);
         assert_eq!(count_tag(&pool, "doc").await, 1);
         assert_eq!(count_tag(&pool, "lang").await, 1);
 
-        // list 输出（默认文本模式返回 Records，JSON 模式返回数组）形态正确。
+        // list output shape is correct (Records in text mode, array in JSON mode).
         let mut fr = HashMap::new();
         fr.insert("tag".into(), "doc".into());
         let out = list(&acc, &fr).await.unwrap();
@@ -342,7 +343,7 @@ mod tests {
 
     #[test]
     fn parse_tags_local_splits() {
-        // 共享 helper 的完整测试在 local.rs；这里只验证 alias 调用。
+        // The full test for the shared helper lives in local.rs; here we only verify the alias call.
         assert_eq!(
             crate::modules::local::parse_tags(Some(&"a, b ,c".to_string())),
             vec!["a", "b", "c"]

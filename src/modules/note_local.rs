@@ -1,15 +1,15 @@
-//! note 模块的本地 SQLite provider。
+//! Local SQLite provider for the note module. See [N001](../../docs/adr/N001-notion-note-module.md) / [F005](../../docs/adr/F005-default-provider-local.md).
 //!
-//! 与 Notion provider 对等实现 `search` / `list` / `create` / `read` / `append`
-//! / `update` 语义，数据落在账户配置的本地 SQLite 文件中。`login` 对本地
-//! provider 无意义（无需凭证）。
+//! Mirrors the Notion provider's `search` / `list` / `create` / `read` / `append`
+//! / `update` semantics; data lives in the account's configured local SQLite file. `login` is a no-op for the local
+//! provider (no credentials needed).
 //!
-//! 数据模型：
-//! - `notes(id, title, content, created_at, updated_at)`：一条笔记 = 标题 + 正文
-//!   （Markdown 纯文本）。
-//! - `note_props(note_id, key, value)`：简化的键值属性（对应 Notion 页面属性）。
+//! Data model:
+//! - `notes(id, title, content, created_at, updated_at)`: one note = title + body
+//!   (Markdown plain text).
+//! - `note_props(note_id, key, value)`: simplified key-value properties (mirrors Notion page properties).
 //!
-//! 输出形态（列名 / JSON key）刻意与 `note.rs` 的 Notion 版本保持一致。
+//! Output shape (column names / JSON keys) is intentionally kept consistent with the Notion version in `note.rs`.
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
@@ -35,7 +35,7 @@ const CREATE_PROPS_SQL: &str = "CREATE TABLE IF NOT EXISTS note_props (\
     value TEXT NOT NULL, \
     PRIMARY KEY (note_id, key))";
 
-/// 打开连接并确保表存在。
+/// Open the connection and ensure tables exist.
 async fn open(account: &NoteAccount) -> Result<SqlitePool> {
     let path = resolve_db_path("note", &account.name, account.db_path.as_deref())?;
     let pool = connect(&path).await?;
@@ -44,12 +44,12 @@ async fn open(account: &NoteAccount) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// 生成短唯一 ID（note 前缀 `n`；实现见 [`crate::util::id::gen_id`]）。
+/// Generate a short unique ID (note prefix `n`; impl at [`crate::util::id::gen_id`]).
 fn gen_id() -> String {
     crate::util::id::gen_id("n")
 }
 
-/// 解析 page_id：优先位置参数，否则账户 default_page_id。
+/// Resolve page_id: prefer positional arg, else the account's default_page_id.
 fn resolve_page_id(account: &NoteAccount, positional: &[String]) -> Result<String> {
     if let Some(first) = positional.first() {
         return Ok(first.clone());
@@ -61,7 +61,7 @@ fn resolve_page_id(account: &NoteAccount, positional: &[String]) -> Result<Strin
     })
 }
 
-/// 读取某条笔记的属性为 `key -> value` map。
+/// Load a note's properties into a `key -> value` map.
 async fn load_props(pool: &SqlitePool, note_id: &str) -> Result<Map<String, Value>> {
     let rows = sqlx::query("SELECT key, value FROM note_props WHERE note_id = ?1 ORDER BY key")
         .bind(note_id)
@@ -79,7 +79,7 @@ async fn load_props(pool: &SqlitePool, note_id: &str) -> Result<Map<String, Valu
 
 // ============ actions ============
 
-/// `note login`（本地）：本地 provider 无需凭证。
+/// `note login` (local): local provider needs no credentials.
 pub fn login(account: &NoteAccount) -> Result<Output> {
     Ok(Output::text(format!(
         "note account '{}' uses the local sqlite provider; no login required",
@@ -87,7 +87,7 @@ pub fn login(account: &NoteAccount) -> Result<Output> {
     )))
 }
 
-/// `note search --query Q [--limit N]`（本地）：按标题模糊搜索。
+/// `note search --query Q [--limit N]` (local): fuzzy search by title.
 pub async fn search(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let query = flags
         .get("query")
@@ -146,7 +146,7 @@ pub async fn search(account: &NoteAccount, flags: &HashMap<String, String>) -> R
     }
 }
 
-/// `note list [--limit N]`（本地）：列出全部笔记。
+/// `note list [--limit N]` (local): list all notes.
 pub async fn list(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let limit: i64 = flags
         .get("limit")
@@ -193,7 +193,7 @@ pub async fn list(account: &NoteAccount, flags: &HashMap<String, String>) -> Res
     }
 }
 
-/// `note create --title T [--prop K:V ...]`（本地）：新建一条笔记。
+/// `note create --title T [--prop K:V ...]` (local): create a note.
 pub async fn create(
     account: &NoteAccount,
     flags: &HashMap<String, String>,
@@ -232,7 +232,7 @@ pub async fn create(
     }
 }
 
-/// `note read [page_id]`（本地）：读取标题 + 属性 + 正文。
+/// `note read [page_id]` (local): read title + properties + body.
 pub async fn read(account: &NoteAccount, positional: &[String]) -> Result<Output> {
     let id = resolve_page_id(account, positional)?;
     let pool = open(account).await?;
@@ -266,7 +266,7 @@ pub async fn read(account: &NoteAccount, positional: &[String]) -> Result<Output
     }
 }
 
-/// `note append [page_id] --text TEXT`（本地）：向正文末尾追加文本。
+/// `note append [page_id] --text TEXT` (local): append text to the end of the body.
 pub async fn append(
     account: &NoteAccount,
     flags: &HashMap<String, String>,
@@ -328,7 +328,7 @@ pub async fn append(
     }
 }
 
-/// `note update <page_id> --prop K:V ...`（本地）：更新（upsert）属性。
+/// `note update <page_id> --prop K:V ...` (local): update (upsert) properties.
 pub async fn update(
     account: &NoteAccount,
     positional: &[String],
@@ -344,7 +344,7 @@ pub async fn update(
         ));
     }
     let pool = open(account).await?;
-    // 校验笔记存在。
+    // Ensure the note exists.
     let exists = sqlx::query("SELECT 1 FROM notes WHERE id = ?1")
         .bind(&id)
         .fetch_optional(&pool)
@@ -377,9 +377,9 @@ pub async fn update(
     }
 }
 
-// ============ Timeline 数据拉取 ============
+// ============ Timeline data fetch ============
 
-/// Timeline 拉取用：note 条目原始数据。
+/// Used for Timeline fetch: raw note entry data.
 pub struct NoteTimelineEntry {
     pub id: String,
     pub title: String,
@@ -387,9 +387,9 @@ pub struct NoteTimelineEntry {
     pub updated_at: String,
 }
 
-/// Timeline 增量拉取：返回 `created_at` 或 `updated_at` 落在窗口内的 note。
+/// Incremental Timeline fetch: return notes whose `created_at` or `updated_at` falls in the window.
 ///
-/// 本地 provider 降级语义：多次更新合并为一条 `updated` 事件（取最新 updated_at）。
+/// Local provider degradation semantics: multiple updates collapse into a single `updated` event (latest updated_at). See [L001](../../docs/adr/L001-append-only-event-log.md).
 pub async fn fetch_for_timeline(
     account: &NoteAccount,
     from: chrono::DateTime<chrono::Utc>,
@@ -423,7 +423,7 @@ pub async fn fetch_for_timeline(
 
 // ============ helpers ============
 
-/// 把 `("prop", "K:V")` 列表拆成 `(K, V)`。
+/// Split a `("prop", "K:V")` list into `(K, V)` pairs.
 fn split_props(multi: &[(String, String)]) -> Result<Vec<(String, String)>> {
     let mut out = Vec::new();
     for (_, kv) in multi {
@@ -435,7 +435,7 @@ fn split_props(multi: &[(String, String)]) -> Result<Vec<(String, String)>> {
     Ok(out)
 }
 
-/// 插入或更新单条属性。
+/// Insert or update a single property.
 async fn upsert_prop(pool: &SqlitePool, note_id: &str, key: &str, value: &str) -> Result<()> {
     sqlx::query(
         "INSERT INTO note_props (note_id, key, value) VALUES (?1, ?2, ?3) \
@@ -494,7 +494,7 @@ mod tests {
         let multi = vec![("prop".to_string(), "类型:文章".to_string())];
         create(&acc, &flags, &multi).await.unwrap();
 
-        // 取出 id。
+        // Fetch the id.
         let pool = open(&acc).await.unwrap();
         let id: String = sqlx::query("SELECT id FROM notes")
             .fetch_one(&pool)
@@ -502,18 +502,18 @@ mod tests {
             .unwrap()
             .get("id");
 
-        // append 正文。
+        // Append body.
         let mut af = HashMap::new();
         af.insert("text".into(), "第一行\n第二行".into());
         append(&acc, &af, std::slice::from_ref(&id)).await.unwrap();
 
-        // update 属性。
+        // Update properties.
         let umulti = vec![("prop".to_string(), "状态:已读".to_string())];
         update(&acc, std::slice::from_ref(&id), &umulti)
             .await
             .unwrap();
 
-        // 校验内容与属性。
+        // Verify content and properties.
         let content: String = sqlx::query("SELECT content FROM notes WHERE id = ?1")
             .bind(&id)
             .fetch_one(&pool)

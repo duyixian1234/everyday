@@ -1,21 +1,23 @@
-//! Timeline 模块：统一事件存储与查询。
+//! Timeline module: unified event storage and query.
 //!
 //! CLI:
-//! - `everyday timeline`（无 action）= `today`
+//! - `everyday timeline` (no action) = `today`
 //! - `everyday timeline today|yesterday|week|month`
 //! - `everyday timeline sync [--source S] [--since DATE]`
 //! - `everyday timeline --from DATE --to DATE [--source S] [--account A] [--limit N] [--sync]`
 //!
-//! 核心类型：
-//! - [`TimelineEvent`]：统一事件结构（不可变记录）。
-//! - [`TimelineProvider`]：各 source 的数据拉取 trait（无状态）。
-//! - [`SyncMode`]：追加 vs 窗口刷新。
-//! - [`TimeWindow`]：同步时间窗口。
+//! Core types:
+//! - [`TimelineEvent`]: the unified event structure (immutable record).
+//! - [`TimelineProvider`]: the data-pull trait for each source (stateless).
+//! - [`SyncMode`]: append vs. window-refresh.
+//! - [`TimeWindow`]: the sync time window.
 //!
-//! 子模块：
-//! - [`store`]：timeline.db 读写。
-//! - [`orchestrator`]：sync 编排器。
-//! - [`providers`]：各 source 的 provider adapter。
+//! Submodules:
+//! - [`store`]: timeline.db read/write.
+//! - [`orchestrator`]: sync orchestrator.
+//! - [`providers`]: per-source provider adapters.
+//!
+//! See [L001](../../docs/adr/L001-append-only-event-log.md) for the event log model.
 
 pub mod orchestrator;
 pub mod providers;
@@ -32,34 +34,34 @@ use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
 
-// ============ 核心类型 ============
+// ============ core types ============
 
-/// 统一事件结构（不可变记录）。
+/// Unified event structure (immutable record).
 ///
-/// 自然键：`(source, COALESCE(account, ''), ref_id, event_type, timestamp)`。
-/// 用于同步幂等：相同窗口重复同步不产生重复行。
+/// Natural key: `(source, COALESCE(account, ''), ref_id, event_type, timestamp)`.
+/// Used for sync idempotency: re-syncing the same window produces no duplicate rows.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimelineEvent {
-    /// 来源模块：`mail` / `cal` / `rss` / `todo` / `note` / `bookmark`。
+    /// Source module: `mail` / `cal` / `rss` / `todo` / `note` / `bookmark`.
     pub source: String,
-    /// 来源账户名（RSS 为 None）。
+    /// Source account name (None for RSS).
     pub account: Option<String>,
-    /// 事件语义类型（如 `received` / `sent` / `created` / `completed` / `scheduled`）。
+    /// Event semantic type (e.g. `received` / `sent` / `created` / `completed` / `scheduled`).
     pub event_type: String,
-    /// 事件发生时刻（RFC3339 UTC）。
+    /// Event occurrence moment (RFC3339 UTC).
     pub timestamp: chrono::DateTime<Utc>,
-    /// 事件标题。
+    /// Event title.
     pub title: String,
-    /// 事件摘要（可能为空）。
+    /// Event summary (may be empty).
     pub summary: String,
-    /// 事件引用的实体在来源系统中的稳定标识。
+    /// Stable identifier of the entity referenced by the event in the source system.
     pub ref_id: String,
-    /// 结构化元数据（JSON 对象）。
+    /// Structured metadata (JSON object).
     pub metadata: serde_json::Value,
 }
 
 impl TimelineEvent {
-    /// 创建一个新事件，metadata 默认为空 JSON 对象。
+    /// Create a new event; metadata defaults to an empty JSON object.
     #[allow(clippy::too_many_arguments)]
     pub fn new(
         source: &str,
@@ -84,12 +86,12 @@ impl TimelineEvent {
     }
 }
 
-/// 同步时间窗口。
+/// Sync time window.
 #[derive(Debug, Clone)]
 pub struct TimeWindow {
-    /// 窗口起始（UTC，含）。
+    /// Window start (UTC, inclusive).
     pub from: chrono::DateTime<Utc>,
-    /// 窗口结束（UTC，含）。
+    /// Window end (UTC, inclusive).
     pub to: chrono::DateTime<Utc>,
 }
 
@@ -99,34 +101,35 @@ impl TimeWindow {
     }
 }
 
-/// 同步模式。
+/// Sync mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncMode {
-    /// 幂等追加，靠自然键去重（`INSERT OR IGNORE`）。
+    /// Idempotent append, de-duplicated by the natural key (`INSERT OR IGNORE`).
     Append,
-    /// 先删窗口内同 source 旧行，再插入当前快照（仅 `cal`）。
+    /// Delete old rows of the same source in the window first, then insert the current snapshot (only `cal`).
     WindowRefresh,
 }
 
-/// 各 source 的数据拉取 trait（无状态）。
+/// Per-source data-pull trait (stateless).
 ///
-/// Provider 只负责"给我一个窗口，我返回这个窗口内的事件快照与同步模式"。
-/// 水位（last_sync）由编排器在 `sync_state` 表中管理。
+/// The provider only handles "given a window, return the snapshot of events in that
+/// window and the sync mode". The watermark (`last_sync`) is managed by the orchestrator
+/// in the `sync_state` table.
 #[async_trait]
 pub trait TimelineProvider: Send + Sync {
-    /// 来源标识（`"mail"` / `"cal"` / ...）。
+    /// Source identifier (`"mail"` / `"cal"` / ...).
     fn source(&self) -> &'static str;
 
-    /// 账户名（RSS 等无账户概念返回 None）。
+    /// Account name (returns None for RSS and other accountless sources).
     fn account(&self) -> Option<&str>;
 
-    /// 拉取指定时间窗口内的事件。
+    /// Pull events within the given time window.
     ///
-    /// 返回 `(事件列表, 同步模式)`。
+    /// Returns `(event list, sync mode)`.
     async fn sync(&self, window: &TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)>;
 }
 
-/// 单个 provider 的同步结果（编排器收集用）。
+/// Sync result of a single provider (collected by the orchestrator).
 #[derive(Debug)]
 pub struct ProviderSyncResult {
     pub source: String,
@@ -135,16 +138,16 @@ pub struct ProviderSyncResult {
     pub status: ProviderStatus,
 }
 
-/// provider 同步状态。
+/// Provider sync status.
 #[derive(Debug)]
 pub enum ProviderStatus {
-    /// 成功。
+    /// Success.
     Ok,
-    /// 失败（含错误消息）。
+    /// Failure (with error message).
     Failed(String),
 }
 
-// ============ Executor 实现 ============
+// ============ Executor impl ============
 
 pub struct TimelineModule {
     config: Arc<Config>,
@@ -164,7 +167,7 @@ impl Executor for TimelineModule {
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
-        // 查询类 action 共享同一组 flag（不含 --account：它是全局 flag，由 main 注入）。
+        // Query-style actions share the same flag set (no --account: it is a global flag injected by main).
         static QUERY_ARGS: &[ArgSpec] = &[
             ArgSpec {
                 name: "from",
@@ -259,7 +262,7 @@ impl Executor for TimelineModule {
 
         match action {
             "sync" => self.do_sync(&flags).await,
-            // 无 action 或预设动作 → 查询。
+            // No action or preset action -> query.
             "" | "today" | "yesterday" | "week" | "month" => {
                 self.do_query(action, &flags, json_mode).await
             }
@@ -269,7 +272,7 @@ impl Executor for TimelineModule {
 }
 
 impl TimelineModule {
-    /// 执行 sync 子命令。
+    /// Run the `sync` subcommand.
     async fn do_sync(&self, flags: &std::collections::HashMap<String, String>) -> Result<Output> {
         let sources = parse_source_filter(flags.get("source"))?;
         let since = flags.get("since").and_then(|s| parse_date_to_utc(s, false));
@@ -278,25 +281,28 @@ impl TimelineModule {
         Ok(output.to_output(crate::util::json_mode::is_json()))
     }
 
-    /// 执行查询（预设或自定义范围）。
+    /// Run a query (preset or custom range).
     async fn do_query(
         &self,
         preset: &str,
         flags: &std::collections::HashMap<String, String>,
         json_mode: bool,
     ) -> Result<Output> {
-        // --sync：查询前先同步一次。
-        // sync 失败不再 `let _ =` 静默吞（之前会让用户拿到旧数据却不知道 sync 挂了）。
-        // 这里让 sync 错误冒泡到 do_query，最终由 main.rs 的 finalize 渲染为错误输出。
+        // --sync: run a sync first, then query.
+        // Sync failures are no longer silently swallowed by `let _ =` (previously this
+        // meant users could see stale data without realising the sync had failed).
+        // The sync error now bubbles up to do_query and ultimately to main.rs's
+        // finalize, which renders it as an error output.
         if flags.contains_key("sync") {
             let sources = parse_source_filter(flags.get("source"))?;
             orchestrator::run_sync(&self.config, &sources, None).await?;
         }
 
-        // 解析时间范围。
-        // 之前 `--from` 单独给定(无 `--to`)会被静默忽略并回退到 preset,
-        // 无效的 `--from 2026-07-99` 也被静默吞掉,用户以为拿到了数据。
-        // `resolve_query_range` 现在显式处理所有组合并报错。
+        // Resolve the time range.
+        // Previously `--from` alone (no `--to`) was silently ignored and fell back to
+        // the preset; an invalid `--from 2026-07-99` was silently swallowed, leading
+        // users to think they had data [L013](../../docs/adr/L013-from-explicit-error.md).
+        // `resolve_query_range` now handles all combinations explicitly and reports errors.
         let (from_utc, to_utc) = resolve_query_range(
             preset,
             flags.get("from").map(String::as_str),
@@ -304,11 +310,12 @@ impl TimelineModule {
             flags.get("since").map(String::as_str),
         )?;
 
-        // 构造查询参数。
+        // Build query params.
         let sources = parse_source_filter(flags.get("source"))?;
         let account = flags.get("account").cloned();
-        // --limit 解析失败之前静默回退 100（看似 100 行结果其实是 parse 失败）。
-        // 改为显式报错，避免"我请求 -1 行却拿到 100 行"这类无声 bug。
+        // Previously `--limit` parse failures silently fell back to 100 (looks like 100
+        // rows of results when actually parsing failed). Switched to explicit error
+        // to avoid silent bugs like "I asked for -1 rows but got 100".
         let limit: usize = match flags.get("limit") {
             Some(s) => s.parse().map_err(|_| {
                 AgentError::InvalidArgument(format!(
@@ -345,14 +352,15 @@ impl TimelineModule {
     }
 }
 
-// ============ 时间工具 ============
+// ============ time helpers ============
 
-/// 解析 `--source mail,cal` 为 `["mail", "cal"]`。
-/// 已知 source ID 列表（ADR [L001](../docs/adr/L001-append-only-event-log.md)–[L009](../docs/adr/L009-best-effort-sync.md)）。
+/// Parse `--source mail,cal` into `["mail", "cal"]`.
+/// Known source-ID list (ADRs [L001](../../docs/adr/L001-append-only-event-log.md)
+/// -[L009](../../docs/adr/L009-best-effort-sync.md)).
 ///
-/// `--source` 解析时校验；未知 source 之前被静默丢弃（`events` 表 SQL
-/// `source IN (...)` 自然返空），用户看到"0 events"以为是数据问题。
-/// 现在显式报错。
+/// `--source` is validated when parsed; previously unknown sources were silently
+/// dropped (the `events` table's `source IN (...)` query naturally returns empty),
+/// so users saw "no events" and assumed it was a data problem. Now it errors explicitly.
 const KNOWN_SOURCES: &[&str] = &["mail", "cal", "rss", "todo", "note", "bookmark"];
 
 fn parse_source_filter(raw: Option<&String>) -> Result<Vec<String>> {
@@ -372,18 +380,18 @@ fn parse_source_filter(raw: Option<&String>) -> Result<Vec<String>> {
     Ok(out)
 }
 
-/// 解析日期字符串 `YYYY-MM-DD` 为 NaiveDate。
+/// Parse a date string `YYYY-MM-DD` into a NaiveDate.
 fn parse_date_str(s: &str) -> Result<NaiveDate> {
     NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|_| {
         AgentError::InvalidArgument(format!("invalid date '{s}', expected YYYY-MM-DD"))
     })
 }
 
-/// 把本地日期的 00:00:00 转为 UTC DateTime。
+/// Convert the local date's 00:00:00 to a UTC DateTime.
 ///
-/// 在 DST 模糊/不存在区间返回 None（调用方应决定如何兜底，
-/// 而不是 panic）。`and_hms_opt(0,0,0)` 在普通日期上始终 Some，
-/// 但 `from_local_datetime` 在春令时 gap 上是 None。
+/// Returns None at DST ambiguous / non-existent intervals (callers must decide the
+/// fallback rather than panic). `and_hms_opt(0,0,0)` is always Some on ordinary
+/// dates, but `from_local_datetime` is None on a spring-forward gap.
 fn local_to_utc_start(date: NaiveDate) -> Option<chrono::DateTime<Utc>> {
     let ndt = date.and_hms_opt(0, 0, 0)?;
     Local
@@ -392,7 +400,7 @@ fn local_to_utc_start(date: NaiveDate) -> Option<chrono::DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-/// 把本地日期的 23:59:59 转为 UTC DateTime。
+/// Convert the local date's 23:59:59 to a UTC DateTime.
 fn local_to_utc_end(date: NaiveDate) -> Option<chrono::DateTime<Utc>> {
     let ndt = date.and_hms_opt(23, 59, 59)?;
     Local
@@ -401,7 +409,7 @@ fn local_to_utc_end(date: NaiveDate) -> Option<chrono::DateTime<Utc>> {
         .map(|dt| dt.with_timezone(&Utc))
 }
 
-/// 把 `--since YYYY-MM-DD` 解析为 UTC DateTime（该日期 00:00 本地 → UTC）。
+/// Parse `--since YYYY-MM-DD` into a UTC DateTime (00:00 local of that date -> UTC).
 fn parse_date_to_utc(s: &str, end_of_day: bool) -> Option<chrono::DateTime<Utc>> {
     let date = NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()?;
     if end_of_day {
@@ -411,22 +419,24 @@ fn parse_date_to_utc(s: &str, end_of_day: bool) -> Option<chrono::DateTime<Utc>>
     }
 }
 
-/// 把 `--since` 解析为 UTC DateTime（query 路径专用，**保留 sub-day 精度**）。
+/// Parse `--since` into a UTC DateTime (query-path-only, **preserves sub-day precision**).
 ///
-/// 接受：
-/// - `YYYY-MM-DD` 日期：该日 00:00 本地 = UTC 起点（粒度 1 天）。
-/// - 相对时长 `30m` / `2h` / `1d` / `7d`：当前本地时间 - 时长,转 UTC（粒度 1 分钟）。
+/// Accepts:
+/// - Date `YYYY-MM-DD`: 00:00 local of that date = UTC start (1-day granularity).
+/// - Relative duration `30m` / `2h` / `1d` / `7d`: current local time minus duration,
+///   converted to UTC (1-minute granularity).
 ///
-/// 这样 `timeline today --since 30m` 真正只回 30 分钟内事件,而不是全天。
+/// So `timeline today --since 30m` actually returns only the events of the past
+/// 30 minutes, not the whole day.
 fn parse_since_utc(s: &str) -> Result<chrono::DateTime<Utc>> {
     let s = s.trim();
-    // 1. 日期
+    // 1. Date
     if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
         return local_to_utc_start(d).ok_or_else(|| {
             AgentError::InvalidArgument(format!("invalid --since '{s}': DST gap on date"))
         });
     }
-    // 2. 相对时长
+    // 2. Relative duration
     if s.len() >= 2 {
         let (num, unit) = s.split_at(s.len() - 1);
         if let Ok(n) = num.parse::<u64>() {
@@ -449,17 +459,18 @@ fn parse_since_utc(s: &str) -> Result<chrono::DateTime<Utc>> {
     )))
 }
 
-/// 解析查询时间范围 → (from_utc, to_utc)。
+/// Resolve the query time range -> (from_utc, to_utc).
 ///
-/// 优先级：`--from`/`--to`(任一给定) > `--since` > preset。
+/// Priority: `--from`/`--to` (either given) > `--since` > preset.
 ///
-/// 之前 `--from` 单独给定(无 `--to`)会被静默忽略并回退到 preset,
-/// 无效的 `--from 2026-07-99` 也被静默吞掉,用户拿到 preset 范围的"假数据"。
-/// 现在独立处理两边:
-/// - 仅 `--from`：to 默认 `now()`(查从该日起到现在的事件)
-/// - 仅 `--to`：from 默认 preset 起点(本地日 00:00 → UTC)
-/// - 二者皆给：from > to 时显式报错,避免静默返回空结果
-/// - 任一日期解析失败(如 `2026-07-99`)：显式 `InvalidArgument`
+/// Previously `--from` alone (no `--to`) was silently ignored and fell back to the
+/// preset; an invalid `--from 2026-07-99` was silently swallowed, so users got
+/// "fake data" from the preset range [L013](../../docs/adr/L013-from-explicit-error.md).
+/// Now both sides are handled independently:
+/// - `--from` only: `to` defaults to `now()` (events from that date up to now).
+/// - `--to` only: `from` defaults to the preset start (00:00 local date -> UTC).
+/// - Both given: when `from > to`, error explicitly to avoid silently returning empty.
+/// - Either date fails to parse (e.g. `2026-07-99`): explicit `InvalidArgument`.
 fn resolve_query_range(
     preset: &str,
     from: Option<&str>,
@@ -522,7 +533,7 @@ fn resolve_query_range(
     }
 }
 
-/// 解析预设时间范围 → (from_local, to_local) 本地日期。
+/// Resolve a preset time range -> (from_local, to_local) local dates.
 fn resolve_preset(preset: &str) -> Result<(NaiveDate, NaiveDate)> {
     let today = Local::now().date_naive();
     match preset {
@@ -532,7 +543,7 @@ fn resolve_preset(preset: &str) -> Result<(NaiveDate, NaiveDate)> {
             Ok((y, y))
         }
         "week" => {
-            // ISO 8601: 周一为首日（Mon=1）。
+            // ISO 8601: Monday is the first day (Mon=1).
             let weekday = today.weekday().num_days_from_monday();
             let monday = today - Duration::days(weekday as i64);
             let sunday = monday + Duration::days(6);
@@ -541,7 +552,7 @@ fn resolve_preset(preset: &str) -> Result<(NaiveDate, NaiveDate)> {
         "month" => {
             let first = NaiveDate::from_ymd_opt(today.year(), today.month(), 1)
                 .ok_or_else(|| AgentError::Other("invalid month start".into()))?;
-            // 下月 1 号 - 1 天 = 本月最后一天。
+            // The 1st of next month - 1 day = the last day of this month.
             let next_month = if today.month() == 12 {
                 NaiveDate::from_ymd_opt(today.year() + 1, 1, 1)
             } else {
@@ -619,17 +630,17 @@ mod tests {
 
     #[test]
     fn parse_source_filter_rejects_unknown() {
-        // 修复前：`--source bogus` 静默返空 list，SQL `source IN ()` 返 0 行，
-        // 用户看到 "no events" 以为是数据问题。
-        // 现在显式报 UnknownSource 错误。
+        // Before the fix: `--source bogus` silently returned an empty list; the SQL
+        // `source IN ()` returned 0 rows, and users saw "no events" and assumed
+        // it was a data problem. Now it explicitly reports an UnknownSource error.
         let err = parse_source_filter(Some(&"bogus".to_string())).unwrap_err();
         assert!(err.message().contains("bogus"));
-        assert!(err.message().contains("mail")); // 错误里列出合法 source
+        assert!(err.message().contains("mail")); // error message lists the valid sources
     }
 
     #[test]
     fn parse_source_filter_rejects_one_bad_among_good() {
-        // 逗号分隔的 source 列表中只要有一个未知，整个列表拒绝。
+        // A single unknown source in the comma-separated list rejects the whole list.
         let err = parse_source_filter(Some(&"mail,bogus,rss".to_string())).unwrap_err();
         assert!(err.message().contains("bogus"));
     }
@@ -647,7 +658,7 @@ mod tests {
     #[test]
     fn parse_since_date_form_returns_utc() {
         let dt = parse_since_utc("2026-07-11").unwrap();
-        // 该日 00:00 本地 → UTC,本地基准下应早于当前 UTC。
+        // 00:00 local of that date -> UTC; under a local baseline it must be before current UTC.
         let now = Utc::now();
         assert!(dt < now, "date-form since must be in the past");
         assert!(dt < now + chrono::Duration::days(1));
@@ -655,7 +666,7 @@ mod tests {
 
     #[test]
     fn parse_since_duration_days_subtracts() {
-        // 1d：now - 1d 转 UTC,必须 [now - 2d, now] 之间
+        // 1d: now - 1d converted to UTC, must fall in [now - 2d, now]
         let now = Utc::now();
         let dt = parse_since_utc("1d").unwrap();
         assert!(dt < now);
@@ -666,7 +677,7 @@ mod tests {
     fn parse_since_duration_minutes_subtracts() {
         let now = Utc::now();
         let dt = parse_since_utc("30m").unwrap();
-        // 30m ago ≈ now - 30min,允许 1 分钟漂移
+        // 30m ago ~= now - 30min, allow 1 minute drift
         let diff = now - dt;
         assert!(diff >= chrono::Duration::minutes(29));
         assert!(diff <= chrono::Duration::minutes(31));
@@ -676,7 +687,7 @@ mod tests {
     fn parse_since_invalid_errors() {
         assert!(parse_since_utc("30x").is_err());
         assert!(parse_since_utc("not-a-thing").is_err());
-        assert!(parse_since_utc("2026/07/11").is_err()); // 错格式
+        assert!(parse_since_utc("2026/07/11").is_err()); // wrong format
     }
 
     #[test]
@@ -719,18 +730,18 @@ mod tests {
 
     #[test]
     fn resolve_query_range_from_alone_valid() {
-        // `--from` 单独给定现在也应被采信,不再静默回退 preset。
+        // `--from` alone is now respected, no longer silently falling back to the preset.
         let expected_from =
             local_to_utc_start(NaiveDate::from_ymd_opt(2000, 1, 1).unwrap()).unwrap();
         let (from, to) = resolve_query_range("today", Some("2000-01-01"), None, None).unwrap();
         assert_eq!(from, expected_from);
-        assert!(to > from); // to 默认 now(),必然晚于 2000 年
+        assert!(to > from); // to defaults to now(), which is necessarily after the year 2000
     }
 
     #[test]
     fn resolve_query_range_from_alone_invalid_errors() {
-        // 之前 `--from 2026-07-99` 单独给定会被静默忽略,回退到 preset 范围。
-        // 现在必须显式报错,不再静默 fallback。
+        // Previously `--from 2026-07-99` alone was silently ignored and fell back to
+        // the preset range. Now it must explicitly error, with no silent fallback.
         let err = resolve_query_range("today", Some("2026-07-99"), None, None).unwrap_err();
         assert!(err.message().contains("2026-07-99"));
         assert!(err.message().contains("YYYY-MM-DD"));
@@ -738,7 +749,7 @@ mod tests {
 
     #[test]
     fn resolve_query_range_inverted_from_to_errors() {
-        // `--from` 晚于 `--to` 时静默返回空结果,现在显式报错。
+        // `--from` later than `--to` previously returned empty results silently; now it errors explicitly.
         let err =
             resolve_query_range("today", Some("2026-07-01"), Some("2026-06-01"), None).unwrap_err();
         assert!(err.message().contains("later than"));
@@ -746,7 +757,7 @@ mod tests {
 
     #[test]
     fn resolve_query_range_to_alone_defaults_from_preset() {
-        // 仅 `--to` 时,from 取 preset 起点(本地日 00:00 → UTC),to 取该日 23:59:59。
+        // With only `--to`, from takes the preset start (00:00 local -> UTC) and to takes 23:59:59 of that date.
         let today = Local::now().date_naive();
         let expected_from = local_to_utc_start(today).unwrap();
         let expected_to = local_to_utc_end(NaiveDate::from_ymd_opt(2030, 12, 31).unwrap()).unwrap();
@@ -757,7 +768,7 @@ mod tests {
 
     #[test]
     fn resolve_query_range_since_still_works() {
-        // `--since` 路径不受 `--from`/`--to` 重构影响。
+        // The `--since` path is not affected by the `--from`/`--to` refactor.
         let now = Utc::now();
         let (from, to) = resolve_query_range("today", None, None, Some("30m")).unwrap();
         let diff = to - from;

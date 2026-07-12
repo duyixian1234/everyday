@@ -1,19 +1,27 @@
-//! todo 模块：待办任务管理。默认使用本地 SQLite provider（`local`），
-//! 也可切换为 Notion（`provider = "notion"`）。
+//! `todo` module: todo task management. Defaults to the local SQLite provider
+//! (`local`), switchable to Notion (`provider = "notion"`)
+//! [T001](../../docs/adr/T001-notion-todo-module.md)
+//! [F005](../../docs/adr/F005-default-provider-local.md).
 //!
-//! Notion 分支为两层架构的上层业务：持有共享 [`NotionClient`]，将干净领域模型
-//! [`TodoItem`] 与 Notion 原始 `Properties` 做强类型双向映射，屏蔽 Notion 属性套娃。
+//! The Notion branch is the upper layer of a two-layer architecture: it owns a shared
+//! [`NotionClient`] and strongly maps the clean domain model [`TodoItem`] back and forth
+//! against Notion's raw `Properties`, hiding Notion's property nesting
+//! [F004](../../docs/adr/F004-shared-notion-client.md).
 //!
-//! 命令（action）：
-//! - `login`    交互式把 Notion Integration Token 存入密钥环
-//! - `init-db`  在 Notion 创建任务数据库（需要 `parent_page_id`），并回填 `database_id` 到 config
-//! - `list`     列出未完成任务（按 Due 升序），`--all` 列出全部
-//! - `add`      新增任务（`--title` 必填，`--due` / `--priority` 可选）
-//! - `start`    将任务标记为 In Progress
-//! - `complete` 将任务标记为 Done
+//! Commands (actions):
+//! - `login`    interactively stores the Notion Integration Token in the system keyring
+//! - `init-db`  creates the task database in Notion (needs `parent_page_id`) and writes
+//!              `database_id` back into the config
+//! - `list`     lists open tasks (by Due ascending); `--all` lists every task
+//! - `add`      adds a task (`--title` required; `--due` / `--priority` optional)
+//! - `start`    marks the task In Progress
+//! - `complete` marks the task Done
+//! - `delete`   archives the Notion page (soft delete)
 //!
-//! 凭证安全：Token 仅存系统密钥环（service = `everyday/todo/<account>`），绝不落盘 config。
-//! `database_id` / `parent_page_id` 等非机密元数据可存 config。
+//! Credential safety: the token lives only in the system keyring
+//! (service = `everyday/todo/<account>`) [F002](../../docs/adr/F002-multi-account-keyring.md)
+//! and never lands on disk in the config. Non-secret metadata such as
+//! `database_id` / `parent_page_id` may live in the config.
 
 use std::collections::HashMap;
 
@@ -27,16 +35,17 @@ use crate::modules::{Executor, parse_simple_args};
 use crate::notion_client::NotionClient;
 use crate::output::Output;
 
-/// 状态选项名（须与 `init-db` 创建的 schema 一致）。
+/// Status option names (must match the schema created by `init-db`).
 const STATUS_TODO: &str = "Todo";
 const STATUS_IN_PROGRESS: &str = "In Progress";
 const STATUS_DONE: &str = "Done";
 
-/// 密钥环中存放 token 的条目用户名（与 note 一致：同 service 下唯一）。
-/// 见 `crate::keyring_user` —— 三个 notion 模块共享同一常量。
+/// Keyring entry user name for storing the token (same as in `note`: unique under one service).
+/// See `crate::keyring_user` - shared constant across all three notion modules
+/// [R009](../../docs/adr/R009-notion-common-local-module.md).
 pub(crate) use crate::keyring_user::KEYRING_USER;
 
-/// 干净的领域模型（输出给 Agent / 终端）。
+/// Clean domain model (output to the Agent / terminal).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TodoItem {
     pub id: String,
@@ -46,16 +55,16 @@ pub struct TodoItem {
     pub priority: Option<String>,
 }
 
-// ============ Notion 原始数据结构（强类型映射） ============
+// ============ Notion raw data structures (strongly typed mapping) ============
 
-/// 对应 Notion Page 原始返回（仅取我们关心的字段，未知字段由 serde 忽略）。
+/// Mirrors the raw Notion Page response (only the fields we care about; unknown fields are ignored by serde).
 #[derive(Debug, Deserialize)]
 struct NotionPage {
     id: String,
     properties: TodoProperties,
 }
 
-/// 任务数据库的属性集合（字段名为 Notion 属性名，用 `rename` 对齐）。
+/// Task-database property set (field names match Notion property names via `rename`).
 #[derive(Debug, Deserialize)]
 struct TodoProperties {
     #[serde(rename = "Task")]
@@ -68,7 +77,7 @@ struct TodoProperties {
     priority: Option<SelectProperty>,
 }
 
-/// 嵌套类型叶子节点。
+/// Nested type leaf nodes.
 #[derive(Debug, Deserialize)]
 struct TitleProperty {
     title: Vec<TextWrapper>,
@@ -79,10 +88,11 @@ struct TextWrapper {
 }
 #[derive(Debug, Deserialize)]
 struct StatusProperty {
-    /// Notion 有两种状态属性类型：`select`（init-db 创建的类型）与 `status`
-    /// （Notion 新版状态属性）。API 响应里分别以 `select` / `status` 为键返回，
-    /// 这里两个都收，读哪个用哪个，保证与 init-db 创建的 `select` 数据库兼容，
-    /// 也能兼容手动建成的 `status` 属性数据库。
+    /// Notion has two status property kinds: `select` (the kind created by `init-db`)
+    /// and `status` (Notion's newer status property). API responses carry them under
+    /// `select` / `status` keys respectively; we accept both and read whichever is
+    /// present, staying compatible with the `select` databases created by `init-db`
+    /// while also supporting hand-built `status`-type databases.
     #[serde(default)]
     select: Option<SelectDetail>,
     #[serde(default)]
@@ -105,13 +115,13 @@ struct SelectDetail {
     name: String,
 }
 
-/// `POST /databases/{id}/query` 的响应（仅取 results）。
+/// Response of `POST /databases/{id}/query` (only `results`).
 #[derive(Debug, Deserialize)]
 struct QueryResponse {
     results: Vec<NotionPage>,
 }
 
-// ============ 双向转换器 ============
+// ============ two-way converter ============
 
 impl From<NotionPage> for TodoItem {
     fn from(page: NotionPage) -> Self {
@@ -141,7 +151,7 @@ impl From<NotionPage> for TodoItem {
     }
 }
 
-// ============ 模块 ============
+// ============ module ============
 
 pub struct TodoModule {
     config: std::sync::Arc<crate::config::Config>,
@@ -261,7 +271,7 @@ impl Executor for TodoModule {
             .config
             .todo_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // 本地 SQLite provider：路由到本地实现；否则走 Notion。
+        // Local SQLite provider: routed to the local impl; otherwise go through Notion.
         if crate::modules::local::is_local_provider(&account.provider) {
             use crate::modules::todo_local as local;
             return match action {
@@ -293,9 +303,9 @@ impl Executor for TodoModule {
     }
 }
 
-// ============ 凭证（keyring） ============
+// ============ credentials (keyring) ============
 
-/// 从密钥环读取 Notion Token。缺失时给出可执行提示。
+/// Read the Notion token from the keyring. When missing, emit an actionable hint.
 fn get_token(account: &TodoAccount) -> Result<String> {
     let service = crate::config::Config::keyring_service("todo", &account.name);
     let entry = keyring::Entry::new(&service, KEYRING_USER)
@@ -309,8 +319,9 @@ fn get_token(account: &TodoAccount) -> Result<String> {
     })
 }
 
-/// 交互式输入 Token 并存入密钥环。
-/// 见 `crate::modules::local::login_notion` —— 与 note/bookmark 共享实现。
+/// Interactively enter the token and store it in the keyring.
+/// See `crate::modules::local::login_notion` - shared with note/bookmark
+/// [R009](../../docs/adr/R009-notion-common-local-module.md).
 async fn todo_login(account: &TodoAccount) -> Result<Output> {
     let account_name = account.name.clone();
     crate::modules::local::login_notion("todo", &account_name).await?;
@@ -321,9 +332,9 @@ async fn todo_login(account: &TodoAccount) -> Result<Output> {
 
 // ============ init-db ============
 
-/// `todo init-db [--parent PAGE_ID]`：在 Notion 创建任务数据库并回填 database_id。
+/// `todo init-db [--parent PAGE_ID]`: create the task database in Notion and write database_id back.
 async fn todo_init_db(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
-    // 父级页面：优先 --parent，否则取账户配置的 parent_page_id。
+    // Parent page: prefer --parent, otherwise fall back to the account's parent_page_id.
     let parent = flags
         .get("parent")
         .cloned()
@@ -339,7 +350,7 @@ async fn todo_init_db(account: &TodoAccount, flags: &HashMap<String, String>) ->
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    // 创建数据库：Task(title) / Status(select) / Due(date) / Priority(select)。
+    // Create the database: Task(title) / Status(select) / Due(date) / Priority(select).
     let body = json!({
         "parent": { "page_id": parent },
         "title": [{ "type": "text", "text": { "content": "Everyday Todos" } }],
@@ -371,8 +382,9 @@ async fn todo_init_db(account: &TodoAccount, flags: &HashMap<String, String>) ->
         .unwrap_or("")
         .to_string();
 
-    // 写回 config：仅更新 todo.accounts 中对应账户的 default_database_id，
-    // 不动其他段落（toml::Value 局部编辑，保留用户格式与注释）。
+    // Write back to config: only update the matching account's default_database_id under
+    // todo.accounts, leave the rest untouched (local edit on toml::Value to preserve user
+    // formatting and comments).
     let mut root = load_config_value()?;
     set_todo_database_id(&mut root, &account.name, &db_id)?;
     save_config_value(&root)?;
@@ -390,13 +402,13 @@ async fn todo_init_db(account: &TodoAccount, flags: &HashMap<String, String>) ->
 
 // ============ list ============
 
-/// `todo list [--db ID] [--all]`：列出任务。
+/// `todo list [--db ID] [--all]`: list tasks.
 async fn todo_list(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let db_id = resolve_db_id(account, flags)?;
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    // 设计文档：过滤未完成，按 Due 升序。--all 时不过滤。
+    // Design: filter out completed tasks, sort by Due ascending. --all disables the filter.
     let show_all = flags.contains_key("all");
     let mut body = json!({
         "sorts": [{ "property": "Due", "direction": "ascending" }]
@@ -414,7 +426,8 @@ async fn todo_list(account: &TodoAccount, flags: &HashMap<String, String>) -> Re
 
     let mut items: Vec<TodoItem> = resp.results.into_iter().map(TodoItem::from).collect();
 
-    // 客户端兜底：确保只列未完成（API 过滤失败时）并按 due 升序、null 排最后。
+    // Client-side fallback: ensure only open tasks are listed (in case the API filter failed)
+    // and sort by due ascending with nulls last.
     items.retain(|it| show_all || !it.status.eq_ignore_ascii_case(STATUS_DONE));
     items.sort_by(cmp_due_asc);
 
@@ -450,7 +463,8 @@ async fn todo_list(account: &TodoAccount, flags: &HashMap<String, String>) -> Re
     }
 }
 
-/// 按 due 升序：有日期 < 无日期；同有日期则字符串比较（ISO 8601 可直接排序）。
+/// Sort by due ascending: dated < undated; same-dated entries are compared as strings
+/// (ISO 8601 sorts lexicographically).
 fn cmp_due_asc(a: &TodoItem, b: &TodoItem) -> std::cmp::Ordering {
     match (&a.due, &b.due) {
         (Some(x), Some(y)) => x.cmp(y),
@@ -462,7 +476,7 @@ fn cmp_due_asc(a: &TodoItem, b: &TodoItem) -> std::cmp::Ordering {
 
 // ============ add ============
 
-/// `todo add --title T [--due DATE] [--priority P] [--db ID]`：新增任务。
+/// `todo add --title T [--due DATE] [--priority P] [--db ID]`: add a task.
 async fn todo_add(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let title = flags
         .get("title")
@@ -508,7 +522,7 @@ async fn todo_add(account: &TodoAccount, flags: &HashMap<String, String>) -> Res
 
 // ============ start / complete ============
 
-/// `todo start/complete <page_id>`：更新任务状态。
+/// `todo start/complete <page_id>`: update the task status.
 async fn todo_set_status(
     account: &TodoAccount,
     page_id: Option<&String>,
@@ -545,20 +559,22 @@ async fn todo_set_status(
 
 // ============ delete ============
 
-/// `todo delete <page_id>`（Notion）：归档（archive）页面。
+/// `todo delete <page_id>` (Notion): archive the page.
 ///
-/// Notion 没有真正的删除 API,设置 `archived: true` 即从 UI 隐藏并软删除。
-/// 与 `start`/`complete` 走同一类错误路径(`InvalidArgument` for missing id)。
+/// Notion has no real delete API; setting `archived: true` hides it from the UI and
+/// soft-deletes it [T002](../../docs/adr/T002-todo-delete-action.md). Same error path
+/// as `start`/`complete` (`InvalidArgument` for missing id).
 ///
-/// 归档前先 GET 页面标题,让 ops-log + timeline 上的 delete 事件带标题而非空白。
-/// 多一次 API 调用换取 audit 可读性,删除路径不属性能热点。
+/// GET the title before archiving so the ops-log + timeline delete events carry the
+/// title instead of being blank. One extra API call in exchange for readable audit
+/// trails; the delete path is not a performance hot spot.
 async fn todo_delete(account: &TodoAccount, page_id: Option<&String>) -> Result<Output> {
     let page_id =
         page_id.ok_or_else(|| AgentError::InvalidArgument("`delete` requires <page_id>".into()))?;
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    // 1. 先读标题(让 ops-log 有意义)。
+    // 1. Read the title first (so ops-log stays meaningful).
     let page: Value = client.get(&format!("/pages/{page_id}")).await?;
     let title = page
         .get("properties")
@@ -570,14 +586,15 @@ async fn todo_delete(account: &TodoAccount, page_id: Option<&String>) -> Result<
         .and_then(|s| s.as_str())
         .unwrap_or("")
         .to_string();
-    // 标题为空不是错误(可能被外部清空),给个占位让 timeline 渲染不空。
+    // Empty title is not an error (it may have been cleared externally); emit a
+    // placeholder so timeline rendering never produces blank rows.
     let title = if title.is_empty() {
         format!("(untitled) {page_id}")
     } else {
         title
     };
 
-    // 2. 归档(软删除)。
+    // 2. Archive (soft delete).
     let body = json!({ "archived": true });
     let _: Value = client.patch(&format!("/pages/{page_id}"), &body).await?;
 
@@ -591,9 +608,9 @@ async fn todo_delete(account: &TodoAccount, page_id: Option<&String>) -> Result<
     }
 }
 
-// ============ 小工具 ============
+// ============ helpers ============
 
-/// 解析目标数据库 ID：优先 `--db`，否则账户默认。
+/// Resolve the target database ID: prefer `--db`, otherwise the account default.
 fn resolve_db_id(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<String> {
     flags
         .get("db")
@@ -608,13 +625,15 @@ fn resolve_db_id(account: &TodoAccount, flags: &HashMap<String, String>) -> Resu
         })
 }
 
-/// 探测当前渲染模式（JSON 全局 flag 已注入 args 并被 parse_simple_args 捕获到 flags，
-/// 但模式判定统一以进程参数中的 `--json` 为准，与 note 模块一致）。
+/// Detect the current render mode. The JSON global flag is already injected into args
+/// and captured by `parse_simple_args` into `flags`, but the mode is decided uniformly
+/// by the process-level `--json` flag, matching the `note` module
+/// [R001](../../docs/adr/R001-thread-local-json-mode.md).
 fn mode_json() -> bool {
     crate::util::json_mode::is_json()
 }
 
-/// 读取配置文件为 toml::Value（不存在/空则空表）。
+/// Load the config file into a `toml::Value` (missing/empty becomes an empty table).
 fn load_config_value() -> Result<toml::Value> {
     let path = crate::config::Config::config_path()?;
     if !path.exists() {
@@ -627,7 +646,7 @@ fn load_config_value() -> Result<toml::Value> {
     Ok(toml::from_str(&text)?)
 }
 
-/// 把 toml::Value 写回配置文件（自动建父目录）。
+/// Write a `toml::Value` back to the config file (creating the parent dir as needed).
 fn save_config_value(root: &toml::Value) -> Result<()> {
     let path = crate::config::Config::config_path()?;
     if let Some(parent) = path.parent() {
@@ -639,8 +658,9 @@ fn save_config_value(root: &toml::Value) -> Result<()> {
     Ok(())
 }
 
-/// 在 config 的 `todo.accounts` 中找到 name 匹配的账户，写入 `default_database_id`。
-/// 见 `crate::modules::local::set_module_database_id` —— 与 bookmark 共享实现。
+/// Find the account matching `name` under `todo.accounts` in config and write
+/// `default_database_id`. See `crate::modules::local::set_module_database_id` -
+/// shared with bookmark [R009](../../docs/adr/R009-notion-common-local-module.md).
 fn set_todo_database_id(root: &mut toml::Value, account_name: &str, db_id: &str) -> Result<()> {
     crate::modules::local::set_module_database_id(root, "todo", account_name, db_id)
 }
@@ -649,8 +669,8 @@ fn set_todo_database_id(root: &mut toml::Value, account_name: &str, db_id: &str)
 mod tests {
     use super::*;
 
-    /// 构造一个 NotionPage 原始 JSON，验证 From 转换。
-    /// init-db 创建的 Status 为 `select` 类型，这里用 select 键。
+    /// Build a raw NotionPage JSON to verify the `From` conversion.
+    /// `init-db` creates the Status property as `select`, hence the `select` key here.
     #[test]
     fn notion_page_to_todo_item() {
         let page = json!({
@@ -671,7 +691,7 @@ mod tests {
         assert_eq!(item.priority.as_deref(), Some("P0"));
     }
 
-    /// 兼容手动建成的 `status` 类型属性（新版 Notion 状态属性）。
+    /// Stay compatible with hand-built `status` properties (Notion's newer status property).
     #[test]
     fn notion_page_status_property_fallback() {
         let page = json!({
@@ -686,7 +706,7 @@ mod tests {
         assert_eq!(item.status, "Done");
     }
 
-    /// 缺失 Due / Priority 时应为 None。
+    /// Missing Due / Priority should yield None.
     #[test]
     fn notion_page_without_optional_fields() {
         let page = json!({
@@ -726,15 +746,15 @@ mod tests {
             due: None,
             priority: None,
         };
-        // 早的排前
+        // Earlier first
         assert_eq!(cmp_due_asc(&a, &b), std::cmp::Ordering::Less);
-        // 有日期排在无日期之前
+        // Dated before undated
         assert_eq!(cmp_due_asc(&a, &none), std::cmp::Ordering::Less);
         assert_eq!(cmp_due_asc(&none, &b), std::cmp::Ordering::Greater);
         assert_eq!(cmp_due_asc(&none, &none), std::cmp::Ordering::Equal);
     }
 
-    /// 空标题应回退为空串（不 panic）。
+    /// An empty title should fall back to an empty string (no panic).
     #[test]
     fn empty_title_falls_back() {
         let page = json!({
@@ -749,7 +769,7 @@ mod tests {
         assert_eq!(item.title, "");
     }
 
-    // set_todo_database_id 的完整测试在 local.rs（共享 helper 的权威回归）。
+    // The full test for `set_todo_database_id` lives in local.rs (the authoritative regression for the shared helper).
     #[test]
     fn set_todo_database_id_is_shared_helper() {
         let mut root: toml::Value = toml::from_str(

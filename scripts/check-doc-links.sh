@@ -1,11 +1,15 @@
 #!/usr/bin/env bash
 # scripts/check-doc-links.sh
-# Cross-reference integrity check for the markdown documentation in this repo.
+# Cross-reference integrity check for the documentation links in this repo.
 #
 # Strategy (NO full-document parse):
-#   1. Collect every .md file (skip target/, .git/, .workbuddy/, node_modules/).
-#   2. For each file, strip fenced code blocks (```...```) and inline backtick
+#   1. Collect every .md file and every .rs source file (skip target/,
+#      .git/, .workbuddy/, node_modules/).
+#   2. For .md: strip fenced code blocks (```...```) and inline backtick
 #      spans so that placeholder syntax is not mistaken for a broken link.
+#      For .rs: keep only /// and //! doc comments (inline // comments
+#      can mention parentheses like `Vec<String>` which would otherwise
+#      pollute the grep output).
 #   3. Extract every `[label](target)` link via grep -oE.
 #   4. Skip http(s) / mailto / pure-anchor / placeholder targets.
 #   5. Resolve the relative target against the file's directory and test -e.
@@ -28,8 +32,11 @@ mkdir -p "$TMPDIR_LOCAL"
 trap 'rm -rf "$TMPDIR_LOCAL"' EXIT
 
 # ---- 1. File list -------------------------------------------------------
+# Two parallel lists: MD_FILES (markdown docs) and RS_FILES (Rust source).
+# .rs files are scanned separately because they need a different stripping
+# strategy (keep only /// and //! doc comments).
 # Strip the leading "./" so internal path math stays clean.
-mapfile -t FILES < <(find . -type f -name '*.md' \
+mapfile -t MD_FILES < <(find . -type f -name '*.md' \
   -not -path './target/*' \
   -not -path './.git/*' \
   -not -path './.workbuddy/*' \
@@ -37,8 +44,14 @@ mapfile -t FILES < <(find . -type f -name '*.md' \
   -not -path './skills/*/.workbuddy/*' \
   | sed 's|^\./||')
 
+mapfile -t RS_FILES < <(find ./src -type f -name '*.rs' \
+  -not -path './target/*' \
+  | sed 's|^\./||')
+
+FILES=("${MD_FILES[@]}" "${RS_FILES[@]}")
+
 if [[ ${#FILES[@]} -eq 0 ]]; then
-  echo "[FAIL] no .md files found under $ROOT"
+  echo "[FAIL] no .md or .rs files found under $ROOT"
   exit 1
 fi
 
@@ -97,10 +110,14 @@ is_placeholder() {
   esac
 }
 
-# ---- 3. Scan all .md files ---------------------------------------------
-# Strip fenced code blocks AND inline backtick spans before grep so that
-# placeholder syntax inside ```…``` blocks and `…` is ignored.
-strip_code_fences() {
+# ---- 3. Scan all .md and .rs files -------------------------------------
+# Two stripping strategies:
+#   strip_md: remove ```…``` fenced blocks and inline backticks so placeholder
+#             syntax is not mistaken for a broken link.
+#   strip_rs: keep only /// and //! doc-comment lines; inline `//` comments
+#             often contain type/function syntax with parentheses that would
+#             pollute the grep output.
+strip_md() {
   awk 'BEGIN { in_code = 0 }
        /^```/ { in_code = !in_code; next }
        !in_code {
@@ -110,11 +127,23 @@ strip_code_fences() {
        }' "$1"
 }
 
+strip_rs() {
+  # Keep lines beginning with /// or //!
+  awk '
+    /^[[:space:]]*\/\/\// { sub(/^[[:space:]]*\/\/\/[[:space:]]?/, ""); print; next }
+    /^[[:space:]]*\/\/!/ { sub(/^[[:space:]]*\/\/![[:space:]]?/, ""); print; next }
+    { next }
+  ' "$1"
+}
+
 for f in "${FILES[@]}"; do
   file_dir="$(dirname "$f")"
   [[ "$file_dir" == "." ]] && file_dir=""
   stripped="$TMPDIR_LOCAL/$(printf '%s' "$f" | tr '/ ' '__')"
-  strip_code_fences "$f" > "$stripped"
+  case "$f" in
+    *.rs) strip_rs "$f" > "$stripped" ;;
+    *)    strip_md "$f" > "$stripped" ;;
+  esac
   while IFS= read -r target; do
     target="${target//$'\r'/}"
     # Skip external / pure anchor
@@ -144,7 +173,7 @@ done
 ADR_INDEX="docs/adr/README.md"
 if [[ -f "$ADR_INDEX" ]]; then
   stripped="$TMPDIR_LOCAL/adr-index"
-  strip_code_fences "$ADR_INDEX" > "$stripped"
+  strip_md "$ADR_INDEX" > "$stripped"
   while IFS= read -r target; do
     target="${target//$'\r'/}"
     [[ -z "$target" ]] && continue
@@ -164,10 +193,11 @@ fi
 
 # ---- 6. Summary ---------------------------------------------------------
 if [[ $EXIT -ne 0 ]]; then
-  printf '\nCheck failed: %d broken link(s) found across %d .md files.\n' \
+  printf '\nCheck failed: %d broken link(s) found across %d files.\n' \
     "$FAILS" "${#FILES[@]}"
   exit 1
 fi
 
-printf '[OK] no broken links among %d .md files.\n' "${#FILES[@]}"
+printf '[OK] no broken links among %d files (%d .md + %d .rs).\n' \
+  "${#FILES[@]}" "${#MD_FILES[@]}" "${#RS_FILES[@]}"
 exit 0

@@ -1,10 +1,13 @@
 <#
 scripts/check-doc-links.ps1
-Cross-reference integrity check for the markdown documentation in this repo.
+Cross-reference integrity check for the documentation links in this repo.
 
 Strategy (NO full-document read):
-  1. Collect every .md file (skip target/, .git/, .workbuddy/).
-  2. For each file, extract every `[label](target)` via Select-String + regex.
+  1. Collect every .md file and every .rs source file under src/
+     (skip target/, .git/, .workbuddy/).
+  2. For each file, extract every `[label](target)` via regex.
+     .rs files: only scan /// and //! doc comments.
+     .md files: scan everything except ``` fenced blocks.
   3. Skip http(s) / mailto / pure-anchor targets.
   4. Resolve the relative target against the file's directory and Test-Path.
   5. Cross-check ADR index links in docs/adr/README.md.
@@ -50,23 +53,37 @@ function Record-Fail([string]$file, [string]$target, [string]$resolved) {
     $script:exit = 1
 }
 
-# 1. Collect .md files
-$files = Get-ChildItem -Path . -Recurse -File -Filter '*.md' |
+# 1. Collect .md and .rs files
+$mdFiles = Get-ChildItem -Path . -Recurse -File -Filter '*.md' |
     Where-Object { $_.FullName -notmatch '[\\/](target|\.git|\.workbuddy|node_modules)[\\/]' }
+$rsFiles = Get-ChildItem -Path ./src -Recurse -File -Filter '*.rs' -ErrorAction SilentlyContinue |
+    Where-Object { $_.FullName -notmatch '[\\/](target|\.git)[\\/]' }
+$files = @($mdFiles) + @($rsFiles)
 
 if (-not $files -or $files.Count -eq 0) {
-    Write-Host "[FAIL] no .md files found under $root"
+    Write-Host "[FAIL] no .md or .rs files found under $root"
     exit 1
 }
 
-# 2. Scan all .md files for inline links
+# 2. Scan all files for inline links
 $linkRegex = [regex]'\[(?<label>[^\]]*)\]\((?<target>[^)]+)\)'
+# /// or //! doc-comment line; we keep only the content after the marker.
+$rsDocLineRegex = [regex]'^\s*//[/!]\s?(?<content>.*)$'
 foreach ($f in $files) {
     $relFile = $f.FullName.Substring((Get-Location).Path.Length + 1)
     $fileDir = Split-Path -Parent $relFile
     if ($fileDir -eq '.') { $fileDir = '' }
     $content = Get-Content -Raw -Path $relFile -ErrorAction SilentlyContinue
     if (-not $content) { continue }
+    if ($relFile.EndsWith('.rs')) {
+        # Keep only /// and //! doc-comment lines for link extraction.
+        $kept = New-Object System.Text.StringBuilder
+        foreach ($line in ($content -split "`n")) {
+            $m = $rsDocLineRegex.Match($line)
+            if ($m.Success) { [void]$kept.AppendLine($m.Groups['content'].Value) }
+        }
+        $content = $kept.ToString()
+    }
     $matchesFound = $linkRegex.Matches($content)
     foreach ($m in $matchesFound) {
         $target = $m.Groups['target'].Value.Trim()
@@ -117,8 +134,8 @@ if (Test-Path -LiteralPath $rulesIndex) {
 # 5. Summary
 if ($exit -ne 0) {
     Write-Host ""
-    Write-Host ("Check failed: {0} broken link(s) found across {1} .md files." -f $fails, $files.Count)
+    Write-Host ("Check failed: {0} broken link(s) found across {1} files." -f $fails, $files.Count)
     exit 1
 }
-Write-Host ("[OK] no broken links among {0} .md files." -f $files.Count)
+Write-Host ("[OK] no broken links among {0} files ({1} .md + {2} .rs)." -f $files.Count, $mdFiles.Count, $rsFiles.Count)
 exit 0

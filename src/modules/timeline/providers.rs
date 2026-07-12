@@ -1,9 +1,11 @@
-//! 各 source 的 TimelineProvider adapter。
+//! TimelineProvider adapters for each source.
 //!
-//! 每个 adapter 持有对应模块的账户配置，调用模块的 `fetch_for_timeline` 函数，
-//! 将模块原生数据转换为 [`TimelineEvent`]。
+//! Each adapter holds the account config of its module and calls the module's
+//! `fetch_for_timeline` function to convert the module's native data into a
+//! [`TimelineEvent`].
 //!
-//! 依赖方向：timeline → 各模块（单向）。
+//! Dependency direction: timeline -> each module (one-way)
+//! [L004](../../../docs/adr/L004-timeline-provider-pull-only.md).
 
 use std::sync::Arc;
 
@@ -25,7 +27,7 @@ use crate::modules::todo_local;
 
 // ============ Mail ============
 
-/// Mail timeline provider（IMAP 拉取）。
+/// Mail timeline provider (IMAP pull).
 pub struct MailProvider {
     account: MailAccount,
 }
@@ -73,7 +75,7 @@ impl TimelineProvider for MailProvider {
     }
 }
 
-/// 解析 RFC2822 邮件日期为 UTC DateTime。
+/// Parse an RFC2822 mail date into a UTC DateTime.
 fn parse_mail_date(s: &str) -> Option<DateTime<Utc>> {
     let cleaned = s.split('(').next().unwrap_or("").trim_end();
     chrono::DateTime::parse_from_rfc2822(cleaned)
@@ -84,7 +86,7 @@ fn parse_mail_date(s: &str) -> Option<DateTime<Utc>> {
 
 // ============ Calendar ============
 
-/// Calendar timeline provider（CalDAV 拉取，窗口刷新模式）。
+/// Calendar timeline provider (CalDAV pull, window-refresh mode).
 pub struct CalProvider {
     account: CalendarAccount,
     ignored: Vec<String>,
@@ -111,10 +113,11 @@ impl TimelineProvider for CalProvider {
             .iter()
             .filter_map(|e| {
                 let timestamp = parse_naive_dt(&e.start)?;
-                // 窗口过滤：CalDAV 一次性返回所有日历事件，需按 orchestrator
-                // 传入的窗口（[watermark, now+7d]）裁剪后才符合 WindowRefresh 语义。
-                // WindowRefresh 模式下 orchestrator 会 DELETE WHERE timestamp BETWEEN
-                // window.from AND window.to —— 不在窗口内的事件本不该出现在 events 表。
+                // Window filtering: CalDAV returns all calendar events at once, so they must be
+                // trimmed to the window passed by the orchestrator ([watermark, now+7d]) to match
+                // the WindowRefresh semantics [L002](../../../docs/adr/L002-calendar-window-refresh.md).
+                // In WindowRefresh mode the orchestrator issues DELETE WHERE timestamp BETWEEN
+                // window.from AND window.to - events outside the window should not appear in events at all.
                 if timestamp < window.from || timestamp > window.to {
                     return None;
                 }
@@ -141,22 +144,22 @@ impl TimelineProvider for CalProvider {
     }
 }
 
-/// 解析 NaiveDateTime 字符串（如 "2026-07-11 14:00:00"）为 UTC DateTime。
-/// 假设本地时区（CalDAV 返回的时间多为本地浮动时间）。
+/// Parse a NaiveDateTime string (e.g. "2026-07-11 14:00:00") into a UTC DateTime.
+/// Assumes the local timezone (CalDAV timestamps are mostly local floating times).
 ///
-/// 在 DST 边界（spring-forward gap / fall-back ambiguous）返回 None，
-/// 之前用 .unwrap() 会 panic。
+/// Returns None at DST boundaries (spring-forward gap / fall-back ambiguous),
+/// where the old `.unwrap()` would panic.
 fn parse_naive_dt(s: &str) -> Option<DateTime<Utc>> {
-    // 尝试 RFC3339 解析（带时区的情况）。
+    // Try RFC3339 parsing (for timezone-bearing values).
     if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(s) {
         return Some(dt.with_timezone(&Utc));
     }
-    // 尝试 NaiveDateTime 解析（浮动时间，按本地时区处理）。
+    // Try NaiveDateTime parsing (floating time, treated as local timezone).
     let formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d"];
     for fmt in &formats {
         if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
-            // earliest() 处理 DST ambiguous（取较早的 offset）。
-            // None 仅发生在 spring-forward gap —— 该 NaiveDateTime 在本地不存在。
+            // earliest() handles DST ambiguity (takes the earlier offset).
+            // None only occurs at a spring-forward gap - this NaiveDateTime does not exist locally.
             return chrono::Local
                 .from_local_datetime(&ndt)
                 .earliest()
@@ -175,7 +178,7 @@ fn parse_naive_dt(s: &str) -> Option<DateTime<Utc>> {
 
 // ============ RSS ============
 
-/// RSS timeline provider（HTTP 抓取，追加模式）。
+/// RSS timeline provider (HTTP fetch, append mode).
 pub struct RssProvider {
     config: Arc<Config>,
 }
@@ -230,7 +233,7 @@ impl TimelineProvider for RssProvider {
 
 // ============ Todo (local) ============
 
-/// Todo timeline provider（本地 SQLite 拉取）。
+/// Todo timeline provider (local SQLite pull).
 pub struct TodoProvider {
     account: TodoAccount,
 }
@@ -255,7 +258,7 @@ impl TimelineProvider for TodoProvider {
         let mut events = Vec::new();
         for e in &entries {
             let created_ts = parse_rfc3339(&e.created_at).unwrap_or_else(Utc::now);
-            // created 事件
+            // created event
             events.push(TimelineEvent::new(
                 "todo",
                 Some(&self.account.name),
@@ -270,7 +273,7 @@ impl TimelineProvider for TodoProvider {
                     "priority": e.priority,
                 }),
             ));
-            // 若 updated_at 有值且与 created_at 不同，生成状态变化事件。
+            // If updated_at is present and differs from created_at, emit a status-change event.
             if !e.updated_at.is_empty()
                 && let Some(updated_ts) = parse_rfc3339(&e.updated_at)
                 && updated_ts != created_ts
@@ -302,7 +305,7 @@ impl TimelineProvider for TodoProvider {
 
 // ============ Note (local) ============
 
-/// Note timeline provider（本地 SQLite 拉取）。
+/// Note timeline provider (local SQLite pull).
 pub struct NoteProvider {
     account: NoteAccount,
 }
@@ -358,7 +361,7 @@ impl TimelineProvider for NoteProvider {
 
 // ============ Bookmark (local) ============
 
-/// Bookmark timeline provider（本地 SQLite 拉取）。
+/// Bookmark timeline provider (local SQLite pull).
 pub struct BookmarkProvider {
     account: BookmarkAccount,
 }
@@ -407,12 +410,15 @@ impl TimelineProvider for BookmarkProvider {
 
 // ============ Ops-log Provider ============
 
-/// 把 ops-log.db 中某 module 的行投影为 TimelineEvent。
+/// Project a module's rows in ops-log.db into TimelineEvent.
 ///
-/// 由 notion 账户的 todo/note/bookmark 写入路径（AOP hook）→ ops-log。
-/// 这里把 ops-log 转成 timeline events,使这些操作能在 `timeline list` 中可见。
+/// Written by the todo/note/bookmark write paths of Notion accounts (AOP hook) -> ops-log.
+/// Here ops-log is turned into timeline events so these operations become visible in
+/// `timeline list`.
 ///
-/// ADR [L007](../../docs/adr/L007-notion-ops-log.md) 不查 notion API，timeline 通过此 provider 看本地 ops-log。
+/// Per ADR [L007](../../../docs/adr/L007-notion-ops-log.md) we do not query the Notion API;
+/// the timeline views the local ops-log through this provider
+/// [L010](../../../docs/adr/L010-ops-log-provider.md).
 pub struct OpsLogProvider {
     module: &'static str,
 }
@@ -433,8 +439,8 @@ impl TimelineProvider for OpsLogProvider {
         self.module
     }
     fn account(&self) -> Option<&str> {
-        // ops-log 单 provider 覆盖该 module 的所有 account，
-        // 通过事件自身的 `account` 字段区分；sync_state 行 account = ""。
+        // The single ops-log provider covers all accounts of this module,
+        // distinguished by the event's own `account` field; the sync_state row has account = "".
         None
     }
 
@@ -462,23 +468,23 @@ impl TimelineProvider for OpsLogProvider {
     }
 }
 
-// ============ 辅助 ============
+// ============ helpers ============
 
-/// 解析 RFC3339 时间字符串。
+/// Parse an RFC3339 time string.
 fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
     crate::util::datetime::parse_rfc3339(s)
 }
 
 // ============ Provider Registry ============
 
-/// 宏：注册一个 local/notion 双 provider 模块（todo/note/bookmark 共享）。
+/// Macro: register a local/notion dual-provider module (shared by todo/note/bookmark).
 ///
-/// 模式：
-/// 1. 对每个 local 账户 push 一个本地 Provider。
-/// 2. 若存在 notion 账户，push 单个 [`OpsLogProvider`]。
+/// Pattern:
+/// 1. Push one local Provider for each local account.
+/// 2. If a Notion account exists, push a single [`OpsLogProvider`].
 ///
-/// `local_providers` 表达式求值应返回 `&[Account]`，`provider_for`
-/// 是形如 `TodoProvider::new(acc.clone())` 的构造表达式。
+/// The `local_providers` expression must evaluate to `&[Account]`, and `provider_for`
+/// is a constructor expression like `TodoProvider::new(acc.clone())`.
 macro_rules! add_dual_providers {
     ($providers:expr, $module:literal, $local_providers:expr, $provider_for:expr) => {{
         let local_providers: &[_] = $local_providers;
@@ -496,13 +502,14 @@ macro_rules! add_dual_providers {
     }};
 }
 
-/// 构建 TimelineProvider 列表（遍历 config 中所有已配置的账户）。
+/// Build the TimelineProvider list (iterating over all configured accounts in config).
 ///
-/// - Mail：每个 mail 账户一个 MailProvider。
-/// - Cal：每个 calendar 账户一个 CalProvider。
-/// - RSS：单个 RssProvider（无账户概念）。
-/// - Todo/Note/Bookmark：local 账户走本地 provider；notion 账户共享一个
-///   [`OpsLogProvider`]（投影 ops-log.db）。两者可共存。
+/// - Mail: one MailProvider per mail account.
+/// - Cal: one CalProvider per calendar account.
+/// - RSS: a single RssProvider (no account concept).
+/// - Todo/Note/Bookmark: local accounts use the local provider; Notion accounts share a
+///   single [`OpsLogProvider`] (projecting ops-log.db)
+///   [L010](../../../docs/adr/L010-ops-log-provider.md). The two can coexist.
 pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
     let mut providers: Vec<Box<dyn TimelineProvider>> = Vec::new();
 
@@ -519,12 +526,12 @@ pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
         )));
     }
 
-    // RSS（无账户，单个）
+    // RSS (no account, single)
     if !config.rss.feeds.is_empty() {
         providers.push(Box::new(RssProvider::new(config.clone())));
     }
 
-    // Todo / Note / Bookmark：local/notion 双 provider 模式。
+    // Todo / Note / Bookmark: local/notion dual-provider pattern.
     add_dual_providers!(providers, "todo", &config.todo.accounts, TodoProvider::new);
     add_dual_providers!(providers, "note", &config.note.accounts, NoteProvider::new);
     add_dual_providers!(
@@ -537,7 +544,7 @@ pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
     providers
 }
 
-/// 按来源过滤 providers（`--source mail,cal` 只保留 mail 和 cal 的 provider）。
+/// Filter providers by source (`--source mail,cal` keeps only mail and cal providers).
 pub fn filter_providers(
     providers: Vec<Box<dyn TimelineProvider>>,
     sources: &[String],

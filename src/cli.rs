@@ -1,15 +1,17 @@
-//! CLI 参数定义与 clap 子命令树构建。
+//! CLI argument definitions and clap subcommand-tree construction.
 //!
-//! 每个模块通过 `Executor::module_arg_spec()` 以数据形式声明自己的
-//! 参数结构；本模块据此构建 `clap::Command` 树（module → action → flags），
-//! 由 clap 负责校验与 `--help`，取代原先手写的 `detect_subcommand_help` /
-//! `module_help` / `action_help`（那些函数需要重建整个 ModuleRegistry 只为拿帮助）。
+//! Each module declares its argument structure as data via
+//! `Executor::module_arg_spec()`; this module turns that into a `clap::Command`
+//! tree (module → action → flags). clap owns validation and `--help`,
+//! replacing the old hand-rolled `detect_subcommand_help` / `module_help` /
+//! `action_help` helpers (which rebuilt the whole `ModuleRegistry` just for help).
+//! See [F007](../docs/adr/F007-clap-subcommand-tree.md).
 
 use clap::{Arg, ArgAction, ArgMatches, Command};
 
 use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, ModuleRegistry, Positional};
 
-/// 取值 flag：`--name VALUE`。
+/// Builds a value-taking flag: `--name VALUE`.
 fn value_flag(spec: &ArgSpec) -> Arg {
     Arg::new(spec.name)
         .long(spec.name)
@@ -18,7 +20,7 @@ fn value_flag(spec: &ArgSpec) -> Arg {
         .num_args(1)
 }
 
-/// 布尔开关：`--name`（无值）。
+/// Boolean switch: `--name` (no value).
 fn bool_flag(spec: &ArgSpec) -> Arg {
     Arg::new(spec.name)
         .long(spec.name)
@@ -26,7 +28,7 @@ fn bool_flag(spec: &ArgSpec) -> Arg {
         .action(ArgAction::SetTrue)
 }
 
-/// 可重复取值 flag：`--name V` 可多次，收集为列表。
+/// Repeatable value flag: `--name V` may appear multiple times, collected into a list.
 fn multi_flag(spec: &ArgSpec) -> Arg {
     Arg::new(spec.name)
         .long(spec.name)
@@ -35,7 +37,7 @@ fn multi_flag(spec: &ArgSpec) -> Arg {
         .action(ArgAction::Append)
 }
 
-/// 把单个 action 的参数声明转成 clap 子命令。
+/// Turn a single action's argument spec into a clap subcommand.
 fn build_action_command(spec: &ActionArgSpec) -> Command {
     let mut cmd = Command::new(spec.name)
         .about(spec.description)
@@ -67,7 +69,7 @@ fn build_action_command(spec: &ActionArgSpec) -> Command {
     cmd
 }
 
-/// 由模块参数声明构建该模块的 clap 子命令（含各 action 子子命令）。
+/// Build a module's clap subcommand (including each action sub-subcommand).
 pub(crate) fn build_module_command(spec: &ModuleArgSpec) -> Command {
     let mut cmd = Command::new(spec.name)
         .about(spec.description)
@@ -79,10 +81,12 @@ pub(crate) fn build_module_command(spec: &ModuleArgSpec) -> Command {
     cmd
 }
 
-/// 构建顶层命令：全局 `--json` / `--account` + 各模块子命令。
+/// Build the top-level command: global `--json` / `--account` + one subcommand per module.
 ///
-/// `--account` 是全局 flag，在任何层级出现都由 clap 在顶层消费，
-/// 之后由 `main.rs` 注入到模块参数里；故各模块的参数声明中无需（也不应）重复它。
+/// `--account` is a global flag consumed by clap at the top level wherever it
+/// appears, then injected into module args by `main.rs`; module arg specs must
+/// NOT redeclare it.
+/// See [F007](../docs/adr/F007-clap-subcommand-tree.md).
 pub(crate) fn build_root_command(registry: &ModuleRegistry) -> Command {
     let mut cmd = Command::new("everyday")
         .version(env!("CARGO_PKG_VERSION"))
@@ -112,23 +116,27 @@ pub(crate) fn build_root_command(registry: &ModuleRegistry) -> Command {
     cmd
 }
 
-/// 把某个 action 的 `ArgMatches` 还原成 `Vec<String>`，形态与旧 `parse_simple_args`
-/// 的输入一致（`--key value` / `--key=value` / 布尔 `--key` / 位置参数原样），
-/// 以便模块继续用 `parse_simple_args` 解析，最小化改动面。
+/// Reconstruct an action's `ArgMatches` into the `Vec<String>` shape that the
+/// old `parse_simple_args` consumed (`--key value` / `--key=value` / boolean
+/// `--key` / positional args verbatim), so modules keep using `parse_simple_args`
+/// with minimal change surface.
+/// See [R005](../docs/adr/R005-parse-simple-args.md).
 ///
-/// 关键：每个 flag 严格按其在 `ActionArgSpec` 中声明的 `ArgKind` 读取类型，
-/// 避免用错误类型 `get_one`/`get_many` 触发 clap 的 downcast panic
-/// （如 bool flag 用 `String` 取值，或反之）。
+/// Key: each flag is read with exactly the `ArgKind` declared in `ActionArgSpec`,
+/// avoiding a clap downcast panic from a mismatched `get_one`/`get_many` type
+/// (e.g. reading a bool flag as `String`, or vice versa).
 ///
-/// - 取值 flag：`--name value`
-/// - 可重复 flag：`--name v1 --name v2`
-/// - 布尔开关：`--name`
-/// - 位置参数（`args` id）：原样推送，不加 `--` 前缀
+/// - value flag:    `--name value`
+/// - repeatable flag: `--name v1 --name v2`
+/// - boolean switch:  `--name`
+/// - positional (`args` id): pushed verbatim, no `--` prefix
 ///
-/// 全局 `--json` / `--account` 不在此还原（`json` 走线程局部，`account` 由 `main.rs` 注入）。
+/// Global `--json` / `--account` are NOT reconstructed here (`json` goes through
+/// the thread-local flag; `account` is injected by `main.rs`).
 pub(crate) fn matches_to_args(m: &ArgMatches, spec: &ActionArgSpec) -> Vec<String> {
     let mut out = Vec::new();
-    // 位置参数（仅当该 action 声明了位置参数时才存在 `args` id；否则读取会 panic）。
+    // Positionals exist only when the action declared them; reading "args"
+    // otherwise would panic.
     if !matches!(spec.positional, Positional::None)
         && let Some(vals) = m.get_many::<String>("args")
     {
@@ -136,7 +144,7 @@ pub(crate) fn matches_to_args(m: &ArgMatches, spec: &ActionArgSpec) -> Vec<Strin
             out.push(v.clone());
         }
     }
-    // 按声明逐个还原，类型与 clap 声明严格一致。
+    // Reconstruct each flag by its declared kind, matching clap's type exactly.
     for a in spec.args {
         match a.kind {
             ArgKind::Bool => {

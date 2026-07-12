@@ -1,14 +1,17 @@
-//! 时间解析工具。
+//! Datetime parsing utilities.
 //!
-//! 三个模块（email_cache / timeline/store / timeline/providers）原本各自
-//! 定义了 `parse_rfc3339`，实现完全相同。集中到此处统一行为。
+//! Three modules (`email_cache` / `timeline/store` / `timeline/providers`)
+//! each previously defined their own `parse_rfc3339` with identical bodies.
+//! Centralized here to unify behavior.
 
 use chrono::{DateTime, Utc};
 
-/// 解析 RFC3339 字符串为 UTC `DateTime`。
+/// Parse an RFC3339 string into a UTC `DateTime`.
 ///
-/// 失败返回 `None` —— 调用方必须显式处理（不要静默 fallback 到 `Utc::now()`，
-/// 否则无法区分"刚 sync 过"和"水位损坏"）。
+/// On failure returns `None` — the caller must handle it explicitly. Do **not**
+/// silently fall back to `Utc::now()`, or it becomes impossible to tell
+/// "just synced" apart from "watermark corrupted". See
+/// [L013](../../docs/adr/L013-from-explicit-error.md).
 pub fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
     DateTime::parse_from_rfc3339(s)
         .ok()
@@ -22,7 +25,8 @@ mod tests {
     #[test]
     fn parses_z_suffix_as_utc() {
         let dt = parse_rfc3339("2026-07-11T14:30:00Z").expect("Z must parse");
-        // 用 parse_from_rfc3339 自身作 oracle，避免硬编码 Unix timestamp
+        // Use parse_from_rfc3339 itself as the oracle to avoid hardcoding a
+        // Unix timestamp.
         let expected = DateTime::parse_from_rfc3339("2026-07-11T14:30:00Z")
             .unwrap()
             .with_timezone(&Utc);
@@ -32,7 +36,7 @@ mod tests {
     #[test]
     fn parses_explicit_offset() {
         let dt = parse_rfc3339("2026-07-11T14:30:00+08:00").expect("offset must parse");
-        // +08:00 = 06:30 UTC，等价于 14:30:00Z 减去 8 小时。
+        // +08:00 = 06:30 UTC, equivalent to 14:30:00Z minus 8 hours.
         let expected = DateTime::parse_from_rfc3339("2026-07-11T06:30:00Z")
             .unwrap()
             .with_timezone(&Utc);

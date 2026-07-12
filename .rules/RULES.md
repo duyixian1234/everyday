@@ -20,6 +20,7 @@
 | [05-commit.md](05-commit.md) | Conventional Commits + pre-commit checklist | Making a commit, especially a release commit |
 | [06-justfile.md](06-justfile.md) | `just` recipes + cross-platform shells | Running dev commands or adding a new recipe |
 | [07-dependency-pitfalls.md](07-dependency-pitfalls.md) | Rust edition 2024 + crate-level gotchas | Adding a dependency or debugging a build error |
+| [08-comments.md](08-comments.md) | Comment language + ADR-link depth rules | Translating comments or adding an ADR link from source code |
 
 ## How to use this directory
 

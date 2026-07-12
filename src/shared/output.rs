@@ -1,58 +1,64 @@
-//! 统一输出层。
+//! Unified output layer.
 //!
-//! 所有模块返回 [`Output`]，由主程序根据 [`RenderMode`] 统一渲染。
-//! `--json` 切换到 [`RenderMode::Json`]，这是 AI Agent 交互的主模式。
+//! Every module returns an [`Output`], rendered centrally by the host program
+//! according to [`RenderMode`]. `--json` switches to [`RenderMode::Json`],
+//! the primary mode for AI Agent interaction.
+//! See [F001](../../docs/adr/F001-cli-shape.md).
 
 use serde_json::{Value, json};
 
 use crate::error::{AgentError, Result};
 
-/// 模块执行结果。
+/// Module execution result.
 ///
-/// 三种变体覆盖 CLI 工具的典型输出场景：
-/// - [`Output::Text`]：自由文本（如 `net fetch` 清洗后的 Markdown）
-/// - [`Output::Json`]：结构化数据（AI 友好）
-/// - [`Output::Records`]：表格型数据，Text 模式渲染为表格，JSON 模式渲染为对象数组
+/// The three variants cover the typical output scenarios of a CLI tool:
+/// - [`Output::Text`]: free-form text (e.g. cleaned-up Markdown)
+/// - [`Output::Json`]: structured data (AI-friendly)
+/// - [`Output::Records`]: tabular data — rendered as an aligned table in
+///   Text mode, as an array of objects in JSON mode
 #[derive(Debug, Clone)]
 pub enum Output {
-    /// 纯文本。两种模式都原样输出。
+    /// Plain text. Emitted verbatim in both modes.
     Text(String),
 
-    /// 结构化 JSON 值。
+    /// Structured JSON value.
     Json(Value),
 
-    /// 表格型数据：表头 + 行。
-    /// Text 模式 → 对齐表格；JSON 模式 → 对象数组（表头作键）。
+    /// Tabular data: headers + rows.
+    /// Text mode → aligned table; JSON mode → array of objects (headers as keys).
     Records {
         headers: Vec<String>,
         rows: Vec<Vec<String>>,
     },
 }
 
-/// 渲染模式。
+/// Render mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderMode {
-    /// 人类可读（默认）。
+    /// Human-readable (default).
     Text,
-    /// 纯净 JSON（`--json`）。
+    /// Clean JSON (`--json`).
     Json,
 }
 
 impl Output {
-    /// 创建一个简单的文本输出。
+    /// Build a simple text output.
     pub fn text<S: Into<String>>(s: S) -> Self {
         Self::Text(s.into())
     }
 
-    /// 创建一个表格输出。
+    /// Build a tabular output.
     pub fn records(headers: Vec<String>, rows: Vec<Vec<String>>) -> Self {
         Self::Records { headers, rows }
     }
 
-    /// 按指定模式渲染为字符串。
+    /// Render into a string under the given mode.
     ///
-    /// JSON 序列化失败不再静默回退为 `Value::Display` 字符串（破坏 `--json` 契约，
-    /// 让下游 Agent 解析失败）。失败时改回退为带错误标记的 JSON 对象。
+    /// JSON serialization failures no longer silently fall back to a
+    /// `Value::Display` string (which would break the `--json` contract and
+    /// make downstream Agents fail to parse). On failure we fall back to a
+    /// JSON object tagged with an error marker instead.
+    /// See [R002](../../docs/adr/R002-output-json-failure.md).
     pub fn render(self, mode: RenderMode) -> String {
         match (self, mode) {
             (Output::Text(s), _) => s,
@@ -69,7 +75,8 @@ impl Output {
     }
 }
 
-/// 将错误渲染为输出字符串。JSON 模式输出 `agents.md` 规定格式。
+/// Render an error into an output string. JSON mode emits the format
+/// mandated by [agents.md](../../agents.md).
 pub fn render_error(err: &AgentError, mode: RenderMode) -> String {
     match mode {
         RenderMode::Json => match serde_json::to_string(err) {
@@ -80,12 +87,13 @@ pub fn render_error(err: &AgentError, mode: RenderMode) -> String {
     }
 }
 
-/// 序列化失败的兜底：返回带 `_error` 字段的 JSON 对象，让下游仍能识别为 JSON。
+/// Fallback for serialization failure: return a JSON object tagged with
+/// an `_error` field so downstream still recognizes it as JSON.
 fn fallback_json(msg: &str) -> String {
     json!({ "_error": "serialize_failed", "message": msg }).to_string()
 }
 
-/// 解析渲染模式（从 `--json` flag）。
+/// Resolve the render mode from the `--json` flag.
 pub fn mode_from_json_flag(json: bool) -> RenderMode {
     if json {
         RenderMode::Json
@@ -94,7 +102,7 @@ pub fn mode_from_json_flag(json: bool) -> RenderMode {
     }
 }
 
-/// 把 `Result<Output>` 统一转成 `(退出码, 输出字符串)`。
+/// Reduce a `Result<Output>` into `(exit_code, output_string)`.
 pub fn finalize(result: Result<Output>, mode: RenderMode) -> (i32, String) {
     match result {
         Ok(out) => (0, out.render(mode)),
@@ -103,8 +111,9 @@ pub fn finalize(result: Result<Output>, mode: RenderMode) -> (i32, String) {
 }
 
 fn compact_json(v: &Value) -> String {
-    // 紧凑 JSON，无多余空白 —— AI 解析友好。
-    // 失败时不再回退为非 JSON 字符串（破坏契约），改走 fallback_json。
+    // Compact JSON, no extra whitespace — AI-parse-friendly.
+    // On failure, no longer fall back to a non-JSON string (breaks the
+    // contract); route to `fallback_json` instead.
     match serde_json::to_string(v) {
         Ok(s) => s,
         Err(e) => fallback_json(&format!("serialize json value: {e}")),
@@ -125,7 +134,8 @@ fn records_to_json(headers: &[String], rows: &[Vec<String>]) -> String {
     compact_json(&Value::Array(arr))
 }
 
-/// 极简表格渲染：计算列宽 + 对齐。不引入额外依赖即可工作。
+/// Minimal table rendering: compute column widths + align. Works
+/// without extra dependencies.
 fn render_table(headers: &[String], rows: &[Vec<String>]) -> String {
     if headers.is_empty() {
         return String::new();
@@ -172,7 +182,8 @@ fn pad(s: &str, w: usize) -> String {
 }
 
 fn display_width(s: &str) -> usize {
-    // 简化：按字符计数。CJK 宽度对齐在终端略有偏差，可后续替换为 unicode-width。
+    // Simplified: count by char. CJK width alignment is slightly off in
+    // terminals; could be replaced with unicode-width later.
     s.chars().count()
 }
 
@@ -210,7 +221,7 @@ mod tests {
         let out = Output::records(vec!["k".into()], vec![vec!["v".into()]]);
         let s = out.render(RenderMode::Text);
         assert!(s.contains("k"));
-        // 分隔线：一整行只含 '-'
+        // Separator line: one whole line contains only '-'
         assert!(
             s.lines()
                 .any(|l| !l.is_empty() && l.chars().all(|c| c == '-'))

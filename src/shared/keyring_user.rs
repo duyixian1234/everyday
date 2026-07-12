@@ -1,12 +1,14 @@
-//! Keyring 用户名常量。
+//! Keyring username constant.
 //!
-//! notion 模块（note/todo/bookmark）在 keyring 里用同一个用户名存储 token。
-//! 三个模块过去各自 `const KEYRING_USER: &str = "token"`，分散维护；
-//! 任何一处改都会让旧账户读不到 token。
+//! The Notion modules (note/todo/bookmark) store their tokens under the same
+//! keyring username. They used to each declare their own
+//! `const KEYRING_USER: &str = "token"`, scattered across files — changing
+//! any one would make existing accounts unreadable.
 //!
-//! 统一到 `shared::keyring_user::KEYRING_USER`，单一来源。
+//! Centralized here as `shared::keyring_user::KEYRING_USER`, single source of truth.
+//! See [F002](../../docs/adr/F002-multi-account-keyring.md).
 
-/// Notion 模块统一 keyring username（service = `everyday/<module>/<account>`）。
+/// Shared keyring username for Notion modules (service = `everyday/<module>/<account>`).
 pub const KEYRING_USER: &str = "token";
 
 #[cfg(test)]
@@ -15,8 +17,8 @@ mod tests {
 
     #[test]
     fn keyring_user_is_literal_token() {
-        // 锁住字面值：用户登录到 keyring 后这个常量被固化，
-        // 改它意味着所有用户的现有 token 不可读。
+        // Lock the literal: once a user logs in, this constant is baked into
+        // their keyring entry; changing it would make every existing token unreadable.
         assert_eq!(KEYRING_USER, "token");
     }
 }

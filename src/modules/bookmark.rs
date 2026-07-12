@@ -1,17 +1,19 @@
-//! 书签模块：保存 / 浏览 Web 书签。默认使用本地 SQLite provider（`local`），
-//! 也可切换为 Notion（`provider = "notion"`）。
+//! Bookmark module: save / browse web bookmarks. Defaults to the local SQLite provider (`local`),
+//! but can switch to Notion (`provider = "notion"`) [B001](../../docs/adr/B001-bookmark-dual-provider.md).
 //!
-//! 设计目标：一个轻量的「稍后读 / 收藏夹」存储，每个书签含 URL、标题与一组标签。
-//! 向 Agent 暴露三个高层动作：`init-db`（建库）、`add`（收藏）、`list`（按标签过滤浏览）。
+//! Design goal: a lightweight "read-later / favorites" store where each bookmark has a URL, a title,
+//! and a set of tags. Exposes three high-level actions to the Agent: `init-db` (create DB),
+//! `add` (collect), `list` (browse filtered by tag).
 //!
-//! 支持的 `action`：
-//! - `login`    交互式把 Notion Integration Token 存入密钥环（仅 notion provider）
-//! - `init-db`  本地建表 / 在 Notion 创建书签数据库（需要 `parent_page_id`）
-//! - `add`      收藏一个书签（`--url` 必填，`--title` 必填，`--tags` 可选逗号分隔）
-//! - `list`     列出书签，`--tag <TAG>` 按标签过滤（`--db` 指定 Notion 数据库）
+//! Supported `action`s:
+//! - `login`    interactively store the Notion Integration Token in the keyring (notion provider only)
+//! - `init-db`  create the local table / create the bookmark database in Notion (needs `parent_page_id`)
+//! - `add`      collect a bookmark (`--url` required, `--title` required, `--tags` optional comma-separated)
+//! - `list`     list bookmarks, `--tag <TAG>` filters by tag (`--db` selects the Notion database)
 //!
-//! 凭证安全：Token 仅存系统密钥环（service = `everyday/bookmark/<account>`），绝不落盘 config。
-//! `database_id` / `parent_page_id` 等非机密元数据可存 config。
+//! Credential safety: the token is stored only in the system keyring (service = `everyday/bookmark/<account>`),
+//! never persisted to config [F002](../../docs/adr/F002-multi-account-keyring.md). Non-secret metadata such
+//! as `database_id` / `parent_page_id` may be stored in config.
 
 use std::collections::HashMap;
 
@@ -25,11 +27,11 @@ use crate::modules::{Executor, parse_simple_args};
 use crate::notion_client::NotionClient;
 use crate::output::Output;
 
-/// 密钥环中存放 token 的条目用户名（同 service 下唯一）。
-/// 见 `crate::keyring_user` —— 三个 notion 模块共享同一常量。
+/// Keyring entry username under which the token is stored (unique within a service).
+/// See `crate::keyring_user` — the three notion modules share this constant [R009](../../docs/adr/R009-notion-common-local-module.md).
 pub(crate) use crate::keyring_user::KEYRING_USER;
 
-/// 干净的领域模型（输出给 Agent / 终端）。
+/// Clean domain model (output to Agent / terminal).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BookmarkItem {
     pub id: String,
@@ -38,16 +40,16 @@ pub struct BookmarkItem {
     pub tags: Vec<String>,
 }
 
-// ============ Notion 原始数据结构（强类型映射） ============
+// ============ Notion raw data structures (strongly-typed mapping) ============
 
-/// 对应 Notion Page 原始返回（仅取我们关心的字段，未知字段由 serde 忽略）。
+/// Mirrors the raw Notion Page response (only the fields we care about; unknown fields ignored by serde).
 #[derive(Debug, Deserialize)]
 struct NotionPage {
     id: String,
     properties: BookmarkProperties,
 }
 
-/// 书签数据库的属性集合（字段名为 Notion 属性名，用 `rename` 对齐）。
+/// Property set of the bookmark database (field names are Notion property names, aligned via `rename`).
 #[derive(Debug, Deserialize)]
 struct BookmarkProperties {
     #[serde(rename = "Title")]
@@ -58,7 +60,7 @@ struct BookmarkProperties {
     tags: Option<TagsProperty>,
 }
 
-/// 嵌套类型叶子节点。
+/// Leaf node of a nested type.
 #[derive(Debug, Deserialize)]
 struct TitleProperty {
     title: Vec<TextWrapper>,
@@ -80,13 +82,13 @@ struct SelectDetail {
     name: String,
 }
 
-/// `POST /databases/{id}/query` 的响应（仅取 results）。
+/// Response of `POST /databases/{id}/query` (only `results` is taken).
 #[derive(Debug, Deserialize)]
 struct QueryResponse {
     results: Vec<NotionPage>,
 }
 
-// ============ 双向转换器 ============
+// ============ Bidirectional converters ============
 
 impl From<NotionPage> for BookmarkItem {
     fn from(page: NotionPage) -> Self {
@@ -110,7 +112,7 @@ impl From<NotionPage> for BookmarkItem {
     }
 }
 
-// ============ 模块 ============
+// ============ Module ============
 
 pub struct BookmarkModule {
     config: std::sync::Arc<crate::config::Config>,
@@ -209,7 +211,7 @@ impl Executor for BookmarkModule {
             .config
             .bookmark_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // 本地 SQLite provider：路由到本地实现；否则走 Notion。
+        // Local SQLite provider: route to the local implementation; otherwise go through Notion.
         if crate::modules::local::is_local_provider(&account.provider) {
             use crate::modules::bookmark_local as local;
             return match action {
@@ -231,13 +233,13 @@ impl Executor for BookmarkModule {
     }
 }
 
-// ============ 标签解析 ============
+// ============ Tag parsing ============
 
-// 见 `crate::modules::local::parse_tags` —— 两个 bookmark provider 共享同一实现。
+// See `crate::modules::local::parse_tags` — both bookmark providers share this implementation [R009](../../docs/adr/R009-notion-common-local-module.md).
 
-// ============ 凭证（keyring） ============
+// ============ Credentials (keyring) ============
 
-/// 从密钥环读取 Notion Token。缺失时给出可执行提示。
+/// Read the Notion token from the keyring. On miss, give an actionable hint.
 fn get_token(account: &BookmarkAccount) -> Result<String> {
     let service = crate::config::Config::keyring_service("bookmark", &account.name);
     let entry = keyring::Entry::new(&service, KEYRING_USER)
@@ -251,8 +253,8 @@ fn get_token(account: &BookmarkAccount) -> Result<String> {
     })
 }
 
-/// 交互式输入 Token 并存入密钥环。
-/// 见 `crate::modules::local::login_notion` —— 与 note/todo 共享实现。
+/// Interactively prompt for the token and store it in the keyring.
+/// See `crate::modules::local::login_notion` — shared with note/todo [R009](../../docs/adr/R009-notion-common-local-module.md).
 async fn bookmark_login(account: &BookmarkAccount) -> Result<Output> {
     let account_name = account.name.clone();
     crate::modules::local::login_notion("bookmark", &account_name).await?;
@@ -263,7 +265,7 @@ async fn bookmark_login(account: &BookmarkAccount) -> Result<Output> {
 
 // ============ init-db (notion) ============
 
-/// `bookmark init-db [--parent PAGE_ID]`：在 Notion 创建书签数据库并回填 database_id。
+/// `bookmark init-db [--parent PAGE_ID]`: create the bookmark database in Notion and backfill database_id.
 async fn bookmark_init_db(
     account: &BookmarkAccount,
     flags: &HashMap<String, String>,
@@ -283,7 +285,7 @@ async fn bookmark_init_db(
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    // 创建数据库：Title(title) / URL(url) / Tags(multi_select)。
+    // Create the database: Title (title) / URL (url) / Tags (multi_select).
     let body = json!({
         "parent": { "page_id": parent },
         "title": [{ "type": "text", "text": { "content": "Everyday Bookmarks" } }],
@@ -306,7 +308,7 @@ async fn bookmark_init_db(
         .unwrap_or("")
         .to_string();
 
-    // 写回 config：仅更新 bookmark.accounts 中对应账户的 default_database_id。
+    // Write back to config: only update the matching account's default_database_id under bookmark.accounts.
     let mut root = load_config_value()?;
     set_bookmark_database_id(&mut root, &account.name, &db_id)?;
     save_config_value(&root)?;
@@ -324,7 +326,7 @@ async fn bookmark_init_db(
 
 // ============ add (notion) ============
 
-/// `bookmark add --url U --title T [--tags a,b] [--db ID]`：收藏书签。
+/// `bookmark add --url U --title T [--tags a,b] [--db ID]`: collect a bookmark.
 async fn bookmark_add(
     account: &BookmarkAccount,
     flags: &HashMap<String, String>,
@@ -380,7 +382,7 @@ async fn bookmark_add(
 
 // ============ list (notion) ============
 
-/// `bookmark list [--tag TAG] [--db ID]`：列出书签，可按标签过滤。
+/// `bookmark list [--tag TAG] [--db ID]`: list bookmarks, optionally filtered by tag.
 async fn bookmark_list(
     account: &BookmarkAccount,
     flags: &HashMap<String, String>,
@@ -402,7 +404,7 @@ async fn bookmark_list(
         .await?;
 
     let mut items: Vec<BookmarkItem> = resp.results.into_iter().map(BookmarkItem::from).collect();
-    // 按创建时间降序（Notion 默认升序）；无 created_time 时用 id 兜底。
+    // Sort by creation time descending (Notion defaults to ascending); fall back to id when created_time is absent.
     items.sort_by(|a, b| b.id.cmp(&a.id));
 
     if mode_json() {
@@ -416,7 +418,7 @@ async fn bookmark_list(
     }
 }
 
-/// 文本模式表格渲染（list 共用）。
+/// Text-mode table rendering (shared by `list`).
 fn render_list_text(items: &[BookmarkItem]) -> Result<Output> {
     let rows = items
         .iter()
@@ -435,9 +437,9 @@ fn render_list_text(items: &[BookmarkItem]) -> Result<Output> {
     ))
 }
 
-// ============ 小工具 ============
+// ============ Helpers ============
 
-/// 解析目标数据库 ID：优先 `--db`，否则账户默认。
+/// Resolve the target database ID: prefer `--db`, otherwise the account default.
 fn resolve_db_id(account: &BookmarkAccount, flags: &HashMap<String, String>) -> Result<String> {
     flags
         .get("db")
@@ -452,13 +454,13 @@ fn resolve_db_id(account: &BookmarkAccount, flags: &HashMap<String, String>) -> 
         })
 }
 
-/// 探测当前渲染模式（JSON 全局 flag 已注入 args 并被 parse_simple_args 捕获到 flags，
-/// 但模式判定统一以进程参数中的 `--json` 为准）。
+/// Detect the current render mode. The JSON global flag is injected into args and captured by
+/// parse_simple_args into flags, but mode detection uniformly uses `--json` from the process args [R001](../../docs/adr/R001-thread-local-json-mode.md).
 fn mode_json() -> bool {
     crate::util::json_mode::is_json()
 }
 
-/// 读取配置文件为 toml::Value（不存在/空则空表）。
+/// Read the config file into a toml::Value (empty table if absent/empty).
 fn load_config_value() -> Result<toml::Value> {
     let path = crate::config::Config::config_path()?;
     if !path.exists() {
@@ -471,7 +473,7 @@ fn load_config_value() -> Result<toml::Value> {
     Ok(toml::from_str(&text)?)
 }
 
-/// 把 toml::Value 写回配置文件（自动建父目录）。
+/// Write a toml::Value back to the config file (creating the parent dir).
 fn save_config_value(root: &toml::Value) -> Result<()> {
     let path = crate::config::Config::config_path()?;
     if let Some(parent) = path.parent() {
@@ -483,8 +485,8 @@ fn save_config_value(root: &toml::Value) -> Result<()> {
     Ok(())
 }
 
-/// 在 config 的 `bookmark.accounts` 中找到 name 匹配的账户，写入 `default_database_id`。
-/// 见 `crate::modules::local::set_module_database_id` —— 与 todo 共享实现。
+/// Find the account with a matching name under config's `bookmark.accounts` and write `default_database_id`.
+/// See `crate::modules::local::set_module_database_id` — shared with todo [R009](../../docs/adr/R009-notion-common-local-module.md).
 fn set_bookmark_database_id(root: &mut toml::Value, account_name: &str, db_id: &str) -> Result<()> {
     crate::modules::local::set_module_database_id(root, "bookmark", account_name, db_id)
 }
@@ -495,7 +497,7 @@ mod tests {
 
     #[test]
     fn parse_tags_splits_and_trims() {
-        // 共享 helper 的回归测试在 local.rs 那边；这里只验证 alias 路径也调到了。
+        // The shared helper's regression tests live in local.rs; here we only verify the alias path also calls it.
         assert_eq!(
             crate::modules::local::parse_tags(None),
             Vec::<String>::new()
@@ -538,7 +540,7 @@ mod tests {
         assert!(item.tags.is_empty());
     }
 
-    // set_bookmark_database_id 的完整测试在 local.rs（共享 helper 的权威回归）。
+    // The full test for set_bookmark_database_id is in local.rs (authoritative regression for the shared helper).
     #[test]
     fn set_bookmark_database_id_is_shared_helper() {
         let mut root: toml::Value = toml::from_str(

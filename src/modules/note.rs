@@ -1,19 +1,21 @@
-//! 笔记模块：笔记 / 知识库管理。默认使用本地 SQLite provider（`local`），
-//! 也可切换为 Notion API（`provider = "notion"`）。
+//! Note module: notes / knowledge-base management. Defaults to the local SQLite provider (`local`),
+//! but can switch to the Notion API (`provider = "notion"`) [N001](../../docs/adr/N001-notion-note-module.md)
+//! [F005](../../docs/adr/F005-default-provider-local.md).
 //!
-//! 设计目标：屏蔽 Notion 繁琐的 Block 嵌套，向 Agent 暴露**纯文本/Markdown 追加**
-//! 与**简化版属性操作**两个高层能力。
+//! Design goal: hide Notion's verbose Block nesting and expose two high-level capabilities to the Agent:
+//! **plain-text / Markdown append** and **simplified property operations**.
 //!
-//! 支持的 `action`：
-//! - `login`   交互式把 Notion Integration Token 存入密钥环
-//! - `search`  按标题关键词搜索页面 / 数据库
-//! - `create`  在指定数据库新建一条记录（带标题与若干简化属性）
-//! - `read`    读取页面正文，自动聚合为 Markdown（`--json` 下返回结构化对象）
-//! - `append`  向页面末尾追加文本区块（支持 `--text` 或管道 stdin）
-//! - `update`  修改页面属性（Meta 信息）
-//! - `list`    列出指定数据库下的全部页面（标题 + 属性）
+//! Supported `action`s:
+//! - `login`   interactively store the Notion Integration Token in the keyring
+//! - `search`  search pages / databases by title keyword
+//! - `create`  create a record in a database (with title and simplified properties)
+//! - `read`    read page body, aggregated into Markdown (`--json` returns a structured object)
+//! - `append`  append a text block to the end of a page (supports `--text` or piped stdin)
+//! - `update`  modify page properties (meta info)
+//! - `list`    list all pages under a database (title + properties)
 //!
-//! 凭证安全：Token 仅存系统密钥环（service = `everyday/note/<account>`），绝不落盘 config。
+//! Credential safety: the token is stored only in the system keyring (service = `everyday/note/<account>`),
+//! never persisted to config [F002](../../docs/adr/F002-multi-account-keyring.md).
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
@@ -28,14 +30,14 @@ use crate::modules::Executor;
 use crate::notion_client::NotionClient;
 use crate::output::Output;
 
-/// 密钥环中存放 token 的条目用户名（与账户名无关，同 service 下唯一）。
-/// 见 `crate::keyring_user` —— 三个 notion 模块共享同一常量。
+/// Keyring entry username under which the token is stored (independent of the account name, unique within a service).
+/// See `crate::keyring_user` — the three notion modules share this constant [R009](../../docs/adr/R009-notion-common-local-module.md).
 pub(crate) use crate::keyring_user::KEYRING_USER;
 
-/// 递归渲染 block 的最大深度，防止异常数据导致无限展开。
+/// Maximum recursion depth when rendering blocks, to prevent runaway expansion on malformed data.
 const MAX_BLOCK_DEPTH: usize = 12;
 
-/// `parse_args` 的返回类型别名（避免复杂元组类型直接内联）。
+/// Return-type alias for `parse_args` (avoids inlining a complex tuple type).
 type ParsedArgs = (HashMap<String, String>, Vec<(String, String)>, Vec<String>);
 
 pub struct NoteModule {
@@ -166,7 +168,7 @@ impl Executor for NoteModule {
             .config
             .note_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // 本地 SQLite provider：路由到本地实现；否则走 Notion。
+        // Local SQLite provider: route to the local implementation; otherwise go through Notion.
         if crate::modules::local::is_local_provider(&account.provider) {
             use crate::modules::note_local as local;
             return match action {
@@ -194,12 +196,13 @@ impl Executor for NoteModule {
     }
 }
 
-// ============ 参数解析 ============
+// ============ Argument parsing ============
 //
-// 与 `parse_simple_args` 不同，note 的 `--prop` 允许重复出现，且值内含冒号，
-// 因此实现专用解析：单值 flag 取最后一次，重复 flag（如 prop）单独收集为有序列表。
+// Unlike `parse_simple_args`, note's `--prop` may repeat and its value contains a colon,
+// so a dedicated parser is implemented: single-value flags take the last occurrence, while
+// repeated flags (e.g. prop) are collected separately into an ordered list.
 
-/// 解析结果：`(单值 flags, 重复 flag 列表, 位置参数)`。
+/// Parse result: `(single-value flags, repeated-flag list, positional args)`.
 fn parse_args(args: &[String]) -> ParsedArgs {
     let mut flags: HashMap<String, String> = HashMap::new();
     let mut multi: Vec<(String, String)> = Vec::new();
@@ -225,7 +228,7 @@ fn parse_args(args: &[String]) -> ParsedArgs {
     (flags, multi, positional)
 }
 
-/// 把 flag 放入单值 map；`prop` 等重复 flag 同时放入 `multi` 列表。
+/// Insert a flag into the single-value map; repeated flags like `prop` also go into the `multi` list.
 fn push_flag(
     flags: &mut HashMap<String, String>,
     multi: &mut Vec<(String, String)>,
@@ -238,9 +241,9 @@ fn push_flag(
     }
 }
 
-// ============ 凭证（keyring） ============
+// ============ Credentials (keyring) ============
 
-/// 从密钥环读取 Notion Token。
+/// Read the Notion token from the keyring.
 fn get_token(account: &NoteAccount) -> Result<String> {
     let service = crate::config::Config::keyring_service("note", &account.name);
     let entry = keyring::Entry::new(&service, KEYRING_USER)
@@ -254,8 +257,8 @@ fn get_token(account: &NoteAccount) -> Result<String> {
     })
 }
 
-/// 交互式输入 Token 并存入密钥环。
-/// 见 `crate::modules::local::login_notion` —— 与 todo/bookmark 共享实现。
+/// Interactively prompt for the token and store it in the keyring.
+/// See `crate::modules::local::login_notion` — shared with todo/bookmark [R009](../../docs/adr/R009-notion-common-local-module.md).
 async fn note_login(account: &NoteAccount) -> Result<Output> {
     let account_name = account.name.clone();
     crate::modules::local::login_notion("note", &account_name).await?;
@@ -264,12 +267,13 @@ async fn note_login(account: &NoteAccount) -> Result<Output> {
     )))
 }
 
-// ============ HTTP 封装 ============
+// ============ HTTP wrapper ============
 //
-// 所有 Notion HTTP 请求统一走共享 [`NotionClient`]（见 `notion_client.rs`）：
-// 它注入鉴权头、处理 429 退避重试并映射错误类型。本模块不再自带 HTTP 层。
+// All Notion HTTP requests go through the shared [`NotionClient`] (see `notion_client.rs`)
+// [F004](../../docs/adr/F004-shared-notion-client.md): it injects auth headers, handles 429
+// backoff retries, and maps error types. This module no longer carries its own HTTP layer.
 
-/// 分页拉取某 block 的全部子 block（用于 `read` 内容聚合）。
+/// Paginate and fetch all child blocks of a block (used for `read` content aggregation).
 async fn fetch_all_blocks(client: &NotionClient, block_id: &str) -> Result<Vec<Value>> {
     let mut out: Vec<Value> = Vec::new();
     let mut cursor: Option<String> = None;
@@ -294,9 +298,9 @@ async fn fetch_all_blocks(client: &NotionClient, block_id: &str) -> Result<Vec<V
     Ok(out)
 }
 
-// ============ 富文本 / 标题提取 ============
+// ============ Rich text / title extraction ============
 
-/// 把 Notion rich_text 数组渲染为纯文本（不带格式）。
+/// Render a Notion rich_text array into plain text (no formatting).
 fn rich_text_plain(rt: &[Value]) -> String {
     rt.iter()
         .filter_map(|t| t.get("plain_text").and_then(|p| p.as_str()))
@@ -304,7 +308,7 @@ fn rich_text_plain(rt: &[Value]) -> String {
         .join("")
 }
 
-/// 把 Notion rich_text 数组渲染为带行内格式的 Markdown（bold/italic/code/strike + 链接）。
+/// Render a Notion rich_text array into Markdown with inline formatting (bold/italic/code/strike + links).
 fn rich_text_md(rt: &[Value]) -> String {
     let mut out = String::new();
     for t in rt {
@@ -347,9 +351,9 @@ fn rich_text_md(rt: &[Value]) -> String {
     out
 }
 
-/// 从搜索/页面对象中抽取标题：
-/// - database：顶层 `title` 数组
-/// - page：在 `properties` 中找 type == "title" 的属性
+/// Extract the title from a search/page object:
+/// - database: top-level `title` array
+/// - page: find the property with type == "title" in `properties`
 fn extract_title(obj: &Value) -> String {
     if obj.get("object").and_then(|o| o.as_str()) == Some("database") {
         if let Some(title) = obj.get("title").and_then(|t| t.as_array()) {
@@ -370,9 +374,9 @@ fn extract_title(obj: &Value) -> String {
     String::new()
 }
 
-// ============ 属性编码（create / update 共用） ============
+// ============ Property encoding (shared by create / update) ============
 
-/// 根据属性类型把字符串值编码为 Notion property value。
+/// Encode a string value into a Notion property value based on its property type.
 fn encode_property(ptype: &str, value: &str) -> Result<Value> {
     match ptype {
         "title" => Ok(json!({ "title": [{ "text": { "content": value } }] })),
@@ -392,12 +396,12 @@ fn encode_property(ptype: &str, value: &str) -> Result<Value> {
         "url" => Ok(json!({ "url": value })),
         "email" => Ok(json!({ "email": value })),
         "phone_number" => Ok(json!({ "phone_number": value })),
-        // 未知类型（公式/关系/文件等）降级为富文本，避免直接报错阻断。
+        // Unknown type (formula/relation/file, etc.): fall back to rich_text to avoid hard errors.
         _ => Ok(json!({ "rich_text": [{ "text": { "content": value } }] })),
     }
 }
 
-/// 把字符串解析为布尔（支持 true/false/yes/no/1/0，大小写不敏感）。
+/// Parse a string into a boolean (accepts true/false/yes/no/1/0, case-insensitive).
 fn parse_bool(s: &str) -> Result<bool> {
     match s.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "1" | "on" => Ok(true),
@@ -408,7 +412,7 @@ fn parse_bool(s: &str) -> Result<bool> {
     }
 }
 
-/// 在数据库 schema 中查找属性类型；找不到则报错并列出可用属性。
+/// Look up a property's type in the database schema; error with available properties if missing.
 fn db_property_type(schema: &Value, name: &str) -> Result<String> {
     let props = schema
         .get("properties")
@@ -430,7 +434,7 @@ fn db_property_type(schema: &Value, name: &str) -> Result<String> {
     }
 }
 
-/// 在数据库 schema 中找到 title 类型的属性名（create 时用它承载 `--title`）。
+/// Find the name of the title-typed property in the database schema (used to hold `--title` on create).
 fn db_title_property_name(schema: &Value) -> Result<String> {
     let props = schema
         .get("properties")
@@ -446,7 +450,7 @@ fn db_title_property_name(schema: &Value) -> Result<String> {
     ))
 }
 
-/// 无需 schema 时的启发式编码（用于无 database 父级的独立页面 update）。
+/// Heuristic encoding when no schema is available (standalone pages without a database parent).
 fn encode_property_heuristic(value: &str) -> Value {
     if let Ok(b) = parse_bool(value) {
         return json!({ "checkbox": b });
@@ -457,7 +461,7 @@ fn encode_property_heuristic(value: &str) -> Value {
     json!({ "rich_text": [{ "text": { "content": value } }] })
 }
 
-/// 把页面 properties 简化为 `name -> 字符串值` 的 map（用于 read 的 JSON 输出）。
+/// Simplify page properties into a `name -> string value` map (used for `read`'s JSON output).
 fn page_props_to_strings(props: &Map<String, Value>) -> Map<String, Value> {
     let mut out = Map::new();
     for (name, p) in props {
@@ -521,10 +525,10 @@ fn page_props_to_strings(props: &Map<String, Value>) -> Map<String, Value> {
 
 // ============ Markdown -> Block ============
 
-/// 把纯文本 / Markdown 文本切分为 Notion block 数组（Markdown-lite 解析）。
+/// Split plain text / Markdown text into a Notion block array (Markdown-lite parser).
 ///
-/// 支持的语法：```代码块```、`#/##/###` 标题、`- /*` 无序列表、`1.` 有序列表、
-/// `> ` 引用、`---` 分割线、空行分隔段落。其余作为普通段落。
+/// Supported syntax: ```code block```, `#/##/###` headings, `- /*` unordered lists, `1.` ordered lists,
+/// `> ` quotes, `---` dividers, blank-line-separated paragraphs. Everything else is a normal paragraph.
 fn text_to_blocks(text: &str) -> Vec<Value> {
     let lines: Vec<&str> = text.lines().collect();
     let mut blocks: Vec<Value> = Vec::new();
@@ -550,13 +554,13 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
         let line = lines[i];
         let trimmed = line.trim();
 
-        // 代码块围栏。
+        // Code fence.
         if trimmed.starts_with("```") {
             if !in_code {
                 in_code = true;
                 code_lang = trimmed.trim_start_matches('`').trim().to_string();
             } else {
-                // 结束围栏：输出 code block。
+                // Closing fence: emit a code block.
                 let content = code_buf.join("\n");
                 blocks.push(json!({
                     "object": "block",
@@ -579,7 +583,7 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
             continue;
         }
 
-        // 分割线。
+        // Divider.
         if trimmed == "---" || trimmed == "***" || trimmed == "___" {
             flush_para(&mut para, &mut blocks);
             blocks.push(json!({ "object": "block", "type": "divider", "divider": {} }));
@@ -587,7 +591,7 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
             continue;
         }
 
-        // 标题。
+        // Heading.
         if let Some(rest) = trimmed.strip_prefix("### ") {
             flush_para(&mut para, &mut blocks);
             blocks.push(block_text("heading_3", rest));
@@ -607,7 +611,7 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
             continue;
         }
 
-        // 引用。
+        // Quote.
         if let Some(rest) = trimmed.strip_prefix("> ") {
             flush_para(&mut para, &mut blocks);
             blocks.push(block_text("quote", rest));
@@ -615,7 +619,7 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
             continue;
         }
 
-        // 无序列表。
+        // Unordered list.
         if let Some(rest) = trimmed
             .strip_prefix("- ")
             .or_else(|| trimmed.strip_prefix("* "))
@@ -626,7 +630,7 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
             continue;
         }
 
-        // 有序列表。
+        // Ordered list.
         if let Some(rest) = trimmed
             .split_once(". ")
             .filter(|(n, _)| n.parse::<usize>().is_ok())
@@ -637,20 +641,20 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
             continue;
         }
 
-        // 空行：段落分隔。
+        // Blank line: paragraph separator.
         if trimmed.is_empty() {
             flush_para(&mut para, &mut blocks);
             i += 1;
             continue;
         }
 
-        // 普通文本行：累积进段落。
+        // Plain text line: accumulate into the paragraph.
         para.push(line.to_string());
         i += 1;
     }
-    // 收尾。
+    // Wrap up.
     if in_code {
-        // 未闭合的代码块：按纯文本兜底。
+        // Unclosed code block: fall back to plain text.
         let content = code_buf.join("\n");
         blocks.push(json!({
             "object": "block",
@@ -662,7 +666,7 @@ fn text_to_blocks(text: &str) -> Vec<Value> {
     blocks
 }
 
-/// 构造带单一 rich_text 的 block（用于标题/列表/引用/段落）。
+/// Build a block carrying a single rich_text (used for headings/lists/quotes/paragraphs).
 fn block_text(block_type: &str, text: &str) -> Value {
     json!({
         "object": "block",
@@ -671,7 +675,7 @@ fn block_text(block_type: &str, text: &str) -> Value {
     })
 }
 
-/// 由纯字符串构造 Notion rich_text 数组。
+/// Build a Notion rich_text array from a plain string.
 fn rt_from_str(s: &str) -> Vec<Value> {
     if s.is_empty() {
         return vec![];
@@ -679,9 +683,9 @@ fn rt_from_str(s: &str) -> Vec<Value> {
     vec![json!({ "type": "text", "text": { "content": s }, "plain_text": s })]
 }
 
-// ============ Block -> Markdown（递归聚合） ============
+// ============ Block -> Markdown (recursive aggregation) ============
 
-/// 把页面所有 block 递归渲染为 Markdown，作为 `read` 的正文聚合结果。
+/// Recursively render all page blocks into Markdown, as the aggregated body for `read`.
 async fn blocks_to_markdown(
     client: &NotionClient,
     blocks: &[Value],
@@ -693,14 +697,14 @@ async fn blocks_to_markdown(
         let body = render_block_body(block_type, b);
         out.push_str(&body);
 
-        // 递归子 block（toggle / 嵌套列表 / 列表列等）。
+        // Recurse into child blocks (toggle / nested lists / list columns, etc.).
         if b.get("has_children").and_then(|h| h.as_bool()) == Some(true)
             && depth < MAX_BLOCK_DEPTH
             && let Some(id) = b.get("id").and_then(|i| i.as_str())
         {
             let children = fetch_all_blocks(client, id).await?;
             let child_md = Box::pin(blocks_to_markdown(client, &children, depth + 1)).await?;
-            // 子列表缩进 2 空格，保持层级结构。
+            // Indent child list by 2 spaces to preserve nesting.
             let indented = child_md
                 .lines()
                 .map(|l| format!("  {l}"))
@@ -717,7 +721,7 @@ async fn blocks_to_markdown(
     Ok(out)
 }
 
-/// 渲染单个 block 的正文（不含子 block），返回带末尾换行的字符串。
+/// Render a single block's body (excluding child blocks); returns a string with a trailing newline.
 fn render_block_body(block_type: &str, b: &Value) -> String {
     match block_type {
         "paragraph" => {
@@ -819,9 +823,9 @@ fn render_block_body(block_type: &str, b: &Value) -> String {
                 format!("[{}]({})\n\n", title, url)
             }
         }
-        // 其余类型：尽力渲染其 rich_text，避免内容丢失。
+        // Other types: best-effort render their rich_text to avoid losing content.
         _ => {
-            // 多数块类型把文本放在与 type 同名的子对象里。
+            // Most block types place text in a child object named after the type.
             if let Some(obj) = b.get(block_type)
                 && let Some(rt) = obj.get("rich_text").and_then(|r| r.as_array())
             {
@@ -832,7 +836,7 @@ fn render_block_body(block_type: &str, b: &Value) -> String {
     }
 }
 
-/// 取出 block 子对象中的 rich_text 数组（无则空）。
+/// Extract the rich_text array from a block's child object (empty if absent).
 fn rt_of(b: &Value, block_type: &str) -> Vec<Value> {
     b.get(block_type)
         .and_then(|o| o.get("rich_text"))
@@ -841,13 +845,13 @@ fn rt_of(b: &Value, block_type: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-/// 提取媒体类 block 的 URL 与说明文字（image/bookmark/file/embed/video/pdf/audio）。
+/// Extract a media block's URL and caption (image/bookmark/file/embed/video/pdf/audio).
 fn media_url_and_caption(b: &Value, block_type: &str) -> (String, String) {
     let sub = match b.get(block_type) {
         Some(s) => s,
         None => return (String::new(), String::new()),
     };
-    // 媒体内容在 sub["type"] 指向的子字段（external / file）里，或直接有 url。
+    // Media content lives in the child field named by sub["type"] (external / file), or directly under url.
     let url = if let Some(u) = sub.get("url").and_then(|u| u.as_str()) {
         u.to_string()
     } else if let Some(kind) = sub.get("type").and_then(|t| t.as_str()) {
@@ -867,9 +871,9 @@ fn media_url_and_caption(b: &Value, block_type: &str) -> (String, String) {
     (url, caption)
 }
 
-// ============ 动作实现 ============
+// ============ Action implementations ============
 
-/// `note search --query Q [--limit N]`：按标题搜索页面/数据库。
+/// `note search --query Q [--limit N]`: search pages/databases by title.
 async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let query = flags
         .get("query")
@@ -921,7 +925,7 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
         items.push(Value::Object(item));
     }
 
-    // JSON 模式返回对象数组；文本模式返回表格。
+    // JSON mode returns an array of objects; text mode returns a table.
     if matches!(mode_from_json(), crate::output::RenderMode::Json) {
         Ok(Output::Json(Value::Array(items)))
     } else {
@@ -937,10 +941,10 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
     }
 }
 
-/// `note list [--db ID] [--limit N]`：列出指定数据库下的页面。
+/// `note list [--db ID] [--limit N]`: list pages under the given database.
 ///
-/// 通过 `POST /databases/{id}/query` 分页拉取，自动截断到 `--limit`（默认 50，上限 100）。
-/// 目标数据库优先 `--db`，否则取账户配置的 `default_database_id`。
+/// Paginate via `POST /databases/{id}/query`, truncating to `--limit` (default 50, cap 100).
+/// Target database prefers `--db`, falling back to the account's `default_database_id`.
 async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
     let db_id = flags
         .get("db")
@@ -959,7 +963,7 @@ async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Re
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    // 分页查询数据库下的页面。
+    // Paginated query of pages under the database.
     let url = format!("/databases/{db_id}/query");
     let mut out: Vec<Value> = Vec::new();
     let mut cursor: Option<String> = None;
@@ -972,7 +976,7 @@ async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Re
         if let Some(results) = v.get("results").and_then(|r| r.as_array()) {
             out.extend(results.iter().cloned());
         }
-        // 继续翻页直到没有更多、或已达到 limit（limit==0 表示不限制）。
+        // Keep paging until no more results, or until limit is reached (limit==0 means unlimited).
         let has_more = v.get("has_more").and_then(|h| h.as_bool()) == Some(true);
         if has_more && (limit == 0 || out.len() < limit) {
             match v.get("next_cursor").and_then(|c| c.as_str()) {
@@ -1032,7 +1036,7 @@ async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Re
     }
 }
 
-/// `note create --title T [--db ID] [--prop K:V ...]`：在数据库中新建记录。
+/// `note create --title T [--db ID] [--prop K:V ...]`: create a record in the database.
 async fn note_create(
     account: &NoteAccount,
     flags: &HashMap<String, String>,
@@ -1041,7 +1045,7 @@ async fn note_create(
     let title = flags
         .get("title")
         .ok_or_else(|| AgentError::InvalidArgument("create requires --title <title>".into()))?;
-    // 目标数据库：优先 --db，否则配置默认。
+    // Target database: prefer --db, otherwise the configured default.
     let db_id = flags
         .get("db")
         .cloned()
@@ -1054,7 +1058,7 @@ async fn note_create(
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    // 取数据库 schema 以定位 title 属性名 + 校验 --prop 类型。
+    // Fetch the database schema to locate the title property name and validate --prop types.
     let schema: Value = client.get(&format!("/databases/{}", db_id)).await?;
     let title_prop = db_title_property_name(&schema)?;
 
@@ -1101,7 +1105,7 @@ async fn note_create(
     }
 }
 
-/// `note read [page_id]`：读取页面属性 + 正文，聚合为 Markdown。
+/// `note read [page_id]`: read page properties + body, aggregated into Markdown.
 async fn note_read(
     account: &NoteAccount,
     _flags: &HashMap<String, String>,
@@ -1125,7 +1129,7 @@ async fn note_read(
         .unwrap_or_default();
     let props_str = page_props_to_strings(&props);
 
-    // 正文：递归拉取全部 block 并聚合为 Markdown。
+    // Body: recursively fetch all blocks and aggregate into Markdown.
     let blocks = fetch_all_blocks(&client, &page_id).await?;
     let content = blocks_to_markdown(&client, &blocks, 0).await?;
 
@@ -1137,7 +1141,7 @@ async fn note_read(
         "content": content,
     });
 
-    // JSON 模式返回结构化对象；文本模式直接打印聚合后的 Markdown。
+    // JSON mode returns a structured object; text mode prints the aggregated Markdown.
     if matches!(mode_from_json(), crate::output::RenderMode::Json) {
         Ok(Output::Json(json_out))
     } else {
@@ -1153,7 +1157,7 @@ async fn note_read(
     }
 }
 
-/// `note append [page_id] --text TEXT`：向页面末尾追加文本区块。
+/// `note append [page_id] --text TEXT`: append text blocks to the end of a page.
 async fn note_append(
     account: &NoteAccount,
     flags: &HashMap<String, String>,
@@ -1161,7 +1165,7 @@ async fn note_append(
 ) -> Result<Output> {
     let page_id = resolve_page_id(account, positional)?;
 
-    // 文本来源：--text 优先；否则从 stdin 读取（仅当 stdin 非终端，避免挂起）。
+    // Text source: prefer --text; otherwise read from stdin (only when stdin is not a TTY, to avoid blocking).
     let text = match flags.get("text") {
         Some(t) => t.clone(),
         None => {
@@ -1188,7 +1192,7 @@ async fn note_append(
         ));
     }
 
-    // Notion 单次最多 100 个 block，超出分批追加。
+    // Notion accepts at most 100 blocks per request; append in batches beyond that.
     let mut appended = 0usize;
     for chunk in blocks.chunks(100) {
         let body = json!({ "children": chunk });
@@ -1214,7 +1218,7 @@ async fn note_append(
     }
 }
 
-/// `note update <page_id> --prop K:V ...`：修改页面属性。
+/// `note update <page_id> --prop K:V ...`: modify page properties.
 async fn note_update(
     account: &NoteAccount,
     _flags: &HashMap<String, String>,
@@ -1233,8 +1237,8 @@ async fn note_update(
     let token = get_token(account)?;
     let client = NotionClient::new(token)?;
 
-    // 尝试从页面父级拿到数据库 schema 以精确编码属性类型；
-    // 无数据库父级（独立页面）时退化为启发式编码。
+    // Try to read the database schema from the page parent for precise property-type encoding;
+    // fall back to heuristic encoding when there is no database parent (standalone page).
     let page: Value = client.get(&format!("/pages/{}", page_id)).await?;
     let schema_opt: Option<Value> = match page
         .get("parent")
@@ -1293,9 +1297,9 @@ async fn note_update(
     }
 }
 
-// ============ 小工具 ============
+// ============ Small helpers ============
 
-/// 从位置参数或账户默认配置解析 page_id。
+/// Resolve page_id from positional args or the account default config.
 fn resolve_page_id(account: &NoteAccount, positional: &[String]) -> Result<String> {
     if let Some(first) = positional.first() {
         return Ok(first.clone());
@@ -1307,7 +1311,7 @@ fn resolve_page_id(account: &NoteAccount, positional: &[String]) -> Result<Strin
     })
 }
 
-/// 从 stdin 读取全部内容。
+/// Read all of stdin.
 fn read_stdin() -> Result<String> {
     let mut buf = String::new();
     std::io::stdin()
@@ -1316,11 +1320,11 @@ fn read_stdin() -> Result<String> {
     Ok(buf)
 }
 
-/// 探测当前渲染模式（JSON 全局 flag 已注入 `--json` 到 args，这里复用模块层的判别）。
+/// Detect the current render mode (the global JSON flag injects `--json` into args; reuse the module-level check). See [R001](../../docs/adr/R001-thread-local-json-mode.md).
 fn mode_from_json() -> crate::output::RenderMode {
-    // note 的动作内部直接决定输出形态，但 `search`/`read` 需要按模式分支。
-    // 由于 main 已把 `--json` 注入 args 并被 parse_args 捕获到 flags，这里读取它。
-    // 为避免重复传参，本函数通过检查进程参数中是否含 `--json` 简单判断。
+    // note's actions decide their output shape internally, but `search`/`read` must branch by mode.
+    // main injects `--json` into args and parse_args captures it as a flag, which we read here.
+    // To avoid passing extra params, this function simply checks whether `--json` is present in the process args.
     if crate::util::json_mode::is_json() {
         crate::output::RenderMode::Json
     } else {
@@ -1349,7 +1353,7 @@ mod tests {
         .collect();
         let (flags, multi, positional) = parse_args(&args);
         assert_eq!(flags.get("title"), Some(&"Rust 异步".to_string()));
-        // 单值 flag 取最后一次 prop 的值（仅用于回退，真实逻辑用 multi）。
+        // Single-value flag keeps the last prop value (fallback only; real logic uses multi).
         assert_eq!(positional, vec!["page_id_here"]);
         assert_eq!(multi.len(), 3);
         assert_eq!(multi[0], ("prop".to_string(), "类型:文章".to_string()));

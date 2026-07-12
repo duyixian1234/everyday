@@ -51,7 +51,7 @@ Agents 与协作者在改代码前，按以下顺序读：
 | 文档 | 内容 |
 | --- | --- |
 | `agents.md` | 项目入口、技术栈、模块清单、文档约定 |
-| [`.rules/`](./.rules/RULES.md) | 非决策类约定（workflow / style / testing / security / commit / justfile / crate 踩坑） |
+| [`.rules/`](./.rules/RULES.md) | 非决策类约定（workflow / style / testing / security / commit / justfile / crate 踩坑 / **注释策略**） |
 | [`docs/adr/`](./docs/adr/README.md) | 每个架构决策的"上下文 / 决策 / 备选 / 影响"（F/M/C/N/T/B/L/R 系列） |
 | [`CONTEXT.md`](./CONTEXT.md) | 领域术语表（仅定义，不涉及实现） |
 | [`task_plan.md`](./task_plan.md) | 阶段 + 错误表 + 设计决策摘要 |
