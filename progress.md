@@ -27,6 +27,9 @@
 - **质量门禁**：`cargo build` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
   零警告 / `cargo test`（具体数字见各版本发版行）/ `cargo fmt --check` ✅；
   CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
+- **Phase 11 规划中**：跨模块统一搜索 `everyday search`，ADR
+  [S001–S006](./docs/adr/S001-search-architecture.md) 已落（目标 v0.7.0）；v1 覆盖
+  note/todo/bookmark/rss(本地缓存表)/cal，mail 留 v1.1。
 
 ## ADR 时间序索引
 
@@ -37,6 +40,7 @@
 | --- | --- | --- | --- |
 | 2026-07-12 | F | [F009](./docs/adr/F009-performance-budget.md) | 性能预算（冷启动 < 100 ms + 网络超时 + 大输出流式） |
 | 2026-07-12 | F | [F010](./docs/adr/F010-testing-requirements.md) | 测试要求（强制单测项 + mock + CI 行为） |
+| 2026-07-12 | S | [S001–S006](./docs/adr/S001-search-architecture.md) | 跨模块统一搜索：架构 / Hit 契约 / 查询语义 / 执行模型 / 时间语义与范围 / CLI |
 | 2026-07-12 | L | [L013](./docs/adr/L013-from-explicit-error.md) | Timeline `--from` 单独给定显式报错 |
 | 2026-07-12 | R | [R012](./docs/adr/R012-config-executor-trait.md) | ConfigModule 走 Executor trait |
 | 2026-07-12 | F | [F007](./docs/adr/F007-clap-subcommand-tree.md) | clap 数据驱动子命令树（module_arg_spec） |

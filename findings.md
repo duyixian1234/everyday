@@ -105,6 +105,17 @@
 | `add_dual_providers!` 宏（todo / note / bookmark） | [R011](./docs/adr/R011-add-dual-providers-macro.md) |
 | `ConfigModule` 走 Executor trait | [R012](./docs/adr/R012-config-executor-trait.md) |
 
+### 搜索（search）
+
+| 主题 | ADR |
+| --- | --- |
+| 搜索架构（Searchable trait + SearchRegistry） | [S001](./docs/adr/S001-search-architecture.md) |
+| Hit 归一化 + SearchQuery 契约 | [S002](./docs/adr/S002-hit-normalization.md) |
+| 查询语义（OR / 大小写不敏感 GLOB / 各模块映射） | [S003](./docs/adr/S003-query-semantics.md) |
+| 执行模型（并发 / best-effort / cap / 退出码） | [S004](./docs/adr/S004-execution-model.md) |
+| 时间语义与模块范围（v1 / v1.1 / rss 缓存） | [S005](./docs/adr/S005-time-semantics-scope.md) |
+| search 模块 CLI（query action + flags） | [S006](./docs/adr/S006-search-module-cli.md) |
+
 ---
 
 ## 实现踩坑与依赖选型

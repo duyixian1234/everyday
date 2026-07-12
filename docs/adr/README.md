@@ -112,6 +112,17 @@ Caveman-style full-code review fixes from 2026-07-11/12. These ADRs document **r
 | [R011](R011-add-dual-providers-macro.md) | `add_dual_providers!` macro for `build_providers` (todo/note/bookmark) | Accepted | 2026-07-11 |
 | [R012](R012-config-executor-trait.md) | `ConfigModule` goes through the `Executor` trait | Accepted | 2026-07-12 |
 
+## Search (S-series)
+
+| # | Title | Status | Date |
+|---|-------|--------|------|
+| [S001](S001-search-architecture.md) | Search architecture — Searchable trait + SearchRegistry | Accepted | 2026-07-12 |
+| [S002](S002-hit-normalization.md) | Hit normalization & SearchQuery contract | Accepted | 2026-07-12 |
+| [S003](S003-query-semantics.md) | Query semantics — tokenize OR, case-insensitive GLOB | Accepted | 2026-07-12 |
+| [S004](S004-execution-model.md) | Execution model — concurrent, best-effort, cap/limit, exit codes | Accepted | 2026-07-12 |
+| [S005](S005-time-semantics-scope.md) | Time semantics & module scope (v1 / v1.1, rss cache) | Accepted | 2026-07-12 |
+| [S006](S006-search-module-cli.md) | Search module CLI — `query` action + flags | Accepted | 2026-07-12 |
+
 ---
 
 ## Conventions
