@@ -4,24 +4,21 @@
 //! / `update` semantics; data lives in the account's configured local SQLite file.
 //! The local provider needs no credentials (credentials are owned by the `auth` module).
 //!
-//! Data model:
-//! - `notes(id, title, content, created_at, updated_at)`: one note = title + body
-//!   (Markdown plain text).
-//! - `note_props(note_id, key, value)`: simplified key-value properties (mirrors Notion page properties).
-//!
-//! Output shape (column names / JSON keys) is intentionally kept consistent with the Notion version in `note.rs`.
-
-use std::collections::HashMap;
-use std::io::{IsTerminal, Read};
+//! This file implements [`LocalNoteBackend`], one of the two `NoteBackend` backends
+//! ([R016](../../../docs/adr/R016-action-backend-di.md)); it returns the same domain
+//! structs as the Notion backend so the module's render layer is provider-agnostic
+//! ([R018](../../../docs/adr/R018-backend-domain-mocks.md)).
 
 use async_trait::async_trait;
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use sqlx::{Row, SqlitePool};
 
 use crate::config::{Config, NoteAccount};
 use crate::error::{AgentError, Result};
-use crate::modules::local::{connect, mode_json, resolve_db_path};
-use crate::output::Output;
+use crate::modules::local::{connect, resolve_db_path};
+use crate::modules::note::backend::{
+    NoteAppended, NoteBackend, NoteCreated, NoteListEntry, NoteRead, NoteSummary, NoteUpdated,
+};
 use crate::search::{Hit, SearchQuery, Searchable};
 
 const CREATE_NOTES_SQL: &str = "CREATE TABLE IF NOT EXISTS notes (\
@@ -51,18 +48,6 @@ fn gen_id() -> String {
     crate::util::id::gen_id("n")
 }
 
-/// Resolve page_id: prefer positional arg, else the account's default_page_id.
-fn resolve_page_id(account: &NoteAccount, positional: &[String]) -> Result<String> {
-    if let Some(first) = positional.first() {
-        return Ok(first.clone());
-    }
-    account.default_page_id.clone().ok_or_else(|| {
-        AgentError::InvalidArgument(
-            "no <page_id> given and no default_page_id set for this account".into(),
-        )
-    })
-}
-
 /// Load a note's properties into a `key -> value` map.
 async fn load_props(pool: &SqlitePool, note_id: &str) -> Result<Map<String, Value>> {
     let rows = sqlx::query("SELECT key, value FROM note_props WHERE note_id = ?1 ORDER BY key")
@@ -80,17 +65,12 @@ async fn load_props(pool: &SqlitePool, note_id: &str) -> Result<Map<String, Valu
 }
 
 // ============ actions ============
+//
+// Each returns a typed domain struct (never `Output`); the module owns rendering.
 
 /// `note search --query Q [--limit N]` (local): fuzzy search by title.
-pub async fn search(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
-    let query = flags
-        .get("query")
-        .ok_or_else(|| AgentError::InvalidArgument("search requires --query <keyword>".into()))?;
-    let limit: i64 = flags
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(10)
-        .min(100);
+pub async fn search(account: &NoteAccount, query: &str, limit: usize) -> Result<Vec<NoteSummary>> {
+    let limit = (limit as i64).min(100);
     let pool = open(account).await?;
 
     let pattern = format!("%{query}%");
@@ -103,50 +83,22 @@ pub async fn search(account: &NoteAccount, flags: &HashMap<String, String>) -> R
     .fetch_all(&pool)
     .await?;
 
-    if mode_json() {
-        let items: Vec<Value> = rows
-            .iter()
-            .map(|r| {
-                json!({
-                    "id": r.get::<String, _>("id"),
-                    "type": "page",
-                    "title": r.get::<String, _>("title"),
-                    "last_edited": r.get::<String, _>("updated_at"),
-                })
-            })
-            .collect();
-        Ok(Output::Json(Value::Array(items)))
-    } else {
-        let table_rows = rows
-            .iter()
-            .map(|r| {
-                vec![
-                    r.get::<String, _>("id"),
-                    "page".to_string(),
-                    r.get::<String, _>("title"),
-                    r.get::<String, _>("updated_at"),
-                ]
-            })
-            .collect();
-        Ok(Output::records(
-            vec![
-                "id".into(),
-                "type".into(),
-                "title".into(),
-                "last_edited".into(),
-            ],
-            table_rows,
-        ))
+    let mut out = Vec::new();
+    for r in &rows {
+        out.push(NoteSummary {
+            id: r.get::<String, _>("id"),
+            kind: "page".to_string(),
+            title: r.get::<String, _>("title"),
+            url: None,
+            updated: r.get::<String, _>("updated_at"),
+        });
     }
+    Ok(out)
 }
 
 /// `note list [--limit N]` (local): list all notes.
-pub async fn list(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
-    let limit: i64 = flags
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(50)
-        .min(100);
+pub async fn list(account: &NoteAccount, limit: usize) -> Result<Vec<NoteListEntry>> {
+    let limit = (limit as i64).min(100);
     let pool = open(account).await?;
 
     let rows =
@@ -155,47 +107,27 @@ pub async fn list(account: &NoteAccount, flags: &HashMap<String, String>) -> Res
             .fetch_all(&pool)
             .await?;
 
-    if mode_json() {
-        let mut items: Vec<Value> = Vec::new();
-        for r in &rows {
-            let id: String = r.get("id");
-            let props = load_props(&pool, &id).await?;
-            items.push(json!({
-                "id": id,
-                "title": r.get::<String, _>("title"),
-                "url": "",
-                "last_edited": r.get::<String, _>("updated_at"),
-                "properties": Value::Object(props),
-            }));
-        }
-        Ok(Output::Json(Value::Array(items)))
-    } else {
-        let table_rows = rows
-            .iter()
-            .map(|r| {
-                vec![
-                    r.get::<String, _>("id"),
-                    r.get::<String, _>("title"),
-                    r.get::<String, _>("updated_at"),
-                ]
-            })
-            .collect();
-        Ok(Output::records(
-            vec!["id".into(), "title".into(), "last_edited".into()],
-            table_rows,
-        ))
+    let mut out = Vec::new();
+    for r in &rows {
+        let id: String = r.get("id");
+        let props = load_props(&pool, &id).await?;
+        out.push(NoteListEntry {
+            id,
+            title: r.get::<String, _>("title"),
+            url: None,
+            updated: r.get::<String, _>("updated_at"),
+            properties: props,
+        });
     }
+    Ok(out)
 }
 
 /// `note create --title T [--prop K:V ...]` (local): create a note.
 pub async fn create(
     account: &NoteAccount,
-    flags: &HashMap<String, String>,
-    multi: &[(String, String)],
-) -> Result<Output> {
-    let title = flags
-        .get("title")
-        .ok_or_else(|| AgentError::InvalidArgument("create requires --title <title>".into()))?;
+    title: &str,
+    props: &[(String, String)],
+) -> Result<NoteCreated> {
     let pool = open(account).await?;
     let id = gen_id();
     let now = chrono::Utc::now().to_rfc3339();
@@ -210,92 +142,59 @@ pub async fn create(
     .await?;
 
     let mut count = 0usize;
-    for (k, v) in split_props(multi)? {
-        upsert_prop(&pool, &id, &k, &v).await?;
+    for (k, v) in props {
+        upsert_prop(&pool, &id, k, v).await?;
         count += 1;
     }
 
-    if mode_json() {
-        Ok(Output::Json(
-            json!({ "id": id, "title": title, "properties": count }),
-        ))
-    } else {
-        Ok(Output::text(format!(
-            "created note '{title}' (id={id}, props={count})"
-        )))
-    }
+    Ok(NoteCreated {
+        id,
+        title: title.to_string(),
+        url: None,
+        database_id: None,
+        prop_count: count,
+        resource: "note",
+    })
 }
 
-/// `note read [page_id]` (local): read title + properties + body.
-pub async fn read(account: &NoteAccount, positional: &[String]) -> Result<Output> {
-    let id = resolve_page_id(account, positional)?;
+/// `note read <page_id>` (local): read title + properties + body.
+pub async fn read(account: &NoteAccount, page_id: &str) -> Result<NoteRead> {
     let pool = open(account).await?;
 
     let row = sqlx::query("SELECT title, content FROM notes WHERE id = ?1")
-        .bind(&id)
+        .bind(page_id)
         .fetch_optional(&pool)
         .await?
         .ok_or_else(|| {
-            AgentError::InvalidArgument(format!("no note with id '{id}' in local database"))
+            AgentError::InvalidArgument(format!("no note with id '{page_id}' in local database"))
         })?;
     let title: String = row.get("title");
     let content: String = row.get("content");
-    let props = load_props(&pool, &id).await?;
+    let props = load_props(&pool, page_id).await?;
 
-    if mode_json() {
-        Ok(Output::Json(json!({
-            "id": id,
-            "title": title,
-            "url": "",
-            "properties": Value::Object(props),
-            "content": content,
-        })))
-    } else {
-        let mut text = String::new();
-        if !title.is_empty() {
-            text.push_str(&format!("# {title}\n\n"));
-        }
-        text.push_str(&content);
-        Ok(Output::text(text))
-    }
+    Ok(NoteRead {
+        id: page_id.to_string(),
+        title,
+        url: None,
+        properties: props,
+        content,
+    })
 }
 
-/// `note append [page_id] --text TEXT` (local): append text to the end of the body.
-pub async fn append(
-    account: &NoteAccount,
-    flags: &HashMap<String, String>,
-    positional: &[String],
-) -> Result<Output> {
-    let id = resolve_page_id(account, positional)?;
-
-    let text = match flags.get("text") {
-        Some(t) => t.clone(),
-        None => {
-            if std::io::stdin().is_terminal() {
-                return Err(AgentError::InvalidArgument(
-                    "append requires --text TEXT or piped stdin".into(),
-                ));
-            }
-            let mut buf = String::new();
-            std::io::stdin()
-                .read_to_string(&mut buf)
-                .map_err(|e| AgentError::Io(e.to_string()))?;
-            buf
-        }
-    };
+/// `note append <page_id> --text TEXT` (local): append text to the end of the body.
+pub async fn append(account: &NoteAccount, page_id: &str, text: &str) -> Result<NoteAppended> {
     if text.trim().is_empty() {
         return Err(AgentError::InvalidArgument(
             "nothing to append (empty text)".into(),
         ));
     }
-
     let pool = open(account).await?;
     let row = sqlx::query("SELECT content FROM notes WHERE id = ?1")
-        .bind(&id)
+        .bind(page_id)
         .fetch_optional(&pool)
         .await?
         .ok_or_else(|| {
-            AgentError::InvalidArgument(format!("no note with id '{id}' in local database"))
+            AgentError::InvalidArgument(format!("no note with id '{page_id}' in local database"))
         })?;
     let existing: String = row.get("content");
     let separator = if existing.is_empty() || existing.ends_with('\n') {
@@ -308,31 +207,27 @@ pub async fn append(
     sqlx::query("UPDATE notes SET content = ?1, updated_at = ?2 WHERE id = ?3")
         .bind(&new_content)
         .bind(&now)
-        .bind(&id)
+        .bind(page_id)
         .execute(&pool)
         .await?;
 
     let appended = text.lines().filter(|l| !l.trim().is_empty()).count().max(1);
-    if mode_json() {
-        Ok(Output::Json(json!({ "id": id, "appended": appended })))
-    } else {
-        Ok(Output::text(format!(
-            "appended {appended} line(s) to note {id}"
-        )))
-    }
+    Ok(NoteAppended {
+        id: page_id.to_string(),
+        url: None,
+        appended,
+        resource: "note",
+        unit: "line",
+    })
 }
 
 /// `note update <page_id> --prop K:V ...` (local): update (upsert) properties.
 pub async fn update(
     account: &NoteAccount,
-    positional: &[String],
-    multi: &[(String, String)],
-) -> Result<Output> {
-    let id = positional
-        .first()
-        .ok_or_else(|| AgentError::InvalidArgument("update requires <page_id>".into()))?
-        .clone();
-    if multi.is_empty() {
+    page_id: &str,
+    props: &[(String, String)],
+) -> Result<NoteUpdated> {
+    if props.is_empty() {
         return Err(AgentError::InvalidArgument(
             "update requires at least one --prop K:V".into(),
         ));
@@ -340,34 +235,79 @@ pub async fn update(
     let pool = open(account).await?;
     // Ensure the note exists.
     let exists = sqlx::query("SELECT 1 FROM notes WHERE id = ?1")
-        .bind(&id)
+        .bind(page_id)
         .fetch_optional(&pool)
         .await?
         .is_some();
     if !exists {
         return Err(AgentError::InvalidArgument(format!(
-            "no note with id '{id}' in local database"
+            "no note with id '{page_id}' in local database"
         )));
     }
 
     let mut count = 0usize;
-    for (k, v) in split_props(multi)? {
-        upsert_prop(&pool, &id, &k, &v).await?;
+    for (k, v) in props {
+        upsert_prop(&pool, page_id, k, v).await?;
         count += 1;
     }
     let now = chrono::Utc::now().to_rfc3339();
     sqlx::query("UPDATE notes SET updated_at = ?1 WHERE id = ?2")
         .bind(&now)
-        .bind(&id)
+        .bind(page_id)
         .execute(&pool)
         .await?;
 
-    if mode_json() {
-        Ok(Output::Json(json!({ "id": id, "updated": count })))
-    } else {
-        Ok(Output::text(format!(
-            "updated {count} propert(ies) on note {id}"
-        )))
+    Ok(NoteUpdated {
+        id: page_id.to_string(),
+        url: None,
+        updated_count: count,
+        resource: "note",
+    })
+}
+
+// ============ LocalNoteBackend (R016) ============
+
+/// Local SQLite implementation of [`NoteBackend`].
+pub struct LocalNoteBackend {
+    account: NoteAccount,
+}
+
+impl LocalNoteBackend {
+    /// Construct from a configured account.
+    pub fn new(account: NoteAccount) -> Self {
+        Self { account }
+    }
+}
+
+#[async_trait]
+impl NoteBackend for LocalNoteBackend {
+    async fn search(&self, query: &str, limit: usize) -> Result<Vec<NoteSummary>> {
+        search(&self.account, query, limit).await
+    }
+
+    async fn list(&self, _db_id: Option<&str>, limit: usize) -> Result<Vec<NoteListEntry>> {
+        list(&self.account, limit).await
+    }
+
+    async fn create(
+        &self,
+        title: &str,
+        _db_id: Option<&str>,
+        props: &[(String, String)],
+    ) -> Result<NoteCreated> {
+        create(&self.account, title, props).await
+    }
+
+    async fn read(&self, page_id: &str) -> Result<NoteRead> {
+        read(&self.account, page_id).await
+    }
+
+    async fn append(&self, page_id: &str, text: &str) -> Result<NoteAppended> {
+        append(&self.account, page_id, text).await
+    }
+
+    async fn update(&self, page_id: &str, props: &[(String, String)]) -> Result<NoteUpdated> {
+        update(&self.account, page_id, props).await
     }
 }
 
@@ -416,18 +356,6 @@ pub async fn fetch_for_timeline(
 }
 
 // ============ helpers ============
-
-/// Split a `("prop", "K:V")` list into `(K, V)` pairs.
-fn split_props(multi: &[(String, String)]) -> Result<Vec<(String, String)>> {
-    let mut out = Vec::new();
-    for (_, kv) in multi {
-        let (k, v) = kv
-            .split_once(':')
-            .ok_or_else(|| AgentError::InvalidArgument(format!("prop must be K:V, got '{kv}'")))?;
-        out.push((k.to_string(), v.to_string()));
-    }
-    Ok(out)
-}
 
 /// Insert or update a single property.
 async fn upsert_prop(pool: &SqlitePool, note_id: &str, key: &str, value: &str) -> Result<()> {
@@ -591,28 +519,6 @@ impl Searchable for NoteSearchProvider {
 mod tests {
     use super::*;
 
-    #[test]
-    fn split_props_parses_kv() {
-        let multi = vec![
-            ("prop".to_string(), "类型:文章".to_string()),
-            ("prop".to_string(), "状态:未读".to_string()),
-        ];
-        let out = split_props(&multi).unwrap();
-        assert_eq!(out[0], ("类型".to_string(), "文章".to_string()));
-        assert_eq!(out[1], ("状态".to_string(), "未读".to_string()));
-    }
-
-    #[test]
-    fn split_props_rejects_missing_colon() {
-        let multi = vec![("prop".to_string(), "invalid".to_string())];
-        assert!(split_props(&multi).is_err());
-    }
-
-    #[test]
-    fn gen_id_has_prefix() {
-        assert!(gen_id().starts_with('n'));
-    }
-
     fn tmp_account() -> NoteAccount {
         let file = std::env::temp_dir().join(format!("everyday-note-test-{}.db", gen_id()));
         NoteAccount {
@@ -624,13 +530,16 @@ mod tests {
         }
     }
 
+    #[test]
+    fn gen_id_has_prefix() {
+        assert!(gen_id().starts_with('n'));
+    }
+
     #[tokio::test]
     async fn create_append_update_read_roundtrip() {
         let acc = tmp_account();
-        let mut flags = HashMap::new();
-        flags.insert("title".into(), "Rust 笔记".into());
-        let multi = vec![("prop".to_string(), "类型:文章".to_string())];
-        create(&acc, &flags, &multi).await.unwrap();
+        let props = vec![("类型".to_string(), "文章".to_string())];
+        create(&acc, "Rust 笔记", &props).await.unwrap();
 
         // Fetch the id.
         let pool = open(&acc).await.unwrap();
@@ -641,15 +550,11 @@ mod tests {
             .get("id");
 
         // Append body.
-        let mut af = HashMap::new();
-        af.insert("text".into(), "第一行\n第二行".into());
-        append(&acc, &af, std::slice::from_ref(&id)).await.unwrap();
+        append(&acc, &id, "第一行\n第二行").await.unwrap();
 
         // Update properties.
-        let umulti = vec![("prop".to_string(), "状态:已读".to_string())];
-        update(&acc, std::slice::from_ref(&id), &umulti)
-            .await
-            .unwrap();
+        let umulti = vec![("状态".to_string(), "已读".to_string())];
+        update(&acc, &id, &umulti).await.unwrap();
 
         // Verify content and properties.
         let content: String = sqlx::query("SELECT content FROM notes WHERE id = ?1")
@@ -669,9 +574,7 @@ mod tests {
     #[tokio::test]
     async fn search_matches_title() {
         let acc = tmp_account();
-        let mut flags = HashMap::new();
-        flags.insert("title".into(), "SQLite 存储".into());
-        create(&acc, &flags, &[]).await.unwrap();
+        create(&acc, "SQLite 存储", &[]).await.unwrap();
 
         let pool = open(&acc).await.unwrap();
         let rows = sqlx::query("SELECT id FROM notes WHERE title LIKE '%SQLite%'")
@@ -686,7 +589,7 @@ mod tests {
     #[tokio::test]
     async fn read_missing_note_errors() {
         let acc = tmp_account();
-        let err = read(&acc, &["ghost".to_string()]).await.unwrap_err();
+        let err = read(&acc, "ghost").await.unwrap_err();
         assert_eq!(err.type_name(), "InvalidArgument");
         let _ = std::fs::remove_file(acc.db_path.unwrap());
     }
@@ -697,25 +600,17 @@ mod tests {
     async fn search_for_search_matches_title_and_content() {
         let acc = tmp_account();
         // Note A: title contains "rust", body contains "sqlite".
-        let mut f1 = HashMap::new();
-        f1.insert("title".into(), "Rust 笔记".into());
-        create(&acc, &f1, &[]).await.unwrap();
+        create(&acc, "Rust 笔记", &[]).await.unwrap();
         let pool = open(&acc).await.unwrap();
         let id_a: String = sqlx::query("SELECT id FROM notes")
             .fetch_one(&pool)
             .await
             .unwrap()
             .get("id");
-        let mut at = HashMap::new();
-        at.insert("text".into(), "stored in sqlite".into());
-        append(&acc, &at, std::slice::from_ref(&id_a))
-            .await
-            .unwrap();
+        append(&acc, &id_a, "stored in sqlite").await.unwrap();
 
         // Note B: title "rust cli 工具" (matches rust), body "时间线".
-        let mut f2 = HashMap::new();
-        f2.insert("title".into(), "rust cli 工具".into());
-        create(&acc, &f2, &[]).await.unwrap();
+        create(&acc, "rust cli 工具", &[]).await.unwrap();
 
         // Single-token query "sql" — only Note A (body match).
         let q = SearchQuery::new("sql");
