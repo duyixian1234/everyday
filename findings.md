@@ -104,6 +104,9 @@
 | `NotionLocalAccount` 合并 + type alias | [R010](./docs/adr/R010-notion-local-account.md) |
 | `add_dual_providers!` 宏（todo / note / bookmark） | [R011](./docs/adr/R011-add-dual-providers-macro.md) |
 | `ConfigModule` 走 Executor trait | [R012](./docs/adr/R012-config-executor-trait.md) |
+| 动作层 `Backend` trait + DI（note/todo/bookmark，去 `NotionClient` 泄漏） | [R016](./docs/adr/R016-action-backend-di.md) |
+| Backend 目录布局（L-B）+ 范围边界（仅三件套，auth verify 例外） | [R017](./docs/adr/R017-backend-layout-scope.md) |
+| Backend domain 类型 + in-memory Mock（DI 回归护栏） | [R018](./docs/adr/R018-backend-domain-mocks.md) |
 
 ### 搜索（search）
 

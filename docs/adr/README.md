@@ -95,7 +95,7 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 
 ## Refactoring patterns (R-series)
 
-Caveman-style full-code review fixes from 2026-07-11/12. These ADRs document **reusable patterns** the codebase must follow going forward.
+Refactoring patterns and structural decisions — caveman-review fixes from 2026-07-11/12 plus later dependency-injection refactors. These ADRs document **reusable patterns** the codebase must follow going forward.
 
 | # | Title | Status | Date |
 |---|-------|--------|------|
@@ -114,6 +114,9 @@ Caveman-style full-code review fixes from 2026-07-11/12. These ADRs document **r
 | [R013](R013-auth-module-consolidation.md) | Consolidate all credential/login logic into a top-level `auth` module + command | Accepted | 2026-07-12 |
 | [R014](R014-auth-verify-opt-in.md) | `verify` is an explicit opt-in step, separate from credential storage | Accepted | 2026-07-12 |
 | [R015](R015-auth-credential-io.md) | Non-interactive credential input via flags; secrets never read from environment | Accepted | 2026-07-12 |
+| [R016](R016-action-backend-di.md) | Action-layer `Backend` trait + Dependency Inversion for note/todo/bookmark (kill `NotionClient` leak) | Accepted | 2026-07-12 |
+| [R017](R017-backend-layout-scope.md) | Backend directory layout (L-B) + action-layer scope boundary | Accepted | 2026-07-12 |
+| [R018](R018-backend-domain-mocks.md) | Backend domain types + in-memory mock backends (DI regression guard) | Accepted | 2026-07-12 |
 
 ## Search (S-series)
 

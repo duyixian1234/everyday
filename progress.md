@@ -39,6 +39,7 @@
   SQLite，Notion 显式声明。
 - **Timeline**：append-only event log + ops-log AOP 统一 6 个 source 的事件捕获，
   详见 [L001–L013](./docs/adr/L001-append-only-event-log.md)。
+- **规划中（Phase 13）**：动作层 Backend DI 重构设计已定稿（[R016–R018](./docs/adr/R016-action-backend-di.md)），待实施——note/todo/bookmark 动作层去除 `NotionClient` 直接引用，改走 `NoteBackend::for_account` 工厂 + `Notion*Backend`/`Local*Backend`，并加 in-memory Mock 做回归护栏。
 - **质量门禁**：`cargo build` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
   零警告 / `cargo test`（具体数字见各版本发版行）/ `cargo fmt --check` ✅；
   CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
@@ -51,6 +52,7 @@
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
 | 2026-07-12 | R | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块；verify 显式可选；非交互输入契约 |
+| 2026-07-12 | R | [R016–R018](./docs/adr/R016-action-backend-di.md) | 动作层 Backend trait + DI：note/todo/bookmark 去除 `NotionClient` 直接泄漏；目录布局；domain 类型 + Mock 回归护栏 |
 | 2026-07-12 | S | [S001–S006](./docs/adr/S001-search-architecture.md) | 跨模块统一搜索：架构 / Hit 契约 / 查询语义 / 执行模型 / 时间语义与范围 / CLI |
 | 2026-07-12 | F | [F009](./docs/adr/F009-performance-budget.md) | 性能预算（冷启动 < 100 ms + 网络超时 + 大输出流式） |
 | 2026-07-12 | F | [F010](./docs/adr/F010-testing-requirements.md) | 测试要求（强制单测项 + mock + CI 行为） |

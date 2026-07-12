@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.8.0 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地，破坏性移除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令（ADR R013–R015）。统一 `everyday auth login|logout|verify|list --module <mod>`；`--verify` 存后显式验证，默认只存；模块内部改走 `auth::get_credential`。250 tests / clippy `-D warnings` 零警告 / fmt clean。mail 推迟 v1.1。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
+**当前状态：** v0.8.0 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地，破坏性移除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令（ADR R013–R015）。统一 `everyday auth login|logout|verify|list --module <mod>`；`--verify` 存后显式验证，默认只存；模块内部改走 `auth::get_credential`。250 tests / clippy `-D warnings` 零警告 / fmt clean。mail 推迟 v1.1。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。Phase 13（动作层 Backend DI 重构 note/todo/bookmark）设计已定稿（ADR R016–R018），实施待启动。
 
 ---
 
@@ -96,6 +96,81 @@
 - 质量门禁：`cargo build` / `clippy --all-targets -- -D warnings` 零警告 / `cargo test` 250 全过 / `cargo fmt --check` 全绿。
 - 版本号升至 **v0.8.0**（破坏性）。
 
+### Phase 13: 动作层 Backend 依赖倒置重构（note/todo/bookmark）[pending]
+按 Grill 设计（ADR [R016](docs/adr/R016-action-backend-di.md) 总设计 / [R017](docs/adr/R017-backend-layout-scope.md) 目录布局与范围 / [R018](docs/adr/R018-backend-domain-mocks.md) domain 类型与 Mock）。目标：消除双 provider 三件套（`note` / `todo` / `bookmark`）动作层对具体 provider 专属依赖（`NotionClient`）的直接引用，落实 SOLID（DIP/SRP/ISP）+ 依赖注入。
+
+设计要点（Grill 已拍板，Q1–Q7）：
+- **范围**：仅 note/todo/bookmark 动作层；mail/cal/rss 各自硬编码单一 client 且无备选 provider，DI 收益为零，不纳入（单独立项）。read 侧 `search`/`timeline` 已用 `Searchable`/`TimelineProvider` 抽象，不在范围。
+- **命名**：`NoteBackend` trait；`NotionNoteBackend` / `LocalNoteBackend` 实现（避开 `timeline/providers.rs` 已有 `NoteProvider` 冲突；`CONTEXT.md` §Action Backend 已做同名异义区分）。
+- **trait 形态**：每动作一方法（ISP）+ 返回 typed domain 类型（`NoteSummary`/`NoteDetail`/`TodoItem`/`BookmarkItem`），绝不返回 `Output`。
+- **构造/注入**：`NoteBackend::for_account(&Config, &Account) -> Result<Box<dyn NoteBackend>>` 工厂下沉 backend 子模块；`note/mod.rs` 仅 `use NoteBackend`，写 `let backend = NoteBackend::for_account(&self.config, &account)?`，永不出现 `NotionClient` / provider 分支 / keyring 读取（DIP 兑现）。
+- **布局**：目录化 `note/{mod.rs, backend.rs, notion.rs, local.rs}`（`L-B`），`note_local.rs` → `note/local.rs`；模块对外路径 `crate::modules::note` 不变。
+- **错误**：沿用现有 `Result<T>` = `AgentError`；`NotionNoteBackend` 边界把 notion_client 错误 map 到 `AgentError`。
+- **Mock 护栏**：加 `MockNoteBackend`/`MockTodoBackend`/`MockBookmarkBackend`（Vec 内存存储）注入动作层单测，证明零 `NotionClient` 依赖 + provider-agnostic 渲染，防 seam 回退。
+- **合法例外**：`auth login --verify`（`auth.rs`）实例化 `NotionClient` 校验 token 属 auth 本职，不纳入本次重构。
+- **`#[async_trait]`**：沿用全仓通用机制，`Box<dyn NoteBackend>` 对象安全。
+
+子任务（每项为独立可编译 commit，one-commit-one-task；每 commit 必过 `cargo build` + `cargo test` + `clippy --all-targets -- -D warnings` + `cargo fmt --check`。同模块"脚手架 → backend 切换 → mock 单测"三段保证每步仓内可编译；模块间顺序无关，可任选起点）：
+
+- **T13.1 — note 目录脚手架（纯 `git mv` + use 路径修正，零行为变更）**
+  - `git mv src/modules/note.rs src/modules/note/mod.rs`；`git mv src/modules/note_local.rs src/modules/note/local.rs`。
+  - `note/mod.rs` 内 `use crate::modules::note_local as local;` → `use super::local as local;`；顶部加 `pub mod local;`（backend/notion 在 T13.2 再加，避免声明不存在模块）。
+  - `search.rs:23` 的 `note_local` → `note::local`，`:58` `note_local::NoteSearchProvider` → `note::local::NoteSearchProvider`。
+  - `timeline/providers.rs:23` `note_local` → `note::local`。
+  - 门禁全绿。
+
+- **T13.2 — NoteBackend trait + domain 类型 + 双实现 + 工厂；note/mod.rs 切换到 backend**
+  - 新增 `note/backend.rs`：`#[async_trait] trait NoteBackend`（per-action 方法 `search/list/create/read/append/update`，返回 `NoteSummary`/`NoteDetail`）+ `NoteBackend::for_account(&Config, &Account)`（分支 `account.provider`、经 `auth::get_credential` 取 token、构造 `Box<dyn NoteBackend>`，`NotionClient` 仅在工厂内构造一次）。
+  - 新增 `note/notion.rs`：`NotionNoteBackend`，迁移 6 处 notion-path helper 主体 + notion→domain 转换 + 错误 map 到 `AgentError`；`note/mod.rs` 加 `pub mod backend; pub mod notion;`。
+  - `note/local.rs`：为现有 SQLite impl 定义 `LocalNoteBackend` 并 `impl NoteBackend`（委托既有 free fn / 改为方法，返回同 domain 类型）。
+  - `note/mod.rs::execute`：解析参数 → `let backend = NoteBackend::for_account(&self.config, &account)?` → 调方法 → 把 domain 渲染成 `Output`；删除 `use notion_client` / `is_local_provider` 分支 / keyring 读取。
+  - 门禁全绿；`note/mod.rs` 内 `NotionClient::new` 计数归零。
+
+- **T13.3 — MockNoteBackend + 动作层单测（DI 验收护栏）**
+  - `note` 下加 `MockNoteBackend`（Vec 内存存储，置于 `#[cfg(test)]` 或 `testkit`）；注入 `note/mod.rs` 单测，断言：(a) 动作路径零 `NotionClient` 依赖；(b) 给定等价 domain 数据，mock 与真实 backend 渲染一致。
+  - 门禁全绿（含新测试）。
+
+- **T13.4 — todo 目录脚手架（同 T13.1 模式）**
+  - `git mv src/modules/todo.rs src/modules/todo/mod.rs`；`git mv src/modules/todo_local.rs src/modules/todo/local.rs`。
+  - `todo/mod.rs` 内 `use crate::modules::todo_local as local;` → `use super::local as local;`；加 `pub mod local;`。
+  - `search.rs:23` `todo_local` → `todo::local`，`:63` `todo_local::TodoSearchProvider` → `todo::local::TodoSearchProvider`。
+  - `timeline/providers.rs:26` `todo_local` → `todo::local`。
+  - 门禁全绿。
+
+- **T13.5 — TodoBackend trait + 双实现 + 工厂 + todo/mod.rs 切换**
+  - `todo/backend.rs`：`#[async_trait] trait TodoBackend`（`list/add/set_status/delete` 返回 `TodoItem`/`Vec<TodoItem>`）+ `for_account` 工厂。
+  - `todo/notion.rs`：`NotionTodoBackend`（迁移 5 处 notion helper + 错误 map）；`todo/mod.rs` 加 `pub mod backend; pub mod notion;`。
+  - `todo/local.rs`：`impl TodoBackend for LocalTodoBackend`。
+  - `todo/mod.rs::execute` 切换到 backend（删除 `use notion_client`/provider 分支/keyring）。
+  - 门禁全绿。
+
+- **T13.6 — MockTodoBackend + 单测（同 T13.3）**
+  - 门禁全绿（含新测试）。
+
+- **T13.7 — bookmark 目录脚手架（同 T13.1/13.4）**
+  - `git mv src/modules/bookmark.rs src/modules/bookmark/mod.rs`；`git mv src/modules/bookmark_local.rs src/modules/bookmark/local.rs`。
+  - `bookmark/mod.rs` 内 `use ...bookmark_local as local;` → `use super::local as local;`；加 `pub mod local;`。
+  - `search.rs:23` `bookmark_local` → `bookmark::local`，`:68` `bookmark_local::BookmarkSearchProvider` → `bookmark::local::BookmarkSearchProvider`。
+  - `timeline/providers.rs:20` `bookmark_local` → `bookmark::local`。
+  - 门禁全绿。
+
+- **T13.8 — BookmarkBackend trait + 双实现 + 工厂 + bookmark/mod.rs 切换**
+  - `bookmark/backend.rs`：`#[async_trait] trait BookmarkBackend`（`add/list` 返回 `BookmarkItem`/`Vec<BookmarkItem>`）+ `for_account` 工厂。
+  - `bookmark/notion.rs`：`NotionBookmarkBackend`（迁移 3 处 notion helper + 错误 map）；`bookmark/mod.rs` 加 `pub mod backend; pub mod notion;`。
+  - `bookmark/local.rs`：`impl BookmarkBackend for LocalBookmarkBackend`。
+  - `bookmark/mod.rs::execute` 切换到 backend。
+  - 门禁全绿。
+
+- **T13.9 — MockBookmarkBackend + 单测**
+  - 门禁全绿（含新测试）。
+
+- **T13.10 — 收尾：link 校验 + 文档同步**
+  - `just check-links` 全绿（跨文档引用未腐烂）。
+  - 模块对外路径 `crate::modules::note|todo|bookmark` 不变、CLI 不变 → README/skills 一般无需改，仅确认；若目录结构需说明则补一笔。
+  - 质量门禁全绿；更新 `progress.md` 的 ADR 时间序与"当前状态"。
+
+完成小结（待实施）：_（落地后回填质量门禁结果与版本号）_
+
 ---
 
 ## 关键设计决策
@@ -181,4 +256,5 @@ username = "me"
 - Phase 9: complete
 - Phase 10: complete
 - Phase 11: complete (search module landed; released as v0.7.0)
-- Phase 12: pending (auth module consolidation; design ADRs R013/R014/R015 done, implementation T12.1–T12.11 pending)
+- Phase 12: complete (auth module consolidation; ADRs R013/R014/R015 done, v0.8.0 released)
+- Phase 13: pending (action-layer Backend DI for note/todo/bookmark; design ADRs R016/R017/R018 done, implementation T13.1–T13.10 pending)

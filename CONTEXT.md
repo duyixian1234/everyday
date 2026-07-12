@@ -189,6 +189,28 @@ TimelineModule 实现 `Executor`，注册到 `ModuleRegistry`。`name()` = `"tim
 
 ---
 
+## Action Backend（动作层）
+
+> note / todo / bookmark 动作执行层的依赖倒置抽象。与 read 侧 `Provider`（`TimelineProvider` / `Searchable`）正交。
+> 设计决策见 [R016](docs/adr/R016-action-backend-di.md) / [R017](docs/adr/R017-backend-layout-scope.md) / [R018](docs/adr/R018-backend-domain-mocks.md)。
+
+### Backend（动作层后端）
+动作执行层（响应用户 `everyday <module> <action>` 命令）的抽象接口，面向"对某实体的写/读动作"，而非 Timeline 的"事件投影"。每个双 provider 模块有一个 trait：`NoteBackend` / `TodoBackend` / `BookmarkBackend`。与 `TimelineProvider`（见上）/ `Searchable`（见 [S001](docs/adr/S001-search-architecture.md)）**同名不同义**——后者是 read 侧、跨模块、无状态的事件/搜索源；`Backend` 是动作侧、模块内、有状态的存储后端。
+
+### for_account（Backend 工厂）
+`NoteBackend::for_account(&Config, &Account) -> Result<Box<dyn NoteBackend>>`。集中完成 provider 选择（`is_local_provider`）+ notion token 读取（`auth::get_credential`，见 [R013](docs/adr/R013-auth-module-consolidation.md)）+ 具体 backend 构造。模块动作代码只调 `for_account` 拿 `Box<dyn NoteBackend>`，**永不**出现 `NotionClient`、provider 分支或 keyring 读取。
+
+### Notion*Backend / Local*Backend
+`Backend` trait 的两个实现：`NotionNoteBackend`（包装 `NotionClient`，把 notion_client 错误 `map_err` 成 `AgentError`）与 `LocalNoteBackend`（包装现有本地 SQLite 实现，返回同一 domain 类型）。
+
+### Domain type（动作层域类型）
+Backend 方法返回的强类型结构体（如 `NoteSummary` / `NoteDetail` / `TodoItem` / `BookmarkItem`），notion 与 local 两侧归一到同一类型；模块负责把它渲染成 `Output`。与 `Output`（[F001](docs/adr/F001-cli-shape.md)）的区别：domain type 是"数据"，`Output` 是"展示"。
+
+### Mock*Backend（测试替身）
+in-memory `MockNoteBackend` 等，注入动作层单测，证明零 `NotionClient` 依赖且 provider 无关（[R018](docs/adr/R018-backend-domain-mocks.md)）。
+
+---
+
 ## Mail Cache
 
 > `mail` 模块的本地缓存层。独立于 Timeline.db。
