@@ -64,14 +64,6 @@ pub async fn connect(path: &Path) -> Result<SqlitePool> {
     Ok(pool)
 }
 
-/// Probe whether the current render mode is JSON (consistent with the
-/// note/todo modules: driven by the thread-local `is_json()`, set by
-/// `main.rs` at startup). See
-/// [R001](../../docs/adr/R001-thread-local-json-mode.md).
-pub fn mode_json() -> bool {
-    crate::util::json_mode::is_json()
-}
-
 /// Parse a comma-separated tag string into a cleaned `Vec<String>`.
 ///
 /// - trims leading/trailing whitespace per item;

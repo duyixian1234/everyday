@@ -1,28 +1,23 @@
-//! Local SQLite provider for the bookmark module [B001](../../../docs/adr/B001-bookmark-dual-provider.md).
+//! Local SQLite provider for the `bookmark` module [B001](../../../docs/adr/B001-bookmark-dual-provider.md).
 //!
-//! Parity implementation of `add` / `list` semantics with the Notion provider; data lands in the
-//! account's configured local SQLite file. The local provider needs no credentials
-//! (credentials are owned by the `auth` module), and `init-db` only creates the
-//! table and reports the path.
+//! `LocalBookmarkBackend` implements [`BookmarkBackend`] ([R016](../../../docs/adr/R016-action-backend-di.md)),
+//! a parity implementation of `init-db` / `add` / `list` alongside the Notion provider
+//! [B001](../../../docs/adr/B001-bookmark-dual-provider.md), with data persisted in the
+//! account's local SQLite file. The local provider needs no credentials (credentials are
+//! owned by the `auth` module), and `init-db` only creates the table and reports the path.
 //!
-//! Data model:
-//! - `bookmarks(id, url, title, created_at)`: one bookmark = URL + title.
-//! - `bookmark_tags(bookmark_id, tag)`: a bookmark's tags (many-to-many), used for exact tag filtering.
-//!
-//! The output shape (column names / JSON keys) is deliberately kept in sync with the Notion version
-//! in `bookmark.rs`: `id` / `title` / `url` / `tags`.
-
-use std::collections::HashMap;
+//! Output shape (column names / JSON keys) is deliberately kept in sync with the Notion
+//! version in `notion.rs`: `id` / `title` / `url` / `tags`.
 
 use async_trait::async_trait;
-use serde_json::{Value, json};
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
 use crate::config::{BookmarkAccount, Config};
-use crate::error::{AgentError, Result};
-use crate::modules::bookmark::BookmarkItem;
-use crate::modules::local::{connect, mode_json, resolve_db_path};
-use crate::output::Output;
+use crate::error::Result;
+use crate::modules::bookmark::backend::{
+    BookmarkAdded, BookmarkBackend, BookmarkInitDb, BookmarkItem,
+};
+use crate::modules::local::{connect, resolve_db_path};
 use crate::search::{Hit, SearchQuery, Searchable};
 
 /// Table creation statements: the bookmark master table + the tag association table.
@@ -38,7 +33,7 @@ const CREATE_TAGS_SQL: &str = "CREATE TABLE IF NOT EXISTS bookmark_tags (\
     PRIMARY KEY (bookmark_id, tag))";
 
 /// Open the connection and ensure the tables exist.
-async fn open(account: &BookmarkAccount) -> Result<SqlitePool> {
+async fn open(account: &BookmarkAccount) -> Result<sqlx::SqlitePool> {
     let path = resolve_db_path("bookmark", &account.name, account.db_path.as_deref())?;
     let pool = connect(&path).await?;
     sqlx::query(CREATE_BOOKMARKS_SQL).execute(&pool).await?;
@@ -51,127 +46,113 @@ fn gen_id() -> String {
     crate::util::id::gen_id("b")
 }
 
-// ============ actions ============
+// ============ Backend ============
 
-/// `bookmark init-db` (local): create the table and report the database path.
-pub async fn init_db(account: &BookmarkAccount) -> Result<Output> {
-    let path = resolve_db_path("bookmark", &account.name, account.db_path.as_deref())?;
-    let _ = open(account).await?;
-    let path_str = path.to_string_lossy().to_string();
-    if mode_json() {
-        Ok(Output::Json(
-            json!({ "account": account.name, "db_path": path_str, "provider": "local" }),
-        ))
-    } else {
-        Ok(Output::text(format!(
-            "initialized local bookmark database for account '{}'\n{}",
-            account.name, path_str
-        )))
+/// Local SQLite implementation of [`BookmarkBackend`].
+pub struct LocalBookmarkBackend {
+    account: BookmarkAccount,
+}
+
+impl LocalBookmarkBackend {
+    pub fn new(account: BookmarkAccount) -> Self {
+        Self { account }
     }
 }
 
-/// `bookmark add --url U --title T [--tags a,b]` (local): collect a bookmark.
-pub async fn add(account: &BookmarkAccount, flags: &HashMap<String, String>) -> Result<Output> {
-    let url = flags
-        .get("url")
-        .ok_or_else(|| AgentError::InvalidArgument("add requires --url <url>".into()))?;
-    let title = flags
-        .get("title")
-        .ok_or_else(|| AgentError::InvalidArgument("add requires --title <title>".into()))?;
-    let tags = crate::modules::local::parse_tags(flags.get("tags"));
-    let pool = open(account).await?;
-    let id = gen_id();
-    let created_at = chrono::Utc::now().to_rfc3339();
+#[async_trait]
+impl BookmarkBackend for LocalBookmarkBackend {
+    /// `init-db` (local): create the table and report the database path.
+    async fn init_db(&self, _parent: Option<&str>) -> Result<BookmarkInitDb> {
+        let path = resolve_db_path(
+            "bookmark",
+            &self.account.name,
+            self.account.db_path.as_deref(),
+        )?;
+        let _ = open(&self.account).await?;
+        let path_str = path.to_string_lossy().to_string();
+        Ok(BookmarkInitDb {
+            account: self.account.name.clone(),
+            provider: "local",
+            db_path: Some(path_str),
+            database_id: None,
+            url: None,
+        })
+    }
 
-    sqlx::query("INSERT INTO bookmarks (id, url, title, created_at) VALUES (?1, ?2, ?3, ?4)")
-        .bind(&id)
-        .bind(url)
-        .bind(title)
-        .bind(&created_at)
-        .execute(&pool)
-        .await?;
+    /// `add --url U --title T [--tags a,b]` (local): collect a bookmark.
+    async fn add(
+        &self,
+        url: &str,
+        title: &str,
+        tags: &[String],
+        _db_id: Option<&str>,
+    ) -> Result<BookmarkAdded> {
+        let pool = open(&self.account).await?;
+        let id = gen_id();
+        let created_at = chrono::Utc::now().to_rfc3339();
 
-    for tag in &tags {
-        sqlx::query("INSERT OR IGNORE INTO bookmark_tags (bookmark_id, tag) VALUES (?1, ?2)")
+        sqlx::query("INSERT INTO bookmarks (id, url, title, created_at) VALUES (?1, ?2, ?3, ?4)")
             .bind(&id)
-            .bind(tag)
+            .bind(url)
+            .bind(title)
+            .bind(&created_at)
             .execute(&pool)
             .await?;
-    }
 
-    if mode_json() {
-        Ok(Output::Json(
-            json!({ "id": id, "url": url, "title": title, "tags": tags }),
-        ))
-    } else {
-        Ok(Output::text(format!(
-            "added bookmark '{}' (id={}, tags={})",
-            title,
-            id,
-            tags.join(", ")
-        )))
-    }
-}
-
-/// `bookmark list [--tag TAG]` (local): list bookmarks, optionally filtered by tag.
-pub async fn list(account: &BookmarkAccount, flags: &HashMap<String, String>) -> Result<Output> {
-    let pool = open(account).await?;
-
-    // Base query: JOIN bookmark_tags when filtering by tag, otherwise take all.
-    let rows = if let Some(tag) = flags.get("tag") {
-        let sql = "SELECT b.id, b.url, b.title, b.created_at FROM bookmarks b \
-            JOIN bookmark_tags t ON t.bookmark_id = b.id \
-            WHERE t.tag = ?1 ORDER BY b.created_at DESC, b.id DESC";
-        sqlx::query(sql).bind(tag).fetch_all(&pool).await?
-    } else {
-        let sql = "SELECT id, url, title, created_at FROM bookmarks \
-            ORDER BY created_at DESC, id DESC";
-        sqlx::query(sql).fetch_all(&pool).await?
-    };
-
-    // Load tags per row and assemble BookmarkItem.
-    let mut items: Vec<BookmarkItem> = Vec::with_capacity(rows.len());
-    for r in &rows {
-        let id: String = r.get("id");
-        let tag_rows =
-            sqlx::query("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?1 ORDER BY tag")
+        for tag in tags {
+            sqlx::query("INSERT OR IGNORE INTO bookmark_tags (bookmark_id, tag) VALUES (?1, ?2)")
                 .bind(&id)
-                .fetch_all(&pool)
+                .bind(tag)
+                .execute(&pool)
                 .await?;
-        let tags: Vec<String> = tag_rows
-            .iter()
-            .map(|tr| tr.get::<String, _>("tag"))
-            .collect();
-        items.push(BookmarkItem {
+        }
+
+        Ok(BookmarkAdded {
             id,
-            url: r.get::<String, _>("url"),
-            title: r.get::<String, _>("title"),
-            tags,
-        });
+            url: url.to_string(),
+            title: title.to_string(),
+            tags: tags.to_vec(),
+            database_id: None,
+        })
     }
 
-    if mode_json() {
-        let arr: Vec<Value> = items
-            .iter()
-            .map(|it| serde_json::to_value(it).unwrap_or(Value::Null))
-            .collect();
-        Ok(Output::Json(Value::Array(arr)))
-    } else {
-        let table_rows = items
-            .iter()
-            .map(|it| {
-                vec![
-                    it.id.clone(),
-                    it.title.clone(),
-                    it.url.clone(),
-                    it.tags.join(", "),
-                ]
-            })
-            .collect();
-        Ok(Output::records(
-            vec!["id".into(), "title".into(), "url".into(), "tags".into()],
-            table_rows,
-        ))
+    /// `list [--tag TAG]` (local): list bookmarks, optionally filtered by tag.
+    async fn list(&self, tag: Option<&str>, _db_id: Option<&str>) -> Result<Vec<BookmarkItem>> {
+        let pool = open(&self.account).await?;
+
+        // Base query: JOIN bookmark_tags when filtering by tag, otherwise take all.
+        let rows = if let Some(tag) = tag {
+            let sql = "SELECT b.id, b.url, b.title, b.created_at FROM bookmarks b \
+                JOIN bookmark_tags t ON t.bookmark_id = b.id \
+                WHERE t.tag = ?1 ORDER BY b.created_at DESC, b.id DESC";
+            sqlx::query(sql).bind(tag).fetch_all(&pool).await?
+        } else {
+            let sql = "SELECT id, url, title, created_at FROM bookmarks \
+                ORDER BY created_at DESC, id DESC";
+            sqlx::query(sql).fetch_all(&pool).await?
+        };
+
+        // Load tags per row and assemble BookmarkItem.
+        let mut items: Vec<BookmarkItem> = Vec::with_capacity(rows.len());
+        for r in &rows {
+            let id: String = r.get("id");
+            let tag_rows =
+                sqlx::query("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?1 ORDER BY tag")
+                    .bind(&id)
+                    .fetch_all(&pool)
+                    .await?;
+            let tags: Vec<String> = tag_rows
+                .iter()
+                .map(|tr| tr.get::<String, _>("tag"))
+                .collect();
+            items.push(BookmarkItem {
+                id,
+                url: r.get("url"),
+                title: r.get("title"),
+                tags,
+            });
+        }
+        Ok(items)
     }
 }
 
@@ -228,10 +209,6 @@ pub async fn fetch_for_timeline(
     Ok(entries)
 }
 
-// ============ Helpers ============
-
-// parse_tags: see `crate::modules::local::parse_tags` — shared by both bookmark providers [R009](../../../docs/adr/R009-notion-common-local-module.md).
-
 // ============ Cross-module search (Phase 11) ============
 
 /// Per-module hard cap, enforced inside the provider
@@ -244,9 +221,6 @@ const SEARCH_PER_MODULE_CAP: usize = 50;
 ///
 /// `ts` is `created_at` (UTC, RFC3339) — the module's primary time
 /// ([S005](../../../docs/adr/S005-time-semantics-scope.md)).
-///
-/// `Hit.url` carries the bookmark URL when present (so search consumers
-/// can open the link without re-running `bookmark list`).
 ///
 /// Notion accounts are skipped in v1 (live-fetch-on-search rejected by
 /// [S005](../../../docs/adr/S005-time-semantics-scope.md)).
@@ -371,7 +345,7 @@ mod tests {
     }
 
     /// Count bookmarks under a given tag (exact match via JOIN bookmark_tags).
-    async fn count_tag(pool: &SqlitePool, tag: &str) -> i64 {
+    async fn count_tag(pool: &sqlx::SqlitePool, tag: &str) -> i64 {
         sqlx::query(
             "SELECT COUNT(*) as c FROM bookmarks b \
              JOIN bookmark_tags t ON t.bookmark_id = b.id WHERE t.tag = ?1",
@@ -386,18 +360,26 @@ mod tests {
     #[tokio::test]
     async fn add_and_list_roundtrip() {
         let acc = tmp_account();
+        let backend = LocalBookmarkBackend::new(acc.clone());
 
-        let mut f1 = HashMap::new();
-        f1.insert("url".into(), "https://www.rust-lang.org".into());
-        f1.insert("title".into(), "Rust 官网".into());
-        f1.insert("tags".into(), "rust,lang".into());
-        add(&acc, &f1).await.unwrap();
-
-        let mut f2 = HashMap::new();
-        f2.insert("url".into(), "https://doc.rust-lang.org".into());
-        f2.insert("title".into(), "Rust 文档".into());
-        f2.insert("tags".into(), "rust,doc".into());
-        add(&acc, &f2).await.unwrap();
+        backend
+            .add(
+                "https://www.rust-lang.org",
+                "Rust 官网",
+                &["rust".into(), "lang".into()],
+                None,
+            )
+            .await
+            .unwrap();
+        backend
+            .add(
+                "https://doc.rust-lang.org",
+                "Rust 文档",
+                &["rust".into(), "doc".into()],
+                None,
+            )
+            .await
+            .unwrap();
 
         let pool = open(&acc).await.unwrap();
 
@@ -415,47 +397,10 @@ mod tests {
         assert_eq!(count_tag(&pool, "lang").await, 1);
 
         // list output shape is correct (Records in text mode, array in JSON mode).
-        let mut fr = HashMap::new();
-        fr.insert("tag".into(), "doc".into());
-        let out = list(&acc, &fr).await.unwrap();
-        let rows = match out {
-            Output::Records { rows, .. } => rows,
-            Output::Json(v) => v
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|it| {
-                    vec![
-                        it["id"].as_str().unwrap_or("").to_string(),
-                        it["title"].as_str().unwrap_or("").to_string(),
-                        it["url"].as_str().unwrap_or("").to_string(),
-                        it["tags"]
-                            .as_array()
-                            .map(|a| {
-                                a.iter()
-                                    .filter_map(|x| x.as_str())
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
-                            })
-                            .unwrap_or_default(),
-                    ]
-                })
-                .collect(),
-            other => panic!("unexpected output: {other:?}"),
-        };
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0][1], "Rust 文档");
+        let items = backend.list(Some("doc"), None).await.unwrap();
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Rust 文档");
 
-        let _ = std::fs::remove_file(acc.db_path.unwrap());
-    }
-
-    #[tokio::test]
-    async fn add_missing_url_errors() {
-        let acc = tmp_account();
-        let mut f = HashMap::new();
-        f.insert("title".into(), "no url".into());
-        let err = add(&acc, &f).await.unwrap_err();
-        assert_eq!(err.type_name(), "InvalidArgument");
         let _ = std::fs::remove_file(acc.db_path.unwrap());
     }
 
@@ -473,19 +418,25 @@ mod tests {
     #[tokio::test]
     async fn search_for_search_matches_title_url_and_tag() {
         let acc = tmp_account();
-        // Bookmark 1: title contains "rust", URL distinct.
-        let mut f1 = HashMap::new();
-        f1.insert("url".into(), "https://www.rust-lang.org".into());
-        f1.insert("title".into(), "Rust 官网".into());
-        f1.insert("tags".into(), "rust,lang".into());
-        add(&acc, &f1).await.unwrap();
-
-        // Bookmark 2: only a tag matches ("python").
-        let mut f2 = HashMap::new();
-        f2.insert("url".into(), "https://example.org".into());
-        f2.insert("title".into(), "Some page".into());
-        f2.insert("tags".into(), "python,docs".into());
-        add(&acc, &f2).await.unwrap();
+        let backend = LocalBookmarkBackend::new(acc.clone());
+        backend
+            .add(
+                "https://www.rust-lang.org",
+                "Rust 官网",
+                &["rust".into(), "lang".into()],
+                None,
+            )
+            .await
+            .unwrap();
+        backend
+            .add(
+                "https://example.org",
+                "Some page",
+                &["python".into(), "docs".into()],
+                None,
+            )
+            .await
+            .unwrap();
 
         // Query "rust" -> only bookmark 1 (title GLOB).
         let q = SearchQuery::new("rust");
