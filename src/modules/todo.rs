@@ -9,7 +9,7 @@
 //! [F004](../../docs/adr/F004-shared-notion-client.md).
 //!
 //! Commands (actions):
-//! - `login`    interactively stores the Notion Integration Token in the system keyring
+//! - `auth login` stores the Notion Integration Token in the system keyring (see `auth` module)
 //! - `init-db`  creates the task database in Notion (needs `parent_page_id`) and writes
 //!   `database_id` back into the config
 //! - `list`     lists open tasks (by Due ascending); `--all` lists every task
@@ -29,7 +29,7 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::config::TodoAccount;
+use crate::config::{Config, TodoAccount};
 use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::notion_client::NotionClient;
@@ -39,11 +39,6 @@ use crate::output::Output;
 const STATUS_TODO: &str = "Todo";
 const STATUS_IN_PROGRESS: &str = "In Progress";
 const STATUS_DONE: &str = "Done";
-
-/// Keyring entry user name for storing the token (same as in `note`: unique under one service).
-/// See `crate::keyring_user` - shared constant across all three notion modules
-/// [R009](../../docs/adr/R009-notion-common-local-module.md).
-pub(crate) use crate::keyring_user::KEYRING_USER;
 
 /// Clean domain model (output to the Agent / terminal).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,19 +161,12 @@ impl TodoModule {
 #[async_trait]
 impl Executor for TodoModule {
     fn description(&self) -> &'static str {
-        "Todo tasks (Notion or local sqlite): login, init-db, list, add, start, complete, delete."
+        "Todo tasks (Notion or local sqlite): init-db, list, add, start, complete, delete."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "login",
-                description: "保存 Notion 凭证到系统 keyring",
-                usage: "everyday todo login [--account NAME]",
-                args: &[],
-                positional: Positional::None,
-            },
             ActionArgSpec {
                 name: "init-db",
                 description: "在 Notion 初始化待办数据库",
@@ -275,7 +263,6 @@ impl Executor for TodoModule {
         if crate::modules::local::is_local_provider(&account.provider) {
             use crate::modules::todo_local as local;
             return match action {
-                "login" => local::login(account),
                 "init-db" => local::init_db(account).await,
                 "list" => local::list(account, &flags).await,
                 "add" => local::add(account, &flags).await,
@@ -291,13 +278,22 @@ impl Executor for TodoModule {
         }
 
         match action {
-            "login" => todo_login(account).await,
-            "init-db" => todo_init_db(account, &flags).await,
-            "list" => todo_list(account, &flags).await,
-            "add" => todo_add(account, &flags).await,
-            "start" => todo_set_status(account, positional.first(), STATUS_IN_PROGRESS).await,
-            "complete" => todo_set_status(account, positional.first(), STATUS_DONE).await,
-            "delete" => todo_delete(account, positional.first()).await,
+            "init-db" => todo_init_db(&self.config, account, &flags).await,
+            "list" => todo_list(&self.config, account, &flags).await,
+            "add" => todo_add(&self.config, account, &flags).await,
+            "start" => {
+                todo_set_status(
+                    &self.config,
+                    account,
+                    positional.first(),
+                    STATUS_IN_PROGRESS,
+                )
+                .await
+            }
+            "complete" => {
+                todo_set_status(&self.config, account, positional.first(), STATUS_DONE).await
+            }
+            "delete" => todo_delete(&self.config, account, positional.first()).await,
             other => Err(AgentError::UnknownAction(format!("todo {other}"))),
         }
     }
@@ -305,35 +301,20 @@ impl Executor for TodoModule {
 
 // ============ credentials (keyring) ============
 
-/// Read the Notion token from the keyring. When missing, emit an actionable hint.
-fn get_token(account: &TodoAccount) -> Result<String> {
-    let service = crate::config::Config::keyring_service("todo", &account.name);
-    let entry = keyring::Entry::new(&service, KEYRING_USER)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    entry.get_password().map_err(|e| {
-        AgentError::Auth(format!(
-            "no Notion token in keyring for todo account '{}' ({}). \
-             Run `everyday todo login --account {}` to store it.",
-            account.name, e, account.name
-        ))
-    })
-}
-
-/// Interactively enter the token and store it in the keyring.
-/// See `crate::modules::local::login_notion` - shared with note/bookmark
-/// [R009](../../docs/adr/R009-notion-common-local-module.md).
-async fn todo_login(account: &TodoAccount) -> Result<Output> {
-    let account_name = account.name.clone();
-    crate::modules::local::login_notion("todo", &account_name).await?;
-    Ok(Output::text(format!(
-        "Notion token stored for todo account '{account_name}'"
-    )))
+/// Read the Notion token from the OS keyring via the consolidated `auth` module
+/// ([R013](../../docs/adr/R013-auth-module-consolidation.md)).
+fn get_token(config: &Config, account: &TodoAccount) -> Result<String> {
+    crate::modules::auth::get_credential(config, "todo", &account.name)
 }
 
 // ============ init-db ============
 
 /// `todo init-db [--parent PAGE_ID]`: create the task database in Notion and write database_id back.
-async fn todo_init_db(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
+async fn todo_init_db(
+    config: &Config,
+    account: &TodoAccount,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
     // Parent page: prefer --parent, otherwise fall back to the account's parent_page_id.
     let parent = flags
         .get("parent")
@@ -347,7 +328,7 @@ async fn todo_init_db(account: &TodoAccount, flags: &HashMap<String, String>) ->
             ))
         })?;
 
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     // Create the database: Task(title) / Status(select) / Due(date) / Priority(select).
@@ -403,9 +384,13 @@ async fn todo_init_db(account: &TodoAccount, flags: &HashMap<String, String>) ->
 // ============ list ============
 
 /// `todo list [--db ID] [--all]`: list tasks.
-async fn todo_list(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
+async fn todo_list(
+    config: &Config,
+    account: &TodoAccount,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
     let db_id = resolve_db_id(account, flags)?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     // Design: filter out completed tasks, sort by Due ascending. --all disables the filter.
@@ -477,12 +462,16 @@ fn cmp_due_asc(a: &TodoItem, b: &TodoItem) -> std::cmp::Ordering {
 // ============ add ============
 
 /// `todo add --title T [--due DATE] [--priority P] [--db ID]`: add a task.
-async fn todo_add(account: &TodoAccount, flags: &HashMap<String, String>) -> Result<Output> {
+async fn todo_add(
+    config: &Config,
+    account: &TodoAccount,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
     let title = flags
         .get("title")
         .ok_or_else(|| AgentError::InvalidArgument("add requires --title <title>".into()))?;
     let db_id = resolve_db_id(account, flags)?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     let mut props = json!({
@@ -524,13 +513,14 @@ async fn todo_add(account: &TodoAccount, flags: &HashMap<String, String>) -> Res
 
 /// `todo start/complete <page_id>`: update the task status.
 async fn todo_set_status(
+    config: &Config,
     account: &TodoAccount,
     page_id: Option<&String>,
     status: &str,
 ) -> Result<Output> {
     let page_id = page_id
         .ok_or_else(|| AgentError::InvalidArgument(format!("`{status}` requires <page_id>")))?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     let body = json!({ "properties": { "Status": { "select": { "name": status } } } });
@@ -568,10 +558,14 @@ async fn todo_set_status(
 /// GET the title before archiving so the ops-log + timeline delete events carry the
 /// title instead of being blank. One extra API call in exchange for readable audit
 /// trails; the delete path is not a performance hot spot.
-async fn todo_delete(account: &TodoAccount, page_id: Option<&String>) -> Result<Output> {
+async fn todo_delete(
+    config: &Config,
+    account: &TodoAccount,
+    page_id: Option<&String>,
+) -> Result<Output> {
     let page_id =
         page_id.ok_or_else(|| AgentError::InvalidArgument("`delete` requires <page_id>".into()))?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     // 1. Read the title first (so ops-log stays meaningful).

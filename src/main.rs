@@ -17,7 +17,7 @@ mod util;
 
 // Keep a stable `crate::X` path for shared facilities even though they live
 // physically under `shared/` — transparent to upper layers.
-pub(crate) use shared::{config, error, keyring_user, notion_client, output};
+pub(crate) use shared::{config, error, notion_client, output};
 
 use std::sync::Arc;
 

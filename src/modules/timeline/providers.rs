@@ -29,12 +29,13 @@ use crate::modules::todo_local;
 
 /// Mail timeline provider (IMAP pull).
 pub struct MailProvider {
+    config: Arc<Config>,
     account: MailAccount,
 }
 
 impl MailProvider {
-    pub fn new(account: MailAccount) -> Self {
-        Self { account }
+    pub fn new(config: Arc<Config>, account: MailAccount) -> Self {
+        Self { config, account }
     }
 }
 
@@ -48,7 +49,8 @@ impl TimelineProvider for MailProvider {
     }
 
     async fn sync(&self, window: &TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
-        let entries = email::fetch_for_timeline(&self.account, window.from, window.to).await?;
+        let entries =
+            email::fetch_for_timeline(&self.config, &self.account, window.from, window.to).await?;
         let events: Vec<TimelineEvent> = entries
             .iter()
             .map(|e| {
@@ -88,13 +90,18 @@ fn parse_mail_date(s: &str) -> Option<DateTime<Utc>> {
 
 /// Calendar timeline provider (CalDAV pull, window-refresh mode).
 pub struct CalProvider {
+    config: Arc<Config>,
     account: CalendarAccount,
     ignored: Vec<String>,
 }
 
 impl CalProvider {
-    pub fn new(account: CalendarAccount, ignored: Vec<String>) -> Self {
-        Self { account, ignored }
+    pub fn new(config: Arc<Config>, account: CalendarAccount, ignored: Vec<String>) -> Self {
+        Self {
+            config,
+            account,
+            ignored,
+        }
     }
 }
 
@@ -108,7 +115,8 @@ impl TimelineProvider for CalProvider {
     }
 
     async fn sync(&self, window: &TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
-        let entries = calendar::fetch_for_timeline(&self.account, &self.ignored).await?;
+        let entries =
+            calendar::fetch_for_timeline(&self.config, &self.account, &self.ignored).await?;
         let events: Vec<TimelineEvent> = entries
             .iter()
             .filter_map(|e| {
@@ -515,12 +523,13 @@ pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
 
     // Mail
     for acc in &config.mail.accounts {
-        providers.push(Box::new(MailProvider::new(acc.clone())));
+        providers.push(Box::new(MailProvider::new(config.clone(), acc.clone())));
     }
 
     // Calendar
     for acc in &config.calendar.accounts {
         providers.push(Box::new(CalProvider::new(
+            config.clone(),
             acc.clone(),
             acc.ignore_calendars.clone(),
         )));

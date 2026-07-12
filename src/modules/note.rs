@@ -6,7 +6,7 @@
 //! **plain-text / Markdown append** and **simplified property operations**.
 //!
 //! Supported `action`s:
-//! - `login`   interactively store the Notion Integration Token in the keyring
+//! - `auth login` stores the Notion Integration Token in the keyring (see the `auth` module)
 //! - `search`  search pages / databases by title keyword
 //! - `create`  create a record in a database (with title and simplified properties)
 //! - `read`    read page body, aggregated into Markdown (`--json` returns a structured object)
@@ -24,15 +24,11 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
-use crate::config::NoteAccount;
+use crate::config::{Config, NoteAccount};
 use crate::error::{AgentError, Result};
 use crate::modules::Executor;
 use crate::notion_client::NotionClient;
 use crate::output::Output;
-
-/// Keyring entry username under which the token is stored (independent of the account name, unique within a service).
-/// See `crate::keyring_user` — the three notion modules share this constant [R009](../../docs/adr/R009-notion-common-local-module.md).
-pub(crate) use crate::keyring_user::KEYRING_USER;
 
 /// Maximum recursion depth when rendering blocks, to prevent runaway expansion on malformed data.
 const MAX_BLOCK_DEPTH: usize = 12;
@@ -53,19 +49,12 @@ impl NoteModule {
 #[async_trait]
 impl Executor for NoteModule {
     fn description(&self) -> &'static str {
-        "Note & knowledge-base (Notion or local sqlite): login, search, list, create, read, append, update."
+        "Note & knowledge-base (Notion or local sqlite): search, list, create, read, append, update."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "login",
-                description: "保存 Notion 凭证到系统 keyring",
-                usage: "everyday note login [--account NAME]",
-                args: &[],
-                positional: Positional::None,
-            },
             ActionArgSpec {
                 name: "search",
                 description: "搜索页面",
@@ -172,7 +161,6 @@ impl Executor for NoteModule {
         if crate::modules::local::is_local_provider(&account.provider) {
             use crate::modules::note_local as local;
             return match action {
-                "login" => local::login(account),
                 "search" => local::search(account, &flags).await,
                 "create" => local::create(account, &flags, &multi).await,
                 "read" => local::read(account, &positional).await,
@@ -184,13 +172,12 @@ impl Executor for NoteModule {
         }
 
         match action {
-            "login" => note_login(account).await,
-            "search" => note_search(account, &flags).await,
-            "create" => note_create(account, &flags, &multi).await,
-            "read" => note_read(account, &flags, &positional).await,
-            "append" => note_append(account, &flags, &positional).await,
-            "update" => note_update(account, &flags, &positional, &multi).await,
-            "list" => note_list(account, &flags).await,
+            "search" => note_search(&self.config, account, &flags).await,
+            "create" => note_create(&self.config, account, &flags, &multi).await,
+            "read" => note_read(&self.config, account, &flags, &positional).await,
+            "append" => note_append(&self.config, account, &flags, &positional).await,
+            "update" => note_update(&self.config, account, &flags, &positional, &multi).await,
+            "list" => note_list(&self.config, account, &flags).await,
             other => Err(AgentError::UnknownAction(format!("note {other}"))),
         }
     }
@@ -243,28 +230,10 @@ fn push_flag(
 
 // ============ Credentials (keyring) ============
 
-/// Read the Notion token from the keyring.
-fn get_token(account: &NoteAccount) -> Result<String> {
-    let service = crate::config::Config::keyring_service("note", &account.name);
-    let entry = keyring::Entry::new(&service, KEYRING_USER)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    entry.get_password().map_err(|e| {
-        AgentError::Auth(format!(
-            "no Notion token in keyring for note account '{}': {e}. \
-             Run `everyday note login --account {}` to store it.",
-            account.name, account.name
-        ))
-    })
-}
-
-/// Interactively prompt for the token and store it in the keyring.
-/// See `crate::modules::local::login_notion` — shared with todo/bookmark [R009](../../docs/adr/R009-notion-common-local-module.md).
-async fn note_login(account: &NoteAccount) -> Result<Output> {
-    let account_name = account.name.clone();
-    crate::modules::local::login_notion("note", &account_name).await?;
-    Ok(Output::text(format!(
-        "Notion token stored for note account '{account_name}'"
-    )))
+/// Read the Notion token from the OS keyring via the consolidated `auth` module
+/// ([R013](../../docs/adr/R013-auth-module-consolidation.md)).
+fn get_token(config: &Config, account: &NoteAccount) -> Result<String> {
+    crate::modules::auth::get_credential(config, "note", &account.name)
 }
 
 // ============ HTTP wrapper ============
@@ -874,7 +843,11 @@ fn media_url_and_caption(b: &Value, block_type: &str) -> (String, String) {
 // ============ Action implementations ============
 
 /// `note search --query Q [--limit N]`: search pages/databases by title.
-async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
+async fn note_search(
+    config: &Config,
+    account: &NoteAccount,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
     let query = flags
         .get("query")
         .ok_or_else(|| AgentError::InvalidArgument("search requires --query <keyword>".into()))?;
@@ -883,7 +856,7 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
         .and_then(|s| s.parse().ok())
         .unwrap_or(10)
         .min(100);
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     let body = json!({ "query": query, "page_size": limit });
@@ -945,7 +918,11 @@ async fn note_search(account: &NoteAccount, flags: &HashMap<String, String>) -> 
 ///
 /// Paginate via `POST /databases/{id}/query`, truncating to `--limit` (default 50, cap 100).
 /// Target database prefers `--db`, falling back to the account's `default_database_id`.
-async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
+async fn note_list(
+    config: &Config,
+    account: &NoteAccount,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
     let db_id = flags
         .get("db")
         .cloned()
@@ -960,7 +937,7 @@ async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Re
         .and_then(|s| s.parse().ok())
         .unwrap_or(50)
         .min(100);
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     // Paginated query of pages under the database.
@@ -1038,6 +1015,7 @@ async fn note_list(account: &NoteAccount, flags: &HashMap<String, String>) -> Re
 
 /// `note create --title T [--db ID] [--prop K:V ...]`: create a record in the database.
 async fn note_create(
+    config: &Config,
     account: &NoteAccount,
     flags: &HashMap<String, String>,
     multi: &[(String, String)],
@@ -1055,7 +1033,7 @@ async fn note_create(
                 "no --db given and no default_database_id set for this account".into(),
             )
         })?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     // Fetch the database schema to locate the title property name and validate --prop types.
@@ -1107,12 +1085,13 @@ async fn note_create(
 
 /// `note read [page_id]`: read page properties + body, aggregated into Markdown.
 async fn note_read(
+    config: &Config,
     account: &NoteAccount,
     _flags: &HashMap<String, String>,
     positional: &[String],
 ) -> Result<Output> {
     let page_id = resolve_page_id(account, positional)?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     let page: Value = client.get(&format!("/pages/{}", page_id)).await?;
@@ -1159,6 +1138,7 @@ async fn note_read(
 
 /// `note append [page_id] --text TEXT`: append text blocks to the end of a page.
 async fn note_append(
+    config: &Config,
     account: &NoteAccount,
     flags: &HashMap<String, String>,
     positional: &[String],
@@ -1183,7 +1163,7 @@ async fn note_append(
         ));
     }
 
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
     let blocks = text_to_blocks(&text);
     if blocks.is_empty() {
@@ -1220,6 +1200,7 @@ async fn note_append(
 
 /// `note update <page_id> --prop K:V ...`: modify page properties.
 async fn note_update(
+    config: &Config,
     account: &NoteAccount,
     _flags: &HashMap<String, String>,
     positional: &[String],
@@ -1234,7 +1215,7 @@ async fn note_update(
             "update requires at least one --prop K:V".into(),
         ));
     }
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     // Try to read the database schema from the page parent for precise property-type encoding;

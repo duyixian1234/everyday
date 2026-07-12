@@ -92,46 +92,6 @@ pub fn parse_tags(raw: Option<&String>) -> Vec<String> {
     }
 }
 
-/// Unified interactive login flow for Notion modules:
-/// 1. open the keyring entry (service = `everyday/<module>/<account>`, user = `KEYRING_USER`);
-/// 2. `spawn_blocking` drives `rpassword` to prompt the user to paste the
-///    Notion Integration Token;
-/// 3. trim and reject empty input;
-/// 4. write to keyring;
-/// 5. return a success message.
-///
-/// Previously `note.rs` / `todo.rs` / `bookmark.rs` each carried a ~25-line
-/// verbatim copy (only the module name and success message differed);
-/// consolidated here. See [R009](../../docs/adr/R009-notion-common-local-module.md).
-///
-/// Differs from mail/cal password login: mail/cal use a generic "Password for
-/// X" prompt, whereas Notion uses the Integration Token wording (different
-/// token shape).
-pub async fn login_notion(module: &str, account_name: &str) -> Result<()> {
-    use crate::keyring_user::KEYRING_USER;
-
-    let service = crate::config::Config::keyring_service(module, account_name);
-    let entry = keyring::Entry::new(&service, KEYRING_USER)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    let prompt =
-        format!("Paste Notion Integration Token (ntn_...) for {module} account '{account_name}': ");
-    // rpassword is a sync API; wrap in spawn_blocking to avoid blocking the runtime.
-    let password = tokio::task::spawn_blocking(move || rpassword::prompt_password(prompt))
-        .await
-        .map_err(|e| AgentError::Other(format!("join token prompt: {e}")))?
-        .map_err(|e| AgentError::Other(format!("read token: {e}")))?;
-    let token = password.trim().to_string();
-    if token.is_empty() {
-        return Err(AgentError::InvalidArgument(
-            "token must not be empty".into(),
-        ));
-    }
-    entry
-        .set_password(&token)
-        .map_err(|e| AgentError::Auth(format!("keyring set: {e}")))?;
-    Ok(())
-}
-
 /// Find the account whose `name` matches in config's `<module>.accounts[]`
 /// and write `default_database_id = db_id`.
 ///

@@ -1,8 +1,9 @@
-//! Mail module: IMAP receiving (list / read / search) + SMTP sending (send)
-//! + keyring credentials (login). See [M001](../../docs/adr/M001-imap-stack.md).
+//! Mail module: IMAP receiving (list / read / search) + SMTP sending (send).
+//! See [M001](../../docs/adr/M001-imap-stack.md).
 //!
-//! Flow: the config file stores account metadata (host/port/username) →
-//! `everyday mail login` stores the password in the system keyring →
+//! Flow: the config file stores account metadata (host/port/username). The
+//! password lives in the OS keyring and is read via `everyday auth login`
+//! (consolidated credential module, [R013](../../docs/adr/R013-auth-module-consolidation.md)).
 //! `everyday mail list/read/search/send` automatically reads it to connect.
 //! The password never lands in config.toml.
 
@@ -36,7 +37,7 @@ impl EmailModule {
 #[async_trait]
 impl Executor for EmailModule {
     fn description(&self) -> &'static str {
-        "Email management (IMAP/SMTP): folders, list, read, search, send, login."
+        "Email management (IMAP/SMTP): folders, list, read, search, send."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
@@ -161,13 +162,6 @@ impl Executor for EmailModule {
                 ],
                 positional: Positional::None,
             },
-            ActionArgSpec {
-                name: "login",
-                description: "保存邮箱凭证到系统 keyring",
-                usage: "everyday mail login [--account NAME]",
-                args: &[],
-                positional: Positional::None,
-            },
         ];
         ModuleArgSpec {
             name: "mail",
@@ -182,61 +176,16 @@ impl Executor for EmailModule {
             .config
             .mail_account(flags.get("account").map(|s| s.as_str()))?;
 
+        let password = crate::modules::auth::get_credential(&self.config, "mail", &account.name)?;
         match action {
-            // login needs no password, only account metadata + interactive input
-            "login" => mail_login(account).await,
-            _ => {
-                let password = get_password(account)?;
-                match action {
-                    "folders" => mail_folders(account, &password).await,
-                    "list" => mail_list(account, &password, &flags).await,
-                    "read" => mail_read(account, &password, &flags, &positional).await,
-                    "search" => mail_search(account, &password, &flags).await,
-                    "send" => mail_send(account, &password, &flags).await,
-                    other => Err(AgentError::UnknownAction(format!("mail {other}"))),
-                }
-            }
+            "folders" => mail_folders(account, &password).await,
+            "list" => mail_list(account, &password, &flags).await,
+            "read" => mail_read(account, &password, &flags, &positional).await,
+            "search" => mail_search(account, &password, &flags).await,
+            "send" => mail_send(account, &password, &flags).await,
+            other => Err(AgentError::UnknownAction(format!("mail {other}"))),
         }
     }
-}
-
-// ============ keyring credentials ============
-
-/// Read the account password from the system keyring.
-fn get_password(account: &MailAccount) -> Result<String> {
-    let service = Config::keyring_service("mail", &account.name);
-    let entry = keyring::Entry::new(&service, &account.username)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    entry.get_password().map_err(|e| {
-        AgentError::Auth(format!(
-            "no password in keyring for mail account '{}': {e}. \
-             Run `everyday mail login --account {}` to store it.",
-            account.name, account.name
-        ))
-    })
-}
-
-/// Interactively prompt for the password and store it in the system keyring.
-async fn mail_login(account: &MailAccount) -> Result<Output> {
-    let service = Config::keyring_service("mail", &account.name);
-    let entry = keyring::Entry::new(&service, &account.username)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    // rpassword is sync; wrap in spawn_blocking to avoid blocking the runtime.
-    let username = account.username.clone();
-    let account_name = account.name.clone();
-    let password = tokio::task::spawn_blocking(move || {
-        rpassword::prompt_password(format!("Password for {username}: "))
-    })
-    .await
-    .map_err(|e| AgentError::Other(format!("join password prompt: {e}")))?
-    .map_err(|e| AgentError::Other(format!("read password: {e}")))?;
-
-    entry
-        .set_password(&password)
-        .map_err(|e| AgentError::Auth(format!("keyring set: {e}")))?;
-    Ok(Output::text(format!(
-        "password stored for mail account '{account_name}'"
-    )))
 }
 
 // ============ IMAP connection ============
@@ -1298,13 +1247,15 @@ pub struct MailTimelineEntry {
 /// returning the mails received within the window.
 ///
 /// IMAP SEARCH SINCE only supports dates (no time), so the client filters by the
-/// exact timestamp. The password is read from the keyring.
+/// exact timestamp. The password is read from the OS keyring via the
+/// consolidated `auth` module.
 pub async fn fetch_for_timeline(
+    config: &Config,
     account: &MailAccount,
     from: chrono::DateTime<chrono::Utc>,
     _to: chrono::DateTime<chrono::Utc>,
 ) -> Result<Vec<MailTimelineEntry>> {
-    let password = get_password(account)?;
+    let password = crate::modules::auth::get_credential(config, "mail", &account.name)?;
     let mut session = imap_connect(account, &password).await?;
     let folders = list_all_folders(&mut session).await?;
 

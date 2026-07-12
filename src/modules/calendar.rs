@@ -1,8 +1,10 @@
-//! Calendar module (CalDAV): login / calendars / list / add / delete.
+//! Calendar module (CalDAV): calendars / list / add / delete.
 //!
-//! Flow: config.toml holds account metadata (caldav_url/username) → `everyday cal login`
-//! stores the password in the system keyring → `everyday cal calendars/list/add/delete`
-//! auto-reads the password to connect to CalDAV. The password never touches config.toml.
+//! Flow: config.toml holds account metadata (caldav_url/username). The password
+//! lives in the OS keyring and is read via `everyday auth login` (consolidated
+//! credential module, [R013](../../docs/adr/R013-auth-module-consolidation.md)).
+//! `everyday cal calendars/list/add/delete` auto-reads it to connect to CalDAV.
+//! The password never touches config.toml.
 //!
 //! Stack: libdav 0.10 (CalDAV protocol, request API) + icalendar 0.17 (iCalendar
 //! parse/generate) + hyper 1.x (HTTP, body=String to satisfy libdav's HttpClient trait)
@@ -54,19 +56,12 @@ impl CalendarModule {
 #[async_trait]
 impl Executor for CalendarModule {
     fn description(&self) -> &'static str {
-        "Calendar management (CalDAV): login, calendars, list, add, delete events."
+        "Calendar management (CalDAV): calendars, list, add, delete events."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "login",
-                description: "保存 CalDAV 凭证到系统 keyring",
-                usage: "everyday cal login [--account NAME]",
-                args: &[],
-                positional: Positional::None,
-            },
             ActionArgSpec {
                 name: "calendars",
                 description: "列出日历集",
@@ -171,9 +166,9 @@ impl Executor for CalendarModule {
         // ignore_calendars).
         let ignored = &account.ignore_calendars;
         match action {
-            "login" => cal_login(account).await,
             "calendars" | "list" | "add" | "delete" => {
-                let password = get_password(account)?;
+                let password =
+                    crate::modules::auth::get_credential(&self.config, "cal", &account.name)?;
                 match action {
                     "calendars" => cal_calendars(account, &password, ignored).await,
                     "list" => cal_list(account, &password, &flags, ignored).await,
@@ -185,51 +180,6 @@ impl Executor for CalendarModule {
             other => Err(AgentError::UnknownAction(format!("cal {other}"))),
         }
     }
-}
-
-// ============ keyring credentials ============
-
-/// Read the account password from the system keyring.
-fn get_password(account: &CalendarAccount) -> Result<String> {
-    let service = Config::keyring_service("cal", &account.name);
-    let entry = keyring::Entry::new(&service, &account.username)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    entry.get_password().map_err(|e| {
-        AgentError::Auth(format!(
-            "no password in keyring for calendar account '{}': {e}. \
-             Run `everyday cal login --account {}` to store it.",
-            account.name, account.name
-        ))
-    })
-}
-
-/// Prompt for the password interactively and store it in the system keyring.
-async fn cal_login(account: &CalendarAccount) -> Result<Output> {
-    let service = Config::keyring_service("cal", &account.name);
-    let entry = keyring::Entry::new(&service, &account.username)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    let username = account.username.clone();
-    let account_name = account.name.clone();
-    let password = tokio::task::spawn_blocking(move || {
-        rpassword::prompt_password(format!("Password for {username}: "))
-    })
-    .await
-    .map_err(|e| AgentError::Other(format!("join password prompt: {e}")))?
-    .map_err(|e| AgentError::Other(format!("read password: {e}")))?;
-
-    // Pitfall 9: empty-password guard. set_password("") succeeds, but base64-encodes
-    // to "Basic Og==" and the server then returns 401.
-    if password.is_empty() {
-        return Err(AgentError::InvalidArgument(
-            "password cannot be empty".into(),
-        ));
-    }
-    entry
-        .set_password(&password)
-        .map_err(|e| AgentError::Auth(format!("keyring set: {e}")))?;
-    Ok(Output::text(format!(
-        "password stored for calendar account '{account_name}'"
-    )))
 }
 
 // ============ CalDAV client construction ============
@@ -283,6 +233,21 @@ async fn build_client(account: &CalendarAccount, password: &str) -> Result<CalDa
     }
 
     Ok(CalDavClient::new(webdav))
+}
+
+/// Verify a calendar account's stored credential.
+///
+/// Builds the CalDAV client (well-known discovery) and probes the
+/// current-user-principal; an auth failure surfaces as `AgentError::Auth`.
+/// Reused by `auth verify` (ADR R013) so CalDAV transport is owned here, not
+/// re-implemented in `auth`.
+pub(crate) async fn cal_verify(account: &CalendarAccount, password: &str) -> Result<()> {
+    let caldav = build_client(account, password).await?;
+    caldav
+        .find_current_user_principal()
+        .await
+        .map(|_| ())
+        .map_err(|e| AgentError::Auth(format!("caldav verify failed: {e}")))
 }
 
 // ============ Calendar discovery ============
@@ -755,10 +720,11 @@ pub struct CalTimelineEntry {
 /// Cal uses a window-refresh model ([C003](../../docs/adr/C003-cal-provider-window-filter.md)), so this
 /// returns the current snapshot; the orchestrator deletes old rows inside the window and re-inserts.
 pub async fn fetch_for_timeline(
+    config: &Config,
     account: &CalendarAccount,
     ignored: &[String],
 ) -> Result<Vec<CalTimelineEntry>> {
-    let password = get_password(account)?;
+    let password = crate::modules::auth::get_credential(config, "cal", &account.name)?;
     let caldav = build_client(account, &password).await?;
     let calendars = list_all_calendars(&caldav, ignored).await?;
 
@@ -824,6 +790,7 @@ const SEARCH_PER_MODULE_CAP: usize = 50;
 /// which the aggregator captures into a `SearchWarning`.
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub async fn search_for_search(
+    config: &Config,
     account: &CalendarAccount,
     ignored: &[String],
     q: &SearchQuery,
@@ -833,7 +800,7 @@ pub async fn search_for_search(
         return Ok(Vec::new());
     }
 
-    let entries = fetch_for_timeline(account, ignored).await?;
+    let entries = fetch_for_timeline(config, account, ignored).await?;
 
     // Build the local GLOB filter (no SQL; iterate in memory).
     let mut conds: Vec<String> = Vec::new();
@@ -955,11 +922,11 @@ impl Searchable for CalSearchProvider {
         "cal"
     }
 
-    async fn search(&self, q: &SearchQuery, _cfg: &Config) -> Result<Vec<Hit>> {
+    async fn search(&self, q: &SearchQuery, cfg: &Config) -> Result<Vec<Hit>> {
         if q.raw.trim().is_empty() {
             return Ok(Vec::new());
         }
-        search_for_search(&self.account, &self.ignored, q).await
+        search_for_search(cfg, &self.account, &self.ignored, q).await
     }
 }
 

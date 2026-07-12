@@ -2,9 +2,9 @@
 //!
 //! Parity implementation of `list` / `add` / `start` / `complete` semantics
 //! alongside the Notion provider [T001](../../docs/adr/T001-notion-todo-module.md),
-//! with data persisted in the account's local SQLite file. `login` is a no-op
-//! for the local provider (no credentials), and `init-db` only creates the
-//! table and reports its path.
+//! with data persisted in the account's local SQLite file. The local provider needs
+//! no credentials (credentials are owned by the `auth` module), and `init-db`
+//! only creates the table and reports its path.
 //!
 //! Output shape (column names / JSON keys) is deliberately kept identical to
 //! the Notion version in `todo.rs` [F005](../../docs/adr/F005-default-provider-local.md),
@@ -63,14 +63,6 @@ fn gen_id() -> String {
 }
 
 // ============ actions ============
-
-/// `todo login` (local): the local provider needs no credentials.
-pub fn login(account: &TodoAccount) -> Result<Output> {
-    Ok(Output::text(format!(
-        "todo account '{}' uses the local sqlite provider; no login required",
-        account.name
-    )))
-}
 
 /// `todo init-db` (local): create the table and report the database path.
 pub async fn init_db(account: &TodoAccount) -> Result<Output> {

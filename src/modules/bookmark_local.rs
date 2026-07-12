@@ -1,8 +1,9 @@
 //! Local SQLite provider for the bookmark module [B001](../../docs/adr/B001-bookmark-dual-provider.md).
 //!
 //! Parity implementation of `add` / `list` semantics with the Notion provider; data lands in the
-//! account's configured local SQLite file. `login` is meaningless for the local provider (no
-//! credentials needed), and `init-db` only creates the table and reports the path.
+//! account's configured local SQLite file. The local provider needs no credentials
+//! (credentials are owned by the `auth` module), and `init-db` only creates the
+//! table and reports the path.
 //!
 //! Data model:
 //! - `bookmarks(id, url, title, created_at)`: one bookmark = URL + title.
@@ -51,14 +52,6 @@ fn gen_id() -> String {
 }
 
 // ============ actions ============
-
-/// `bookmark login` (local): the local provider needs no credentials.
-pub fn login(account: &BookmarkAccount) -> Result<Output> {
-    Ok(Output::text(format!(
-        "bookmark account '{}' uses the local sqlite provider; no login required",
-        account.name
-    )))
-}
 
 /// `bookmark init-db` (local): create the table and report the database path.
 pub async fn init_db(account: &BookmarkAccount) -> Result<Output> {

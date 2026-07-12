@@ -6,7 +6,7 @@
 //! `add` (collect), `list` (browse filtered by tag).
 //!
 //! Supported `action`s:
-//! - `login`    interactively store the Notion Integration Token in the keyring (notion provider only)
+//! - `auth login` stores the Notion Integration Token in the keyring (notion provider only)
 //! - `init-db`  create the local table / create the bookmark database in Notion (needs `parent_page_id`)
 //! - `add`      collect a bookmark (`--url` required, `--title` required, `--tags` optional comma-separated)
 //! - `list`     list bookmarks, `--tag <TAG>` filters by tag (`--db` selects the Notion database)
@@ -21,15 +21,11 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::config::BookmarkAccount;
+use crate::config::{BookmarkAccount, Config};
 use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::notion_client::NotionClient;
 use crate::output::Output;
-
-/// Keyring entry username under which the token is stored (unique within a service).
-/// See `crate::keyring_user` — the three notion modules share this constant [R009](../../docs/adr/R009-notion-common-local-module.md).
-pub(crate) use crate::keyring_user::KEYRING_USER;
 
 /// Clean domain model (output to Agent / terminal).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,19 +123,12 @@ impl BookmarkModule {
 #[async_trait]
 impl Executor for BookmarkModule {
     fn description(&self) -> &'static str {
-        "Bookmarks (Notion or local sqlite): init-db, add, list, login."
+        "Bookmarks (Notion or local sqlite): init-db, add, list."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "login",
-                description: "保存 Notion 凭证到系统 keyring",
-                usage: "everyday bookmark login [--account NAME]",
-                args: &[],
-                positional: Positional::None,
-            },
             ActionArgSpec {
                 name: "init-db",
                 description: "在 Notion 初始化书签数据库",
@@ -215,7 +204,6 @@ impl Executor for BookmarkModule {
         if crate::modules::local::is_local_provider(&account.provider) {
             use crate::modules::bookmark_local as local;
             return match action {
-                "login" => local::login(account),
                 "init-db" => local::init_db(account).await,
                 "add" => local::add(account, &flags).await,
                 "list" => local::list(account, &flags).await,
@@ -224,10 +212,9 @@ impl Executor for BookmarkModule {
         }
 
         match action {
-            "login" => bookmark_login(account).await,
-            "init-db" => bookmark_init_db(account, &flags).await,
-            "add" => bookmark_add(account, &flags).await,
-            "list" => bookmark_list(account, &flags).await,
+            "init-db" => bookmark_init_db(&self.config, account, &flags).await,
+            "add" => bookmark_add(&self.config, account, &flags).await,
+            "list" => bookmark_list(&self.config, account, &flags).await,
             other => Err(AgentError::UnknownAction(format!("bookmark {other}"))),
         }
     }
@@ -239,34 +226,17 @@ impl Executor for BookmarkModule {
 
 // ============ Credentials (keyring) ============
 
-/// Read the Notion token from the keyring. On miss, give an actionable hint.
-fn get_token(account: &BookmarkAccount) -> Result<String> {
-    let service = crate::config::Config::keyring_service("bookmark", &account.name);
-    let entry = keyring::Entry::new(&service, KEYRING_USER)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    entry.get_password().map_err(|e| {
-        AgentError::Auth(format!(
-            "no Notion token in keyring for bookmark account '{}' ({}). \
-             Run `everyday bookmark login --account {}` to store it.",
-            account.name, e, account.name
-        ))
-    })
-}
-
-/// Interactively prompt for the token and store it in the keyring.
-/// See `crate::modules::local::login_notion` — shared with note/todo [R009](../../docs/adr/R009-notion-common-local-module.md).
-async fn bookmark_login(account: &BookmarkAccount) -> Result<Output> {
-    let account_name = account.name.clone();
-    crate::modules::local::login_notion("bookmark", &account_name).await?;
-    Ok(Output::text(format!(
-        "Notion token stored for bookmark account '{account_name}'"
-    )))
+/// Read the Notion token from the OS keyring via the consolidated `auth` module
+/// ([R013](../../docs/adr/R013-auth-module-consolidation.md)).
+fn get_token(config: &Config, account: &BookmarkAccount) -> Result<String> {
+    crate::modules::auth::get_credential(config, "bookmark", &account.name)
 }
 
 // ============ init-db (notion) ============
 
 /// `bookmark init-db [--parent PAGE_ID]`: create the bookmark database in Notion and backfill database_id.
 async fn bookmark_init_db(
+    config: &Config,
     account: &BookmarkAccount,
     flags: &HashMap<String, String>,
 ) -> Result<Output> {
@@ -282,7 +252,7 @@ async fn bookmark_init_db(
             ))
         })?;
 
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     // Create the database: Title (title) / URL (url) / Tags (multi_select).
@@ -328,6 +298,7 @@ async fn bookmark_init_db(
 
 /// `bookmark add --url U --title T [--tags a,b] [--db ID]`: collect a bookmark.
 async fn bookmark_add(
+    config: &Config,
     account: &BookmarkAccount,
     flags: &HashMap<String, String>,
 ) -> Result<Output> {
@@ -339,7 +310,7 @@ async fn bookmark_add(
         .ok_or_else(|| AgentError::InvalidArgument("add requires --title <title>".into()))?;
     let tags = crate::modules::local::parse_tags(flags.get("tags"));
     let db_id = resolve_db_id(account, flags)?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     let multi_select: Vec<Value> = tags.iter().map(|t| json!({ "name": t })).collect();
@@ -384,11 +355,12 @@ async fn bookmark_add(
 
 /// `bookmark list [--tag TAG] [--db ID]`: list bookmarks, optionally filtered by tag.
 async fn bookmark_list(
+    config: &Config,
     account: &BookmarkAccount,
     flags: &HashMap<String, String>,
 ) -> Result<Output> {
     let db_id = resolve_db_id(account, flags)?;
-    let token = get_token(account)?;
+    let token = get_token(config, account)?;
     let client = NotionClient::new(token)?;
 
     let mut body = json!({});

@@ -156,6 +156,12 @@ impl ModuleRegistry {
             Box::new(crate::modules::search::SearchModule::new(config.clone())),
         );
 
+        // Top-level credential lifecycle (Phase 12, ADR R013–R015).
+        modules.insert(
+            "auth",
+            Box::new(crate::modules::auth::AuthModule::new(config.clone())),
+        );
+
         Ok(Self { modules })
     }
 
@@ -169,6 +175,7 @@ impl ModuleRegistry {
 }
 
 // ---- module submodule declarations ----
+pub mod auth;
 pub mod bookmark;
 pub mod bookmark_local;
 pub mod calendar;

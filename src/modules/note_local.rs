@@ -1,8 +1,8 @@
 //! Local SQLite provider for the note module. See [N001](../../docs/adr/N001-notion-note-module.md) / [F005](../../docs/adr/F005-default-provider-local.md).
 //!
 //! Mirrors the Notion provider's `search` / `list` / `create` / `read` / `append`
-//! / `update` semantics; data lives in the account's configured local SQLite file. `login` is a no-op for the local
-//! provider (no credentials needed).
+//! / `update` semantics; data lives in the account's configured local SQLite file.
+//! The local provider needs no credentials (credentials are owned by the `auth` module).
 //!
 //! Data model:
 //! - `notes(id, title, content, created_at, updated_at)`: one note = title + body
@@ -80,14 +80,6 @@ async fn load_props(pool: &SqlitePool, note_id: &str) -> Result<Map<String, Valu
 }
 
 // ============ actions ============
-
-/// `note login` (local): local provider needs no credentials.
-pub fn login(account: &NoteAccount) -> Result<Output> {
-    Ok(Output::text(format!(
-        "note account '{}' uses the local sqlite provider; no login required",
-        account.name
-    )))
-}
 
 /// `note search --query Q [--limit N]` (local): fuzzy search by title.
 pub async fn search(account: &NoteAccount, flags: &HashMap<String, String>) -> Result<Output> {
