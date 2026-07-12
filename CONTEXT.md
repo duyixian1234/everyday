@@ -168,7 +168,7 @@ TimelineModule 实现 `Executor`，注册到 `ModuleRegistry`。`name()` = `"tim
 ## Mail Cache
 
 > `mail` 模块的本地缓存层。独立于 Timeline.db。
-> 决策见 ADR 0010-0013。
+> 决策见 ADR [M002](docs/adr/M002-imap-connection-pool.md)、[M003](docs/adr/M003-envelope-cache.md)、[M004](docs/adr/M004-uid-watermark-sync.md)、[M005](docs/adr/M005-staleness-auto-sync.md)。
 
 ### Mail Cache
 

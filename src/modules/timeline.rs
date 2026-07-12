@@ -348,7 +348,7 @@ impl TimelineModule {
 // ============ 时间工具 ============
 
 /// 解析 `--source mail,cal` 为 `["mail", "cal"]`。
-/// 已知 source ID 列表（ADR 0001-0009）。
+/// 已知 source ID 列表（ADR [L001](../docs/adr/L001-append-only-event-log.md)–[L009](../docs/adr/L009-best-effort-sync.md)）。
 ///
 /// `--source` 解析时校验；未知 source 之前被静默丢弃（`events` 表 SQL
 /// `source IN (...)` 自然返空），用户看到"0 events"以为是数据问题。

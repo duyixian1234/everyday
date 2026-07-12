@@ -1,6 +1,6 @@
 //! Ops-log AOP hook：在 dispatch 层记录 CLI 对 notion 账户的写操作。
 //!
-//! 设计要点（ADR 0007）：
+//! 设计要点（ADR [L007](../docs/adr/L007-notion-ops-log.md)）：
 //! - 仅 `todo`/`note`/`bookmark` 模块的写操作记录。
 //! - 仅 `provider = "notion"` 的账户记录（local 账户的 timeline provider 直接拉 SQLite）。
 //! - 从 Output 的 JSON 提取 `id`（→ ref_id）和 `title`（可能缺失，取空）。

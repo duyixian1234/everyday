@@ -1,6 +1,6 @@
 //! mail 模块的 IMAP session 连接池。
 //!
-//! 固定大小 M=4（ADR 0010），所有 session 共享同一份 keyring 密码。
+//! 固定大小 M=4（ADR [M002](../../docs/adr/M002-imap-connection-pool.md)），所有 session 共享同一份 keyring 密码。
 //! 跨文件夹 sync 时通过 `tokio::Semaphore` 控制并发上限为 4。
 //!
 //! `acquire()` 返回 `PoolGuard`，内部 take 一个空闲 session；
@@ -17,7 +17,7 @@ use crate::config::MailAccount;
 use crate::error::{AgentError, Result};
 use crate::modules::email::{ImapSession, imap_connect};
 
-/// 池大小。ADR 0010：写死，无 flag / config 暴露。
+/// 池大小。ADR [M002](../../docs/adr/M002-imap-connection-pool.md)：写死，无 flag / config 暴露。
 pub const POOL_SIZE: usize = 4;
 
 /// IMAP session 池（cheap-clone，内部 `Arc`）。
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn capacity_is_4() {
-        // 编译期常量的稳定性测试：ADR 0010 写死 M=4
+        // 编译期常量的稳定性测试：ADR M002 写死 M=4
         assert_eq!(POOL_SIZE, 4);
     }
 

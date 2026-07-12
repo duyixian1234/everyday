@@ -55,7 +55,7 @@
 - 4 处修补 + 发版 v0.5.0（commit `218f70b`，tag `v0.5.0` 已推 origin）。
 
 ### Phase 10: Mail Cache（envelope 缓存 + 并发 sync）[complete]
-按 `CONTEXT.md` §Mail Cache + ADR 0010-0013 实现：
+按 `CONTEXT.md` §Mail Cache + ADR [M002](docs/adr/M002-imap-connection-pool.md)–[M005](docs/adr/M005-staleness-auto-sync.md) 实现：
 - `src/modules/email_cache.rs`：mail_cache.db 双表（envelopes 主键 `(account, folder, uid)`，folder_state 主键 `(account, folder)` 存 `uid_validity/max_uid/last_sync_at`）；`upsert_envelopes` 事务原子写 envelope + 前进水位；`clear_folder` 处理 UIDVALIDITY 失效；`is_stale` 阈值 15 分钟。
 - `src/modules/email_pool.rs`：M=4 IMAP session 池 + `Arc<Semaphore>`；`PoolGuard` 借用归还，`invalidate` 标 dirty。
 - `src/modules/email.rs::mail_list` 改造：开 cache → staleness 检查 → 必要时并发 sync（`sync_folders_concurrent` 跨 folder `join_all`）→ 查本地 envelope → 渲染表格。`search` / `read` / `send` 保持直连 IMAP 不变。

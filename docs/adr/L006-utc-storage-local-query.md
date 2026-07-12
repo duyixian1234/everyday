@@ -1,11 +1,11 @@
-# ADR 0006: UTC timestamp storage with local-timezone query
+# ADR L006: UTC timestamp storage with local-timezone query
 
 **Status:** Accepted
 **Date:** 2026-07-11
 
 ## Context
 
-Timeline events have a `timestamp` field stored as RFC3339 strings in SQLite. Queries like `timeline today` / `timeline week` express time ranges in the user's local timezone (e.g., "today" in UTC+8 means 00:00 to 23:59:59 local, which is 16:00 previous-day-UTC to 15:59:59 current-day-UTC).
+Timeline events have a `timestamp` field stored as RFC3339 strings in SQLite. Queries like `timeline today` / `timeline week` express time ranges in the user's local timezone (e.g. "today" in UTC+8 means 00:00 to 23:59:59 local, which is 16:00 previous-day-UTC to 15:59:59 current-day-UTC).
 
 SQLite has no native datetime type — RFC3339 strings are compared lexicographically. This works correctly **only if all timestamps use the same timezone offset**, because RFC3339 strings with different offsets have inconsistent dictionary ordering relative to chronological ordering.
 
@@ -34,10 +34,17 @@ Example: `2026-07-11T16:00:00+08:00` and `2026-07-11T08:00:00Z` represent the sa
 ### Store as Unix epoch integer
 
 - Correct ordering, but loses readability (debugging raw SQLite requires conversion).
-- Breaks consistency with existing modules (todo/note/bookmark already store RFC3339 strings for `created_at` / `updated_at`).
+- Breaks consistency with existing modules (todo / note / bookmark already store RFC3339 strings for `created_at` / `updated_at`).
 
 ## Consequences
 
 - All timestamps are UTC; timezone conversion happens only at the query and display boundary.
-- `chrono::Local` is used for local date bounds (no `chrono-tz` dependency needed — system timezone is sufficient).
-- JSON consumers must convert UTC to local for display. This is standard practice for machine-readable timestamps.
+- `chrono::Local` is used for local date bounds — no `chrono-tz` dependency needed; system timezone is sufficient.
+- JSON consumers must convert UTC to local for display. Standard practice for machine-readable timestamps.
+- DST boundary handling requires care: see [R004](R004-dst-boundary-dates.md) for the `.earliest()` / `.latest()` discipline.
+
+## Cross-references
+
+- The append model this timestamp discipline serves: [L001](L001-append-only-event-log.md).
+- The calendar-specific window that includes future events: [L002](L002-calendar-window-refresh.md).
+- DST-boundary parsing: [R004](R004-dst-boundary-dates.md).

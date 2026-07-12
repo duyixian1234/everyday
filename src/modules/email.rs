@@ -373,7 +373,7 @@ async fn collect_across_folders(
 
 /// 列出邮件摘要（默认递归所有文件夹）。
 ///
-/// 实现按 ADR 0010-0013：
+/// 实现按 ADR [M002](../docs/adr/M002-imap-connection-pool.md)–[M005](../docs/adr/M005-staleness-auto-sync.md)：
 /// 1. 打开 `mail_cache.db`。
 /// 2. 解析目标 folders（一次临时 IMAP session 拿 LIST）。
 /// 3. staleness 检查（任一 folder `last_sync_at > 15min` 或无水位 → 触发 sync）。
@@ -1223,7 +1223,7 @@ async fn sync_one_folder(
     };
 
     let count = envelopes.len();
-    // 写 envelope + 更新水位（事务原子，ADR 0012）
+    // 写 envelope + 更新水位（事务原子，ADR M004 强一致）
     email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &envelopes).await?;
     Ok(count)
 }

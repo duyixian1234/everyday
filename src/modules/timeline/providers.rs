@@ -412,7 +412,7 @@ impl TimelineProvider for BookmarkProvider {
 /// 由 notion 账户的 todo/note/bookmark 写入路径（AOP hook）→ ops-log。
 /// 这里把 ops-log 转成 timeline events,使这些操作能在 `timeline list` 中可见。
 ///
-/// ADR 0007 不查 notion API，timeline 通过此 provider 看本地 ops-log。
+/// ADR [L007](../../docs/adr/L007-notion-ops-log.md) 不查 notion API，timeline 通过此 provider 看本地 ops-log。
 pub struct OpsLogProvider {
     module: &'static str,
 }

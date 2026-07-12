@@ -155,7 +155,7 @@ pub async fn get_folder_state(
 }
 
 /// 事务：upsert envelopes + 更新水位 `max_uid` 与 `last_sync_at`。
-/// 失败原子回滚——水位不会超前于实际 envelope（ADR 0012 强一致要求）。
+/// 失败原子回滚——水位不会超前于实际 envelope（ADR [M004](../docs/adr/M004-uid-watermark-sync.md) 强一致要求）。
 ///
 /// `envelopes` 为空时仍更新 `last_sync_at`（`max_uid` 通过 `MAX()` 不变）。
 pub async fn upsert_envelopes(
@@ -303,7 +303,7 @@ fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
     crate::util::datetime::parse_rfc3339(s)
 }
 
-/// staleness 阈值（ADR 0013：写死 15 分钟，无 flag / config）。
+/// staleness 阈值（ADR [M005](../docs/adr/M005-staleness-auto-sync.md)：写死 15 分钟，无 flag / config）。
 pub const STALENESS_THRESHOLD_SECS: i64 = 15 * 60;
 
 /// folder 是否 stale（last_sync_at 距 now > 阈值）。边界：恰 = 阈值不 stale。
