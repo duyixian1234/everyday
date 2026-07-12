@@ -67,17 +67,7 @@ impl EntryForCache {
         let summary = e
             .summary
             .as_ref()
-            .map(|s| {
-                let content = s.content.as_str();
-                if content.len() > 500 {
-                    // Cache more than the timeline snippet (200) so search
-                    // consumers can re-truncate; we keep the upstream's
-                    // full text up to 500 chars.
-                    content[..500].to_string()
-                } else {
-                    content.to_string()
-                }
-            })
+            .map(|s| crate::util::strings::truncate_chars(s.content.as_str(), 500).to_string())
             .unwrap_or_default();
         let link = pick_link(&e.links);
         let author = e
@@ -682,8 +672,8 @@ pub async fn fetch_for_timeline(
                     .as_ref()
                     .map(|s| {
                         let content = s.content.as_str();
-                        if content.len() > 200 {
-                            format!("{}...", &content[..200])
+                        if content.chars().count() > 200 {
+                            format!("{}...", crate::util::strings::truncate_chars(content, 200))
                         } else {
                             content.to_string()
                         }

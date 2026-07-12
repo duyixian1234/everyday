@@ -11,3 +11,4 @@ pub mod args;
 pub mod datetime;
 pub mod id;
 pub mod json_mode;
+pub mod strings;

@@ -196,8 +196,8 @@ pub async fn search_for_search(q: &SearchQuery) -> Result<Vec<Hit>> {
             let ts = published
                 .as_deref()
                 .and_then(crate::util::datetime::parse_rfc3339);
-            let snippet = if summary.len() > 200 {
-                format!("{}…", &summary[..200])
+            let snippet = if summary.chars().count() > 200 {
+                format!("{}…", crate::util::strings::truncate_chars(&summary, 200))
             } else {
                 summary
             };
