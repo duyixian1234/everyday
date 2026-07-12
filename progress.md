@@ -7,12 +7,13 @@
 
 ## 当前状态
 
-- **Phase 11 落地（待发版 v0.7.0）**：跨模块统一搜索 `everyday search query "<q>"`
+- **v0.7.0 已发布**：Phase 11 跨模块统一搜索 `everyday search query "<q>"`
   落地，新增 `search` 模块（[S001–S006](./docs/adr/S001-search-architecture.md)）。
   Searchable 适配器覆盖 note / todo / bookmark / rss（新增本地条目缓存表）
   / cal（full-pull + in-memory GLOB）；best-effort 并发扇出，per-module cap 50，
   global cap 20，空结果 exit 0；warning 走 stderr（`--json` 结构化）。
   241 tests / clippy `-D warnings` 零警告 / fmt clean。
+- **v0.7.0 已发布**：tag `v0.7.0`，跨模块统一搜索（search 模块 + Searchable/Registry），ADR S001–S006。
 - **v0.6.2 已发布**：tag `v0.6.2`，修复 Rust 1.97 stable clippy
   `doc_lazy_continuation` + `doc_overindented_list_items` 两 lint 阻塞 CI 的问题
   （`src/modules/calendar.rs:10` 补 2 空格缩进、`src/modules/todo.rs:14` 由 14 空格
@@ -71,7 +72,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
-| **v0.7.0** | _pending_ | 跨模块统一搜索：`everyday search` + Searchable/Registry | [S001–S006](./docs/adr/S001-search-architecture.md) |
+| **v0.7.0** | `v0.7.0` | 跨模块统一搜索：`everyday search` + Searchable/Registry | [S001–S006](./docs/adr/S001-search-architecture.md) |
 | **v0.6.2** | `v0.6.2` | 修 Rust 1.97 clippy 注释 lint 阻塞 CI | （纯格式 patch，无新 ADR） |
 | **v0.6.1** | `v0.6.1` | 修 timeline `--from` 单独给定被静默回退 | [L013](./docs/adr/L013-from-explicit-error.md) |
 | **v0.6.0** | `v0.6.0` | Mail Cache 落地 + clap 子命令化 + 移除 help-registry | [M002–M005](./docs/adr/M002-imap-connection-pool.md), [F007](./docs/adr/F007-clap-subcommand-tree.md), [R012](./docs/adr/R012-config-executor-trait.md) |

@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.7.0 实施中：Phase 11（跨模块统一搜索）落地，新增 `search` 模块（ADR S001–S006）。`everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`：searchable 适配器覆盖 note/todo/bookmark/rss（本地条目缓存表）+ cal（full-pull + in-memory GLOB），best-effort 并发扇出 + per-module cap 50 + global cap 20 + 空结果 exit 0，warning 走 stderr（`--json` 结构化）。mail 推迟 v1.1。241 tests / clippy 零警告 / fmt clean；v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
+**当前状态：** v0.7.0 已发布：Phase 11（跨模块统一搜索）落地，新增 `search` 模块（ADR S001–S006）。`everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`：searchable 适配器覆盖 note/todo/bookmark/rss（本地条目缓存表）+ cal（full-pull + in-memory GLOB），best-effort 并发扇出 + per-module cap 50 + global cap 20 + 空结果 exit 0，warning 走 stderr（`--json` 结构化）。mail 推迟 v1.1。241 tests / clippy 零警告 / fmt clean；v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
 
 ---
 
@@ -73,7 +73,7 @@
 - 执行模型：best-effort（失败模块进 `SearchWarning` 仅 stderr 输出；仅全失败才报 AgentError，[L009](docs/adr/L009-best-effort-sync.md)/[R001](docs/adr/R001-thread-local-json-mode.md)）；warning 文案：`--json` → stderr 结构化 `{"_warning": ...}`，text → `eprintln!`。
 - ts：每模块自定义主时间，全局 `ts desc`；note=updated_at, todo=updated_at（fallback created_at），bookmark=created_at，rss=published，cal=event_start（[S005](docs/adr/S005-time-semantics-scope.md)）。
 - 复用：[S006](docs/adr/S006-search-module-cli.md) 共享 `util::datetime::parse_since`（来自 [L012](docs/adr/L012-since-query-flag.md)）和 `timeline::parse_source_list`（验证 `--module`）。
-- 质量门禁：build / clippy `-D warnings` / 241 tests / fmt clean；发版目标 v0.7.0。
+- 质量门禁：build / clippy `-D warnings` / 241 tests / fmt clean；已发布 v0.7.0。
 - 提交：5 个原子 commit — search core、note、todo、bookmark、rss cache + searchable、cal、search module + registry 接入。
 
 ---
@@ -160,4 +160,4 @@ username = "me"
 - Phase 8: complete
 - Phase 9: complete
 - Phase 10: complete
-- Phase 11: complete (search module landed; release v0.7.0 pending)
+- Phase 11: complete (search module landed; released as v0.7.0)
