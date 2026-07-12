@@ -150,6 +150,12 @@ impl ModuleRegistry {
             )),
         );
 
+        // Cross-module unified search (Phase 11, ADR S001–S006).
+        modules.insert(
+            "search",
+            Box::new(crate::modules::search::SearchModule::new(config.clone())),
+        );
+
         Ok(Self { modules })
     }
 
@@ -175,6 +181,7 @@ pub mod note;
 pub mod note_local;
 pub mod rss;
 pub mod rss_items;
+pub mod search;
 pub mod timeline;
 pub mod todo;
 pub mod todo_local;

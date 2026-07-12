@@ -361,18 +361,25 @@ impl TimelineModule {
 /// `--source` is validated when parsed; previously unknown sources were silently
 /// dropped (the `events` table's `source IN (...)` query naturally returns empty),
 /// so users saw "no events" and assumed it was a data problem. Now it errors explicitly.
-const KNOWN_SOURCES: &[&str] = &["mail", "cal", "rss", "todo", "note", "bookmark"];
+pub const KNOWN_SOURCES: &[&str] = &["mail", "cal", "rss", "todo", "note", "bookmark"];
 
 fn parse_source_filter(raw: Option<&String>) -> Result<Vec<String>> {
+    parse_source_list(raw, KNOWN_SOURCES)
+}
+
+/// Shared helper: parse a comma-separated source/module allow-list,
+/// validating each entry against `known`. Empty / None -> empty Vec.
+/// Used by timeline's --source and search's --module (S006).
+pub fn parse_source_list(raw: Option<&String>, known: &[&str]) -> Result<Vec<String>> {
     let Some(s) = raw else {
         return Ok(Vec::new());
     };
     let mut out = Vec::new();
     for token in s.split(',').map(str::trim).filter(|s| !s.is_empty()) {
-        if !KNOWN_SOURCES.contains(&token) {
+        if !known.contains(&token) {
             return Err(AgentError::InvalidArgument(format!(
-                "unknown --source '{token}', expected one of: {}",
-                KNOWN_SOURCES.join(", ")
+                "unknown module '{token}', expected one of: {}",
+                known.join(", ")
             )));
         }
         out.push(token.to_string());
@@ -421,42 +428,11 @@ fn parse_date_to_utc(s: &str, end_of_day: bool) -> Option<chrono::DateTime<Utc>>
 
 /// Parse `--since` into a UTC DateTime (query-path-only, **preserves sub-day precision**).
 ///
-/// Accepts:
-/// - Date `YYYY-MM-DD`: 00:00 local of that date = UTC start (1-day granularity).
-/// - Relative duration `30m` / `2h` / `1d` / `7d`: current local time minus duration,
-///   converted to UTC (1-minute granularity).
-///
-/// So `timeline today --since 30m` actually returns only the events of the past
-/// 30 minutes, not the whole day.
+/// Thin wrapper around [`crate::util::datetime::parse_since`]; kept as
+/// a method-like entry point for backward compat in timeline's existing
+/// callers.
 fn parse_since_utc(s: &str) -> Result<chrono::DateTime<Utc>> {
-    let s = s.trim();
-    // 1. Date
-    if let Ok(d) = NaiveDate::parse_from_str(s, "%Y-%m-%d") {
-        return local_to_utc_start(d).ok_or_else(|| {
-            AgentError::InvalidArgument(format!("invalid --since '{s}': DST gap on date"))
-        });
-    }
-    // 2. Relative duration
-    if s.len() >= 2 {
-        let (num, unit) = s.split_at(s.len() - 1);
-        if let Ok(n) = num.parse::<u64>() {
-            let now_local = Local::now();
-            let dt = match unit {
-                "m" => now_local - chrono::Duration::minutes(n as i64),
-                "h" => now_local - chrono::Duration::hours(n as i64),
-                "d" => now_local - chrono::Duration::days(n as i64),
-                _ => {
-                    return Err(AgentError::InvalidArgument(format!(
-                        "invalid --since '{s}', expected YYYY-MM-DD or 30m/2h/1d"
-                    )));
-                }
-            };
-            return Ok(dt.with_timezone(&Utc));
-        }
-    }
-    Err(AgentError::InvalidArgument(format!(
-        "invalid --since '{s}', expected YYYY-MM-DD or 30m/2h/1d"
-    )))
+    crate::util::datetime::parse_since(s)
 }
 
 /// Resolve the query time range -> (from_utc, to_utc).
