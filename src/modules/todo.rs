@@ -11,7 +11,7 @@
 //! Commands (actions):
 //! - `login`    interactively stores the Notion Integration Token in the system keyring
 //! - `init-db`  creates the task database in Notion (needs `parent_page_id`) and writes
-//!              `database_id` back into the config
+//!   `database_id` back into the config
 //! - `list`     lists open tasks (by Due ascending); `--all` lists every task
 //! - `add`      adds a task (`--title` required; `--due` / `--priority` optional)
 //! - `start`    marks the task In Progress

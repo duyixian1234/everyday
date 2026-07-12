@@ -7,7 +7,7 @@
 //! Stack: libdav 0.10 (CalDAV protocol, request API) + icalendar 0.17 (iCalendar
 //! parse/generate) + hyper 1.x (HTTP, body=String to satisfy libdav's HttpClient trait)
 //! + hyper-rustls (ring TLS, webpki roots) + tower-http (Basic Auth middleware that
-//! overwrites the Authorization header).
+//!   overwrites the Authorization header).
 
 use std::collections::HashMap;
 use std::sync::Arc;
