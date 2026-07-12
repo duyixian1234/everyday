@@ -1,0 +1,4 @@
+# Force LF line endings for shell scripts so `bash scripts/*.sh` works on
+# Windows/WSL dev checkouts (core.autocrlf=true otherwise normalizes to CRLF,
+# which makes bash choke on trailing \r). PowerShell scripts keep CRLF.
+*.sh text eol=lf
