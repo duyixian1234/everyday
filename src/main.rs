@@ -11,6 +11,7 @@
 mod cli;
 mod modules;
 mod ops_log;
+mod search;
 mod shared;
 mod util;
 
