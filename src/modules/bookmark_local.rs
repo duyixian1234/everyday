@@ -13,14 +13,16 @@
 
 use std::collections::HashMap;
 
+use async_trait::async_trait;
 use serde_json::{Value, json};
 use sqlx::{Row, SqlitePool};
 
-use crate::config::BookmarkAccount;
+use crate::config::{BookmarkAccount, Config};
 use crate::error::{AgentError, Result};
 use crate::modules::bookmark::BookmarkItem;
 use crate::modules::local::{connect, mode_json, resolve_db_path};
 use crate::output::Output;
+use crate::search::{Hit, SearchQuery, Searchable};
 
 /// Table creation statements: the bookmark master table + the tag association table.
 const CREATE_BOOKMARKS_SQL: &str = "CREATE TABLE IF NOT EXISTS bookmarks (\
@@ -237,6 +239,129 @@ pub async fn fetch_for_timeline(
 
 // parse_tags: see `crate::modules::local::parse_tags` — shared by both bookmark providers [R009](../../docs/adr/R009-notion-common-local-module.md).
 
+// ============ Cross-module search (Phase 11) ============
+
+/// Per-module hard cap, enforced inside the provider
+/// ([S004](../../docs/adr/S004-execution-model.md)).
+const SEARCH_PER_MODULE_CAP: usize = 50;
+
+/// Cross-module search (Phase 11): return bookmark hits whose `title`,
+/// `url`, or any tag matches the query (OR over tokens, case-insensitive
+/// GLOB).
+///
+/// `ts` is `created_at` (UTC, RFC3339) — the module's primary time
+/// ([S005](../../docs/adr/S005-time-semantics-scope.md)).
+///
+/// `Hit.url` carries the bookmark URL when present (so search consumers
+/// can open the link without re-running `bookmark list`).
+///
+/// Notion accounts are skipped in v1 (live-fetch-on-search rejected by
+/// [S005](../../docs/adr/S005-time-semantics-scope.md)).
+#[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+pub async fn search_for_search(account: &BookmarkAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
+    let tokens: Vec<&str> = q.tokens();
+    if tokens.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Build a WHERE clause that ORs GLOB matches across title, url, and
+    // (via JOIN bookmark_tags) tag columns.
+    let mut params: Vec<String> = Vec::new();
+    let mut conds: Vec<String> = Vec::new();
+    for t in &tokens {
+        if t.is_empty() {
+            continue;
+        }
+        let lower = t.to_ascii_lowercase();
+        for col in ["b.title", "b.url", "t.tag"] {
+            params.push(format!("*{lower}*"));
+            let idx = params.len();
+            conds.push(format!("lower({col}) GLOB ?{idx}"));
+        }
+    }
+    if conds.is_empty() {
+        return Ok(Vec::new());
+    }
+    let where_clause = conds.join(" OR ");
+
+    let cap = q.limit.unwrap_or(SEARCH_PER_MODULE_CAP);
+    params.push(cap.to_string());
+    let cap_idx = params.len();
+
+    // LEFT JOIN so a bookmark with no tags still surfaces when its
+    // title/url matches.
+    let sql = format!(
+        "SELECT b.id, b.url, b.title, b.created_at FROM bookmarks b \
+         LEFT JOIN bookmark_tags t ON t.bookmark_id = b.id \
+         WHERE {where_clause} \
+         GROUP BY b.id \
+         ORDER BY b.created_at DESC, b.id ASC \
+         LIMIT ?{cap_idx}"
+    );
+
+    let pool = open(account).await?;
+    let mut query = sqlx::query(&sql);
+    for p in &params {
+        query = query.bind(p);
+    }
+
+    let rows = query.fetch_all(&pool).await?;
+    let hits = rows
+        .iter()
+        .map(|r| {
+            let id: String = r.get("id");
+            let url: String = r.get("url");
+            let title: String = r.get("title");
+            let created_at: String = r.get("created_at");
+            let ts = crate::util::datetime::parse_rfc3339(&created_at);
+            let snippet = if url.is_empty() {
+                String::new()
+            } else {
+                url.clone()
+            };
+            Hit {
+                module: "bookmark",
+                account: Some(account.name.clone()),
+                id,
+                title,
+                snippet,
+                url: if url.is_empty() { None } else { Some(url) },
+                ts,
+                kind: "bookmark",
+            }
+        })
+        .collect();
+    Ok(hits)
+}
+
+/// Provider adapter: implements [`Searchable`] for one local bookmark account.
+#[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+pub struct BookmarkSearchProvider {
+    account: BookmarkAccount,
+}
+
+impl BookmarkSearchProvider {
+    /// Construct from a configured local account.
+    #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
+    pub fn new(account: BookmarkAccount) -> Self {
+        Self { account }
+    }
+}
+
+#[async_trait]
+impl Searchable for BookmarkSearchProvider {
+    fn module_name(&self) -> &'static str {
+        "bookmark"
+    }
+
+    async fn search(&self, q: &SearchQuery, _cfg: &Config) -> Result<Vec<Hit>> {
+        if q.raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        search_for_search(&self.account, q).await
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,5 +473,56 @@ mod tests {
             crate::modules::local::parse_tags(Some(&"a, b ,c".to_string())),
             vec!["a", "b", "c"]
         );
+    }
+
+    /// Cross-module search (Phase 11): GLOB over title / url / tag, OR
+    /// semantics over tokens, LEFT JOIN keeps tag-less bookmarks visible.
+    #[tokio::test]
+    async fn search_for_search_matches_title_url_and_tag() {
+        let acc = tmp_account();
+        // Bookmark 1: title contains "rust", URL distinct.
+        let mut f1 = HashMap::new();
+        f1.insert("url".into(), "https://www.rust-lang.org".into());
+        f1.insert("title".into(), "Rust 官网".into());
+        f1.insert("tags".into(), "rust,lang".into());
+        add(&acc, &f1).await.unwrap();
+
+        // Bookmark 2: only a tag matches ("python").
+        let mut f2 = HashMap::new();
+        f2.insert("url".into(), "https://example.org".into());
+        f2.insert("title".into(), "Some page".into());
+        f2.insert("tags".into(), "python,docs".into());
+        add(&acc, &f2).await.unwrap();
+
+        // Query "rust" -> only bookmark 1 (title GLOB).
+        let q = SearchQuery::new("rust");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].title.contains("Rust"));
+        assert_eq!(hits[0].url.as_deref(), Some("https://www.rust-lang.org"));
+
+        // Query "python" -> only bookmark 2 (tag GLOB).
+        let q = SearchQuery::new("python");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].title.contains("Some page"));
+
+        // OR-of-tokens "rust python" -> both bookmarks.
+        let q = SearchQuery::new("rust python");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 2);
+
+        // URL match: "example.org" matches only bookmark 2.
+        let q = SearchQuery::new("example.org");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].url.as_deref().unwrap().contains("example.org"));
+
+        // Empty query -> no hits.
+        let q = SearchQuery::new("  ");
+        let hits = search_for_search(&acc, &q).await.unwrap();
+        assert!(hits.is_empty());
+
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
     }
 }
