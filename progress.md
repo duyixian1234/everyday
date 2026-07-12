@@ -7,6 +7,12 @@
 
 ## 当前状态
 
+- **Phase 11 落地（待发版 v0.7.0）**：跨模块统一搜索 `everyday search query "<q>"`
+  落地，新增 `search` 模块（[S001–S006](./docs/adr/S001-search-architecture.md)）。
+  Searchable 适配器覆盖 note / todo / bookmark / rss（新增本地条目缓存表）
+  / cal（full-pull + in-memory GLOB）；best-effort 并发扇出，per-module cap 50，
+  global cap 20，空结果 exit 0；warning 走 stderr（`--json` 结构化）。
+  241 tests / clippy `-D warnings` 零警告 / fmt clean。
 - **v0.6.2 已发布**：tag `v0.6.2`，修复 Rust 1.97 stable clippy
   `doc_lazy_continuation` + `doc_overindented_list_items` 两 lint 阻塞 CI 的问题
   （`src/modules/calendar.rs:10` 补 2 空格缩进、`src/modules/todo.rs:14` 由 14 空格
@@ -17,7 +23,7 @@
   help-registry）。详见 [ADR M002–M005](./docs/adr/M002-imap-connection-pool.md) 与
   [ADR F007](./docs/adr/F007-clap-subcommand-tree.md)。
 - **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline`
-  / `config`（8 个，走统一 Executor trait）均可用。
+  / `config` / **`search`**（9 个，走统一 Executor trait）均可用。
 - **本地 provider 默认**：[note](./docs/adr/N001-notion-note-module.md) /
   [todo](./docs/adr/T001-notion-todo-module.md) /
   [bookmark](./docs/adr/B001-bookmark-dual-provider.md) 三模块默认走本地
@@ -27,9 +33,6 @@
 - **质量门禁**：`cargo build` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
   零警告 / `cargo test`（具体数字见各版本发版行）/ `cargo fmt --check` ✅；
   CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
-- **Phase 11 规划中**：跨模块统一搜索 `everyday search`，ADR
-  [S001–S006](./docs/adr/S001-search-architecture.md) 已落（目标 v0.7.0）；v1 覆盖
-  note/todo/bookmark/rss(本地缓存表)/cal，mail 留 v1.1。
 
 ## ADR 时间序索引
 
@@ -38,9 +41,9 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-07-12 | S | [S001–S006](./docs/adr/S001-search-architecture.md) | 跨模块统一搜索：架构 / Hit 契约 / 查询语义 / 执行模型 / 时间语义与范围 / CLI |
 | 2026-07-12 | F | [F009](./docs/adr/F009-performance-budget.md) | 性能预算（冷启动 < 100 ms + 网络超时 + 大输出流式） |
 | 2026-07-12 | F | [F010](./docs/adr/F010-testing-requirements.md) | 测试要求（强制单测项 + mock + CI 行为） |
-| 2026-07-12 | S | [S001–S006](./docs/adr/S001-search-architecture.md) | 跨模块统一搜索：架构 / Hit 契约 / 查询语义 / 执行模型 / 时间语义与范围 / CLI |
 | 2026-07-12 | L | [L013](./docs/adr/L013-from-explicit-error.md) | Timeline `--from` 单独给定显式报错 |
 | 2026-07-12 | R | [R012](./docs/adr/R012-config-executor-trait.md) | ConfigModule 走 Executor trait |
 | 2026-07-12 | F | [F007](./docs/adr/F007-clap-subcommand-tree.md) | clap 数据驱动子命令树（module_arg_spec） |
@@ -68,6 +71,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.7.0** | _pending_ | 跨模块统一搜索：`everyday search` + Searchable/Registry | [S001–S006](./docs/adr/S001-search-architecture.md) |
 | **v0.6.2** | `v0.6.2` | 修 Rust 1.97 clippy 注释 lint 阻塞 CI | （纯格式 patch，无新 ADR） |
 | **v0.6.1** | `v0.6.1` | 修 timeline `--from` 单独给定被静默回退 | [L013](./docs/adr/L013-from-explicit-error.md) |
 | **v0.6.0** | `v0.6.0` | Mail Cache 落地 + clap 子命令化 + 移除 help-registry | [M002–M005](./docs/adr/M002-imap-connection-pool.md), [F007](./docs/adr/F007-clap-subcommand-tree.md), [R012](./docs/adr/R012-config-executor-trait.md) |

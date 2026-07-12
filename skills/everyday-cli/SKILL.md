@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, login, init-db, delete), unified event timeline (today, yesterday, week, month, sync), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, query an aggregated timeline of recent activity, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, login, init-db, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, query an aggregated timeline of recent activity, search across all integrations in one shot, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -26,7 +26,7 @@ Verify with `everyday --version`. Full install steps (per-platform extraction co
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `config`
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `search` · `config`
 
 ## Rules (follow exactly)
 
@@ -36,7 +36,7 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks + `delete`), `timeline` (unified event log: `today` / `yesterday` / `week` / `month` / `sync`), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
+4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks + `delete`), `timeline` (unified event log: `today` / `yesterday` / `week` / `month` / `sync`), `search` (cross-module unified query: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
 5. **`timeline today --json` is the aggregated activity snapshot.** It is one of the cheapest ways to answer "what's happened recently across all my integrations?". Always prefer it over per-module polling unless the user explicitly asks for a specific module.
 
 ## First-time setup (only if config is missing)

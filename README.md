@@ -325,6 +325,31 @@ everyday timeline today --since 30m --json
 everyday timeline today --source todo --json
 ```
 
+### search — cross-module unified search (NEW in v0.7.0)
+
+One query, all modules. A single `everyday search` call fans out concurrently to every registered `Searchable` provider (note / todo / bookmark / rss / cal), merges the hits into one time-ordered list, and renders them as Text or JSON. Empty results exit 0; per-module failures are surfaced as `SearchWarning` on stderr (text mode) or as a structured `{"_warning": ...}` line (`--json` mode) without aborting the whole query.
+
+| Command | Description | Usage |
+|------|------|------|
+| `query` | Run a free-text query across every searchable module | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
+
+**Module scope (v1)**: `note` / `todo` / `bookmark` (local SQLite, GLOB over title + content/url/tag), `rss` (a local item cache table at `~/.config/everyday/rss-items.db` populated by `rss digest` / `rss fetch`), `cal` (full-pull + in-memory GLOB over summary / location / start). Mail is deferred to v1.1. Notion-backed accounts are skipped in v1 (live-fetch-on-search was rejected for being slow / rate-limit prone).
+
+**Query semantics**: whitespace-tokenized, OR over tokens, case-insensitive GLOB substring (`lower(col) GLOB '*token*'`). Per-module hard cap = 50; global cap = 20 (default). `ts desc` ordering; each module's primary time is its `ts` (note: updated_at; todo: updated_at; bookmark: created_at; rss: published; cal: event start).
+
+**Example**:
+
+```bash
+# Find anything mentioning "rust" across all modules, JSON output
+everyday search query "rust" --json
+
+# Restrict to note + todo, with a 7-day lower bound
+everyday search query "rust timeline" --module note,todo --since 7d
+
+# Cap the merged result to 5 hits
+everyday search query "release" --limit 5
+```
+
 **Design notes**:
 
 - **Append-only**: events have a natural unique key `(source, account, ref_id, event_type, timestamp)` (`INSERT OR IGNORE`), so re-running `sync` is safe.
@@ -649,6 +674,8 @@ Adding a module only takes: create a file + implement the trait + register one l
 | `note` | ✅ Fully available | login / search / list / create / read / append / update (local SQLite by default, optional Notion API) |
 | `todo` | ✅ Fully available | login / init-db / list / add / start / complete (local SQLite by default, optional Notion API) |
 | `bookmark` | ✅ Fully available | login / init-db / list / add (local SQLite by default, optional Notion API) |
+| `timeline` | ✅ Fully available | unified event log: today / yesterday / week / month / sync |
+| `search` | ✅ Fully available (NEW in v0.7.0) | cross-module unified search: query all modules in one shot |
 
 ## License
 

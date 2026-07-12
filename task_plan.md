@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.6.2 已发布；修复 Rust 1.97 stable clippy `doc_lazy_continuation` + `doc_overindented_list_items` 两 lint 阻塞 CI 的问题（commit `dd2e786`，`src/modules/calendar.rs:10` 补 2 空格缩进、`src/modules/todo.rs:14` 由 14 空格缩至 2 空格）；v0.6.1 修复 timeline `--from` 单独给定被静默回退 preset（commit `52f6377`）；v0.6.0 Mail Cache 实施完成（`src/modules/email_cache.rs` + `email_pool.rs` + `email.rs::mail_list` 改造）+ CLI 重构（clap 子命令树 + 移除 help-registry），209 tests / clippy 零警告 / fmt clean；7 个外部集成模块（mail/cal/rss/note/todo/bookmark）+ `timeline` + `config` 均可用，note/todo/bookmark 支持本地 SQLite provider 且默认 local，timeline 通过 ops-log AOP 捕获 notion 写操作后通过 OpsLogProvider 投影到 timeline.events，`mail list` 走本地 envelope 缓存（auto-sync staleness=15min，`--sync` 强制）。 **Phase 11 规划中**：跨模块统一搜索 `everyday search`（ADR S001–S006，目标 v0.7.0）。 **Phase 11 规划中**：跨模块统一搜索 `everyday search`（ADR S001–S006，目标 v0.7.0）。
+**当前状态：** v0.7.0 实施中：Phase 11（跨模块统一搜索）落地，新增 `search` 模块（ADR S001–S006）。`everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`：searchable 适配器覆盖 note/todo/bookmark/rss（本地条目缓存表）+ cal（full-pull + in-memory GLOB），best-effort 并发扇出 + per-module cap 50 + global cap 20 + 空结果 exit 0，warning 走 stderr（`--json` 结构化）。mail 推迟 v1.1。241 tests / clippy 零警告 / fmt clean；v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
 
 ---
 
@@ -64,16 +64,17 @@
 - 质量门禁全绿：build ✅ / clippy `-D warnings` 零警告 ✅ / 196 tests passed (+15) ✅ / fmt clean ✅。
 - 已发版：v0.6.0（Mail Cache）+ v0.6.1（timeline `--from` 静默回退修复，commit `52f6377`）+ v0.6.2（Rust 1.97 clippy 注释 lint 修复，commit `dd2e786`）均已推 origin（GitHub，非 cnb 镜像）。
 
-### Phase 11: 跨模块统一搜索（Search）[in planning]
-按 ADR [S001](docs/adr/S001-search-architecture.md)–[S006](docs/adr/S006-search-module-cli.md) 实现：
-- `src/search.rs`：`Searchable` trait（edition 2024 原生 `async fn in trait`）+ `SearchQuery` / `Hit` + `SearchRegistry`（并发扇出 `join_all`）。
-- `search` 一等模块，action `query`：`everyday search "<q>" [--module a,b,c] [--json] [--limit N] [--since 7d]`；复用 timeline 的 `--since` / source-filter 解析（[L012](docs/adr/L012-since-query-flag.md)/[L013](docs/adr/L013-from-explicit-error.md)）。
-- v1 模块实现 `Searchable`：note/todo/bookmark（local SQLite GLOB，[R008](docs/adr/R008-sql-glob-not-like.md)）、rss（**新增本地条目缓存表**，由 sync/digest 填充）、cal（全量拉取 GLOB，[C002](docs/adr/C002-full-pull-local-filter.md)/[C003](docs/adr/C003-cal-provider-window-filter.md)）。
+### Phase 11: 跨模块统一搜索（Search）[complete]
+按 ADR [S001](docs/adr/S001-search-architecture.md)–[S006](docs/adr/S006-search-module-cli.md) 落地：
+- `src/search.rs`：`Searchable` trait（`#[async_trait]` 包装以 dyn-compat）+ `SearchQuery` / `Hit` / `SearchOutcome` + `SearchRegistry`（并发扇出 `join_all`，best-effort，per-module cap 50，global cap 20，empty exit 0）。
+- `src/modules/search.rs`：`SearchModule` 实现 Executor，单 action `query`；`everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]`。
+- v1 searchable 适配器：note/todo/bookmark（local SQLite GLOB，[R008](docs/adr/R008-sql-glob-not-like.md)）；rss（新增 `~/.config/everyday/rss-items.db` 本地条目缓存表，由 `digest`/`fetch` 同步写入，[S005](docs/adr/S005-time-semantics-scope.md)）；cal（`fetch_for_timeline` 全量拉取 + in-memory GLOB，[C002](docs/adr/C002-full-pull-local-filter.md)）；mail 推迟 v1.1。
 - 查询语义：空白切 token，多词 **OR**，大小写不敏感 GLOB 子串 `lower(col) GLOB lower('*token*')`（[S003](docs/adr/S003-query-semantics.md)）。
-- 执行模型：best-effort（失败模块进 warnings，仅全失败才报错，[L009](docs/adr/L009-best-effort-sync.md)/[R001](docs/adr/R001-thread-local-json-mode.md)）、每模块 cap 50 + 全局默认 20、空结果 exit 0（[S004](docs/adr/S004-execution-model.md)）。
-- ts：每模块自定义主时间，全局 `ts desc`；cal 用事件开始时间（[S005](docs/adr/S005-time-semantics-scope.md)）。
-- mail 搜索推迟 v1.1（IMAP `SEARCH`，[S003](docs/adr/S003-query-semantics.md)）。
-- 质量门禁：build / clippy `-D warnings` / test（新增 search 集成单测：并发扇出、归一化、空结果、source-filter 复用）/ fmt clean；发版目标 v0.7.0。
+- 执行模型：best-effort（失败模块进 `SearchWarning` 仅 stderr 输出；仅全失败才报 AgentError，[L009](docs/adr/L009-best-effort-sync.md)/[R001](docs/adr/R001-thread-local-json-mode.md)）；warning 文案：`--json` → stderr 结构化 `{"_warning": ...}`，text → `eprintln!`。
+- ts：每模块自定义主时间，全局 `ts desc`；note=updated_at, todo=updated_at（fallback created_at），bookmark=created_at，rss=published，cal=event_start（[S005](docs/adr/S005-time-semantics-scope.md)）。
+- 复用：[S006](docs/adr/S006-search-module-cli.md) 共享 `util::datetime::parse_since`（来自 [L012](docs/adr/L012-since-query-flag.md)）和 `timeline::parse_source_list`（验证 `--module`）。
+- 质量门禁：build / clippy `-D warnings` / 241 tests / fmt clean；发版目标 v0.7.0。
+- 提交：5 个原子 commit — search core、note、todo、bookmark、rss cache + searchable、cal、search module + registry 接入。
 
 ---
 
@@ -159,4 +160,4 @@ username = "me"
 - Phase 8: complete
 - Phase 9: complete
 - Phase 10: complete
-- Phase 11: in planning (design locked, ADRs S001–S006 written)
+- Phase 11: complete (search module landed; release v0.7.0 pending)

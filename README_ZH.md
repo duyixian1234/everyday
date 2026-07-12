@@ -334,6 +334,31 @@ everyday timeline today --source todo --json
 
 完整设计依据见 `docs/CONTEXT.md` 与 `docs/adr/0001`–`0009`。
 
+### search — 跨模块统一搜索（v0.7.0 新增）
+
+一次查询跨所有模块。`everyday search` 并发扇出到每个已注册的 `Searchable` provider（note / todo / bookmark / rss / cal），合并命中、按时间排序后统一输出。空结果 exit 0；模块级失败以 `SearchWarning` 走 stderr（text）或结构化 `{"_warning": ...}` 行（`--json`），不中断整个查询。
+
+| 命令 | 描述 | 用法 |
+|------|------|------|
+| `query` | 在所有可搜索模块上跑自由文本查询 | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
+
+**模块范围（v1）**：`note` / `todo` / `bookmark`（本地 SQLite，GLOB 命中 title + content/url/tag），`rss`（本地条目缓存表 `~/.config/everyday/rss-items.db`，由 `rss digest` / `rss fetch` 同步写入），`cal`（全量拉取 + 内存 GLOB 命中 summary / location / start）。Mail 推迟 v1.1；Notion-backed 账户 v1 不参与搜索（live-fetch-on-search 被 ADR S005 拒绝，理由：慢 / rate-limit）。
+
+**查询语义**：空白切 token、多词 **OR**、大小写不敏感 GLOB 子串（`lower(col) GLOB '*token*'`）。每模块硬上限 50；全局默认 20（可由 `--limit` 覆盖）。全局 `ts desc` 排序；各模块的主时间即 `ts`（note: updated_at，todo: updated_at，bookmark: created_at，rss: published，cal: event_start）。
+
+**示例**：
+
+```bash
+# 跨所有模块找 "rust" 相关的条目，JSON 输出
+everyday search query "rust" --json
+
+# 限定 note + todo，加 7 天下界
+everyday search query "rust timeline" --module note,todo --since 7d
+
+# 限制合并结果最多 5 条
+everyday search query "release" --limit 5
+```
+
 ## 输出模式
 
 ### Text 模式（默认）
@@ -649,6 +674,8 @@ pub trait Executor: Send + Sync {
 | `note` | ✅ 完整可用 | login / search / list / create / read / append / update（默认本地 SQLite，可选 Notion API） |
 | `todo` | ✅ 完整可用 | login / init-db / list / add / start / complete（默认本地 SQLite，可选 Notion API） |
 | `bookmark` | ✅ 完整可用 | login / init-db / list / add（默认本地 SQLite，可选 Notion API） |
+| `timeline` | ✅ 完整可用 | 统一事件流：today / yesterday / week / month / sync |
+| `search` | ✅ 完整可用（v0.7.0 新增） | 跨模块统一搜索：query |
 
 ## 许可证
 
