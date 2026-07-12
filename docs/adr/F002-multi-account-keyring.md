@@ -3,6 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-07-08
 
+> **Update (2026-07-12):** The keyring *service format* below is unchanged and remains authoritative. Ownership of credential store / get / delete / verify moved to the top-level `auth` module — see [R013](R013-auth-module-consolidation.md) (and [R014](R014-auth-verify-opt-in.md) / [R015](R015-auth-credential-io.md)).
+
 ## Context
 
 Users typically have more than one of each integration: a work mail account and a personal one, two calendars, several RSS feeds grouped by topic. The CLI must:

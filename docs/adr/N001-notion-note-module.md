@@ -3,6 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-07-10
 
+> **Update (2026-07-12):** Credential & `login` logic consolidated into the top-level `auth` module. This module's `login` subcommand is removed; `note` now calls `auth::get_credential`. See [R013](R013-auth-module-consolidation.md) (and [R014](R014-auth-verify-opt-in.md) / [R015](R015-auth-credential-io.md)).
+
 ## Context
 
 The `note` module fronts Notion's page model. The raw Notion API exposes pages as nested block trees (`paragraph → text`, `bulleted_list_item → text`, `toggle → children → paragraph → text`, ...). An Agent reading or appending notes has no business walking that tree; it wants flat text or Markdown.

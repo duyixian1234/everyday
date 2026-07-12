@@ -3,6 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-07-11
 
+> **Update (2026-07-12):** The `login_flow` helper described here moved into the top-level `auth` module; per-module `login` is removed. The `parse_tags` / `set_module_database_id` helpers remain in `local`. See [R013](R013-auth-module-consolidation.md).
+
 ## Context
 
 `note`, `todo`, and `bookmark` are three Notion-backed modules. Each originally wrote its own:

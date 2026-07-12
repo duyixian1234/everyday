@@ -3,6 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-07-10
 
+> **Update (2026-07-12):** Credential & `login` logic consolidated into the top-level `auth` module. This module's `login` subcommand is removed; `bookmark` now calls `auth::get_credential`. See [R013](R013-auth-module-consolidation.md) (and [R014](R014-auth-verify-opt-in.md) / [R015](R015-auth-credential-io.md)).
+
 ## Context
 
 The `bookmark` module was the last of the three Notion-backed modules to be designed. It followed `note` / `todo` but added one wrinkle: **tag filtering**. Users want to list bookmarks by tag (`bookmark list --tag rust`). Notion's tag property is a multi-select; a SQL `LIKE` over a comma-separated string doesn't match tags cleanly. Local SQLite, by contrast, can express tag membership as a join.
@@ -14,7 +16,7 @@ The two providers also had to coexist per-account — the same `add_dual_provide
 ### Actions
 
 ```
-everyday bookmark login                                       # notion only — no-op for local
+everyday auth login --module bookmark --account <name>       # notion only — no-op for local provider
 everyday bookmark init-db                                     # notion: create the "Bookmarks" database
 everyday bookmark add    --url U --title T [--tags t1,t2]
 everyday bookmark list   [--tag T]

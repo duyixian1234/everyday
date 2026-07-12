@@ -76,6 +76,37 @@
 - 质量门禁：build / clippy `-D warnings` / 241 tests / fmt clean；已发布 v0.7.0。
 - 提交：5 个原子 commit — search core、note、todo、bookmark、rss cache + searchable、cal、search module + registry 接入。
 
+### Phase 12: 凭据 / login 逻辑收拢到顶层 auth 模块 [pending]
+按 Grill 设计（ADR [R013](docs/adr/R013-auth-module-consolidation.md) 收拢总设计 / [R014](docs/adr/R014-auth-verify-opt-in.md) verify 显式可选 / [R015](docs/adr/R015-auth-credential-io.md) 非交互输入契约）。目标：删除 5 个模块的 `login` 子命令与各自 keyring 读写，统一由顶层 `auth` 命令 + `src/modules/auth.rs` 接管凭据全生命周期；`--verify` 显式触发真实认证，默认只存凭据。
+
+设计要点（Grill 已拍板，Q1–Q7）：
+- 接口：`everyday auth <login|logout|verify|list> --module <mod> [--account <name>] [--password <pwd> | --token <tok>] [--verify]`；复用全局 `--account`，缺省回退 module 默认账户。
+- 策略解析：`resolve_strategy(module, account) -> AuthStrategy {Password, Token, None}`，纯从 Config 派生；keyring user 由策略决定（Password→`account.username`，Token→`"token"`），keyring **service 格式冻结** `everyday/<module>/<account>`（F002 不动）。
+- verify 复用现有连接原语（`email::imap_connect` / cal 连接 / `notion_client`），local / rss 短路返回 `not_required`。
+- 非交互输入走 `--password`/`--token`（argv，绝不读 env）；flag 缺省回退 `rpassword` 交互；JSON 模式静默不回显。
+- 破坏性变更：移除各模块 `login`；CHANGELOG / ADR 标注 breaking。
+
+子任务（每项为独立可编译 commit，遵循 one-commit-one-task；每 commit 必过 `cargo build` + `cargo test` + `clippy --all-targets -- -D warnings` + `cargo fmt --check`）：
+
+| ID | 子任务 | 关键改动（文件:行引用当前位置） | 建议 commit |
+|----|--------|----------------------------------|-------------|
+| T12.1 | 脚手架：新建 `auth` 模块 + 注册 | 新增 `src/modules/auth.rs`：`AuthStrategy` + `resolve_strategy` + `store/get/delete_credential` + `AuthModule`(Executor，解析 4 actions 与 `--module/--account/--password/--token/--verify`)；`main.rs`/`cli.rs` 的 `ModuleRegistry` 注册 `auth` | `feat(auth): add auth module skeleton` |
+| T12.2 | `auth login` / `logout`（凭据存储与删除） | 实现 `store_credential`/`delete_credential` 落地 + 非交互 flag 与交互回退；keyring user 按策略派生（Password→username，Token→`"token"`） | `feat(auth): implement login/logout credential store` |
+| T12.3 | `auth verify` + `login --verify` | 按策略分发：mail/cal 复用 `imap_connect`/cal 连接真连；notion 复用 `notion_client`；local/rss 短路 `not_required` | `feat(auth): implement verify (opt-in)` |
+| T12.4 | `auth list` | 以 config 为主枚举账户，探测 keyring 状态，输出每行 `{"module","account","status"}`，`status ∈ {stored, missing, not_required}` | `feat(auth): implement list` |
+| T12.5 | 迁移 mail → `auth::get_credential` | `email.rs`：`get_password` 调用点(189/278/1307) 改 `auth::get_credential`；删除 `get_password`(206)/`mail_login`(220)/`login` action 臂(165/187) 及 `name:"login"` 注册(165) | `refactor(mail): use auth::get_credential` |
+| T12.6 | 迁移 calendar → `auth::get_credential` | `calendar.rs`：调用点(176/761) 改 `auth::get_credential`；删除 `get_password`(193)/`cal_login`(207)/`login` 臂(174) 及 `name:"login"` 注册(64) | `refactor(cal): use auth::get_credential` |
+| T12.7 | 迁移 note/todo/bookmark(notion) → `auth::get_credential` | 删除 `local.rs::login_notion`(110) 及 note/todo/bookmark 的 `X_login` + `login` 臂(63/187, 176/294, 137/227) 与 `name:"login"` 注册(63/176/137)；notion token 取用改 `auth::get_credential(..., keyring_user="token")` | `refactor(note,todo,bookmark): use auth for notion token` |
+| T12.8 | 移除 local provider `login` no-op | 删 `note_local.rs:85`/`todo_local.rs:68`/`bookmark_local.rs:56` 的 `login` 及对应 `login` 臂(175/278/218)；auth verify 对 local 返回 `not_required` | `refactor(local): drop login no-op` |
+| T12.9 | auth 模块单测 | `resolve_strategy` 全组合（mail/cal=Password, note/todo/bookmark notion=Token, 三者 local=None, rss=None）；`store/get/delete` 往返（临时 keyring entry 并清理）；verify 短路；`list` 状态映射 | `test(auth): add unit tests` |
+| T12.10 | 清理过时注释与死引用 | 移除指向旧 login/keyring 流程的注释（note 257 / todo 323 / bookmark 257 的 `See login_notion`；`get_password` 周边）；确认 `ops_log.rs:458` 断言 `!LOGGED_ACTIONS.contains("login")` 仍有效（login 不再被 AOP 记录） | `refactor: remove stale login/keyring comments` |
+| T12.11 | 用户文档同步 | `skills/README.md` + `skills/everyday-cli/references/COMMANDS.md` 增 `auth` 用法、标注 module `login` 已移除(breaking)；`README.md`/`README_ZH.md` 命令参考补 auth 节；`just check-links` 通过 | `docs(auth): user-facing command reference` |
+
+验收（Phase 完成条件）：
+- `everyday auth login --module mail --account work --password <p> --verify` 存+验一体成功；`everyday auth verify --module note` 读已存 token 重验成功；`everyday auth list` 输出三态。
+- 全模块不再有 `<module> login` 子命令；`cargo build` / `clippy -D warnings` / `test` / `fmt --check` 全绿。
+- 遗留 7 篇 ADR（M001/C001/N001/T001/B001/R009/F002）已在 Grill 阶段标注「已收拢至 auth」，本阶段无需再改。
+
 ---
 
 ## 关键设计决策
@@ -161,3 +192,4 @@ username = "me"
 - Phase 9: complete
 - Phase 10: complete
 - Phase 11: complete (search module landed; released as v0.7.0)
+- Phase 12: pending (auth module consolidation; design ADRs R013/R014/R015 done, implementation T12.1–T12.11 pending)

@@ -165,6 +165,30 @@ TimelineModule 实现 `Executor`，注册到 `ModuleRegistry`。`name()` = `"tim
 
 ---
 
+## Auth
+
+> 凭据与认证层。设计决策见 `docs/adr/R013` `R014` `R015`。
+
+### Credential（凭据）
+用于向外部服务认证某账户的秘密（密码或 API token）。只存于 OS keyring，永不写入配置文件或日志。
+
+### AuthStrategy（认证策略）
+按 (module, account) 派生出的凭据分类，决定如何存储与验证：
+- `Password`：`mail` / `cal`。keyring user = `account.username`；验证走 IMAP / CalDAV 真实登录。
+- `Token`：`note` / `todo` / `bookmark` 且 `provider = "notion"`。keyring user = `"token"`；验证走 `notion_client`。
+- `None`：`note` / `todo` / `bookmark` 的 `local`/`sqlite` provider，以及 `rss`。无凭据，无需存储或验证。
+
+### auth 模块
+顶层命令 + 共享模块，独占凭据的完整生命周期（store / get / delete / verify）。各模块改调 `auth::get_credential` 而非自行读 keyring。
+
+### verify（认证）
+证明已存凭据有效的行为——连接外部服务（IMAP/CalDAV 登录、Notion API 调用）。与"凭据存储"正交：`auth login` 默认只存，`verify` 是显式可选步骤（`--verify` flag 或独立 `auth verify` 动作）。
+
+### not_required
+`verify` / `list` 的一种状态，表示该账户 provider 无需凭据（local/sqlite、rss），故无可存、无可验。
+
+---
+
 ## Mail Cache
 
 > `mail` 模块的本地缓存层。独立于 Timeline.db。

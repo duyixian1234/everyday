@@ -111,6 +111,9 @@ Caveman-style full-code review fixes from 2026-07-11/12. These ADRs document **r
 | [R010](R010-notion-local-account.md) | `NotionLocalAccount` merge + type alias (TodoAccount / BookmarkAccount) | Accepted | 2026-07-11 |
 | [R011](R011-add-dual-providers-macro.md) | `add_dual_providers!` macro for `build_providers` (todo/note/bookmark) | Accepted | 2026-07-11 |
 | [R012](R012-config-executor-trait.md) | `ConfigModule` goes through the `Executor` trait | Accepted | 2026-07-12 |
+| [R013](R013-auth-module-consolidation.md) | Consolidate all credential/login logic into a top-level `auth` module + command | Accepted | 2026-07-12 |
+| [R014](R014-auth-verify-opt-in.md) | `verify` is an explicit opt-in step, separate from credential storage | Accepted | 2026-07-12 |
+| [R015](R015-auth-credential-io.md) | Non-interactive credential input via flags; secrets never read from environment | Accepted | 2026-07-12 |
 
 ## Search (S-series)
 

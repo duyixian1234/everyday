@@ -3,6 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-07-09
 
+> **Update (2026-07-12):** Credential & `login` logic consolidated into the top-level `auth` module. This module's `login` subcommand is removed; `cal` now calls `auth::get_credential`. See [R013](R013-auth-module-consolidation.md) (and [R014](R014-auth-verify-opt-in.md) / [R015](R015-auth-credential-io.md)).
+
 ## Context
 
 The `cal` module needs CalDAV access — discover calendars, list events, create / delete events. Three layers matter:
