@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.8.0 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地。Phase 13（动作层 Backend DI 重构 note/todo/bookmark）已实施完成（ADR R016–R018）：三模块动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取，加 in-memory Mock 回归护栏（note/todo/bookmark 各 2 条 DI 验收单测）。258 tests / clippy `-D warnings` 零警告 / fmt clean。Phase 13 为内部重构、非破坏性，随下次发版（v0.9.0 规划中）一并发布；mail 推迟 v1.1。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
+**当前状态：** v0.8.1 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地，Phase 13（动作层 Backend DI 重构 note/todo/bookmark）已实施完成（ADR R016–R018）：三模块动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取，加 in-memory Mock 回归护栏（note/todo/bookmark 各 2 条 DI 验收单测）。258 tests / clippy `-D warnings` 零警告 / fmt clean。Phase 13 为内部重构、非破坏性，已随 v0.8.1 发布；mail 推迟 v1.1。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
 
 ---
 
@@ -264,4 +264,4 @@ username = "me"
 - Phase 10: complete
 - Phase 11: complete (search module landed; released as v0.7.0)
 - Phase 12: complete (auth module consolidation; ADRs R013/R014/R015 done, v0.8.0 released)
-- Phase 13: complete (action-layer Backend DI for note/todo/bookmark; ADRs R016/R017/R018 implemented via T13.1–T13.10; 258 tests / clippy `-D warnings` clean / fmt clean; non-breaking, ships in next release)
+- Phase 13: complete (action-layer Backend DI for note/todo/bookmark; ADRs R016/R017/R018 implemented via T13.1–T13.10; released as v0.8.1; 258 tests / clippy `-D warnings` clean / fmt clean; non-breaking)

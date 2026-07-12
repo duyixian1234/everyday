@@ -7,6 +7,7 @@
 
 ## 当前状态
 
+- **v0.8.1 已发布**：Phase 13 动作层 Backend DI 重构（[R016–R018](./docs/adr/R016-action-backend-di.md)）落地——note/todo/bookmark 动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取；加 in-memory `Mock*Backend` 做 DI 回归护栏（各 2 条验收单测）。非破坏性内部重构；258 tests / clippy `-D warnings` 零警告 / fmt clean。
 - **v0.8.0 已发布**：Phase 12 凭据 / `login` 逻辑收拢到顶层 `auth` 模块。
   删除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令及本地 provider
   的 no-op `login`，改为统一 `everyday auth login|logout|verify|list --module <mod>`
@@ -39,7 +40,7 @@
   SQLite，Notion 显式声明。
 - **Timeline**：append-only event log + ops-log AOP 统一 6 个 source 的事件捕获，
   详见 [L001–L013](./docs/adr/L001-append-only-event-log.md)。
-- **Phase 13 已落地（未发版）**：动作层 Backend DI 重构完成（[R016–R018](./docs/adr/R016-action-backend-di.md)）——note/todo/bookmark 动作层去除 `NotionClient` 直接引用，改走 `Note/Todo/BookmarkBackend::for_account` 工厂 + `Notion*Backend`/`Local*Backend` 双实现，加 in-memory `Mock*Backend` 做 DI 回归护栏（各 2 条验收单测）。非破坏性，随下次发版（v0.9.0 规划中）发布；当前 master 258 tests / clippy `-D warnings` 零警告 / fmt clean。
+- **Phase 13 已随 v0.8.1 发布**：动作层 Backend DI 重构完成（[R016–R018](./docs/adr/R016-action-backend-di.md)）——note/todo/bookmark 动作层去除 `NotionClient` 直接引用，改走 `Note/Todo/BookmarkBackend::for_account` 工厂 + `Notion*Backend`/`Local*Backend` 双实现，加 in-memory `Mock*Backend` 做 DI 回归护栏（各 2 条验收单测）。非破坏性内部重构，已随 v0.8.1 发布；258 tests / clippy `-D warnings` 零警告 / fmt clean。
 - **质量门禁**：`cargo build` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
   零警告 / `cargo test`（具体数字见各版本发版行）/ `cargo fmt --check` ✅；
   CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
@@ -83,6 +84,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.8.1** | `v0.8.1` | 动作层 Backend DI 重构：note/todo/bookmark 去 `NotionClient` 直接引用，改走 `Note/Todo/BookmarkBackend::for_account` 工厂 + 双实现，加 Mock 回归护栏（非破坏性） | [R016–R018](./docs/adr/R016-action-backend-di.md) |
 | **v0.8.0** | `v0.8.0` | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块（破坏性：移除各模块 `login`） | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) |
 | **v0.7.0** | `v0.7.0` | 跨模块统一搜索：`everyday search` + Searchable/Registry | [S001–S006](./docs/adr/S001-search-architecture.md) |
 | **v0.6.2** | `v0.6.2` | 修 Rust 1.97 clippy 注释 lint 阻塞 CI | （纯格式 patch，无新 ADR） |
