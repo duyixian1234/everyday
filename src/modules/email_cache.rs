@@ -13,7 +13,7 @@
 use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::Row;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
 
 use crate::error::{AgentError, Result};
 
@@ -288,21 +288,81 @@ pub async fn query_envelopes(
     let rows = query.fetch_all(pool).await?;
     let mut out = Vec::with_capacity(rows.len());
     for r in rows {
-        let uid: i64 = r.get(2);
-        let size: Option<i64> = r.get(8);
-        out.push(CachedEnvelope {
-            account: r.get(0),
-            folder: r.get(1),
-            uid: uid as u32,
-            date: r.get(3),
-            from_addr: r.get(4),
-            subject: r.get(5),
-            flags: r.get(6),
-            message_id: r.try_get(7).ok().flatten(),
-            size,
-            to_addr: r.try_get(9).ok().flatten(),
-            fetched_at: r.get(10),
-        });
+        out.push(row_to_cached_envelope(&r));
+    }
+    Ok(out)
+}
+
+/// Map a row from the canonical 11-column `envelopes` SELECT to a
+/// `CachedEnvelope`. Shared by both [`query_envelopes`] and
+/// [`search_envelopes`] so the column contract stays in one place.
+fn row_to_cached_envelope(r: &SqliteRow) -> CachedEnvelope {
+    let uid: i64 = r.get(2);
+    let size: Option<i64> = r.get(8);
+    CachedEnvelope {
+        account: r.get(0),
+        folder: r.get(1),
+        uid: uid as u32,
+        date: r.get(3),
+        from_addr: r.get(4),
+        subject: r.get(5),
+        flags: r.get(6),
+        message_id: r.try_get(7).ok().flatten(),
+        size,
+        to_addr: r.try_get(9).ok().flatten(),
+        fetched_at: r.get(10),
+    }
+}
+
+/// Free-text search across **all** cached envelopes (every account, every
+/// folder).
+///
+/// Matching is case-insensitive GLOB substring on `subject`, `from_addr`, and
+/// `to_addr`. Each token is matched against all three columns (OR within a
+/// token); multiple tokens are OR'd together (multi-word OR, per
+/// [S003](../../docs/adr/S003-query-semantics.md)). Tokens containing GLOB
+/// metacharacters (`* ? [ ]`) are skipped to avoid injection — mirrors
+/// `search::glob_substring`.
+///
+/// This deliberately scans the whole cache rather than going through IMAP
+/// `SEARCH`: the `search` module is best-effort / local-first (see ADR S007),
+/// consistent with `rss` (local cache) and `cal` (full-pull local filter). A
+/// stale or empty cache simply yields fewer / zero hits; the aggregator treats
+/// zero hits as a non-error (exit 0).
+#[allow(dead_code)] // public API: wired into MailSearchProvider in a later commit.
+pub async fn search_envelopes(pool: &SqlitePool, tokens: &[&str]) -> Result<Vec<CachedEnvelope>> {
+    // Build per-token OR across the 3 columns. Skip unusable tokens.
+    let mut clauses: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+    for tok in tokens {
+        if tok.is_empty() || tok.contains(['*', '?', '[', ']']) {
+            continue;
+        }
+        let pat = format!("*{}*", tok.to_ascii_lowercase());
+        clauses.push(
+            "(lower(subject) GLOB ? OR lower(from_addr) GLOB ? OR lower(to_addr) GLOB ?)"
+                .to_string(),
+        );
+        binds.push(pat.clone());
+        binds.push(pat.clone());
+        binds.push(pat.clone());
+    }
+    if clauses.is_empty() {
+        return Ok(Vec::new());
+    }
+    let sql = format!(
+        "SELECT account, folder, uid, date, from_addr, subject, flags, message_id, size, to_addr, fetched_at \
+         FROM envelopes WHERE {} ORDER BY date DESC",
+        clauses.join(" OR ")
+    );
+    let mut query = sqlx::query(&sql);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    let rows = query.fetch_all(pool).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(row_to_cached_envelope(&r));
     }
     Ok(out)
 }
@@ -744,5 +804,67 @@ mod tests {
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].uid, 2, "newest first");
         assert_eq!(rows[1].uid, 1);
+    }
+
+    #[tokio::test]
+    async fn search_envelopes_matches_subject_from_case_insensitive() {
+        let pool = tmp_pool().await;
+        upsert_envelopes(
+            &pool,
+            "acc",
+            "INBOX",
+            1,
+            &[sample_envelope(1, ""), sample_envelope(2, "")],
+        )
+        .await
+        .unwrap();
+        // A third envelope with a distinct subject + sender + recipient so each
+        // token below maps to exactly one row.
+        let mut e3 = sample_envelope(3, "");
+        e3.from_addr = "carol@example.com".to_string();
+        e3.subject = "Rust newsletter".to_string();
+        e3.to_addr = Some("dave@example.com".to_string());
+        upsert_envelopes(&pool, "acc", "INBOX", 1, &[e3])
+            .await
+            .unwrap();
+
+        // subject token (case-insensitive) hits "subject 1" + "subject 2" only
+        let hits = search_envelopes(&pool, &["SUBJECT"]).await.unwrap();
+        assert_eq!(hits.len(), 2);
+
+        // from token matches the carol envelope only
+        let hits = search_envelopes(&pool, &["carol"]).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].from_addr, "carol@example.com");
+
+        // subject token "rust" hits the Rust newsletter envelope only
+        let hits = search_envelopes(&pool, &["rust"]).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].subject, "Rust newsletter");
+
+        // to_addr token hits the dave recipient only
+        let hits = search_envelopes(&pool, &["dave"]).await.unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].to_addr.as_deref(), Some("dave@example.com"));
+    }
+
+    #[tokio::test]
+    async fn search_envelopes_token_or_and_skips_metachars() {
+        let pool = tmp_pool().await;
+        upsert_envelopes(&pool, "acc", "INBOX", 1, &[sample_envelope(1, "")])
+            .await
+            .unwrap();
+
+        // Empty token list -> zero hits.
+        assert!(search_envelopes(&pool, &[]).await.unwrap().is_empty());
+
+        // GLOB metachar token is skipped -> no usable token -> zero hits.
+        assert!(search_envelopes(&pool, &["*"]).await.unwrap().is_empty());
+
+        // Two tokens are OR'd: matches either "subject" or "nonexistent".
+        let hits = search_envelopes(&pool, &["subject", "zzz-no-match"])
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1, "token OR, not AND");
     }
 }
