@@ -14,7 +14,7 @@ JSON 为 AI 交互主模式。
 - **目标平台：** Linux / macOS / Windows（含 Apple Silicon aarch64）
 - **异步运行时：** `tokio`
 - **规划文件：** `task_plan.md`（阶段 + Errors）/ `progress.md`（当前状态 + ADR
-  时间序索引）/ `findings.md`（ADR 主题索引）。详见 [文档约定](#文档约定)。
+  时间序索引）。详见 [文档约定](#文档约定) 与 [governance.md](./governance.md)。
 
 ## 何时使用本仓库
 
@@ -55,8 +55,8 @@ Agents 与协作者在改代码前，按以下顺序读：
 | [`docs/adr/`](./docs/adr/README.md) | 每个架构决策的"上下文 / 决策 / 备选 / 影响"（F/M/C/N/T/B/L/R 系列） |
 | [`CONTEXT.md`](./CONTEXT.md) | 领域术语表（仅定义，不涉及实现） |
 | [`task_plan.md`](./task_plan.md) | 阶段 + 错误表 + 设计决策摘要 |
-| [`progress.md`](./progress.md) | 当前状态 + ADR 时间序索引 + 发版流水 |
-| [`findings.md`](./findings.md) | ADR 主题索引（纯索引，无叙述） |
+| [`progress.md`](./progress.md) | 当前状态（每行 ≤ 1 句）+ ADR 时间序索引 + 发版流水 |
+| [`governance.md`](./governance.md) | 跨项目的治理方法论（文档结构 / 文档角色 / ADR / 质量门禁 / 发版 / 模块边界等） |
 | `README.md` / `README_ZH.md` / `skills/` | 终端用户与 Agent 用户文档 |
 
 跨文档引用都用相对路径。每次提交后跑 `just check-links` 验证引用未腐烂（见
@@ -69,8 +69,8 @@ Agents 与协作者在改代码前，按以下顺序读：
 
 1. 质量门禁 `just ci`（format / clippy / test / build 全绿）
 2. `just check-links`（跨文档引用完整性）
-3. **ADR 抽取**——把决策性内容从 `progress.md` / `findings.md` 推到 ADR，
-   `findings.md` 与 `progress.md` 仅剩索引
+3. **ADR 抽取**——把决策性内容从 `progress.md` / `task_plan.md` 推到 ADR，
+   `progress.md` 仅剩索引与一行式当前状态
 4. `git commit` 按 [`.rules/05-commit.md`](./.rules/05-commit.md)
 5. 更新 `progress.md` 的 ADR 时间序索引
 

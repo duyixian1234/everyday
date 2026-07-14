@@ -29,8 +29,8 @@
 3. If the work introduces or changes a **decision** (architecture, contract, long-lived
    constraint), open [docs/adr/README.md](../docs/adr/README.md) and add an ADR.
 4. After finishing a task, follow [01-workflow.md §"Finishing a task"](01-workflow.md) —
-   it includes the **ADR extraction step** that keeps `findings.md` and `progress.md` as
-   pure index files.
+   it includes the **ADR extraction step** that keeps `progress.md` and
+   `task_plan.md` as thin index files (no execution traces; see [governance.md](../governance.md) §4).
 
 ## Link integrity
 

@@ -2,7 +2,7 @@
 
 > This is the project's development discipline. It governs how work enters, moves
 > through, and exits a task — including the **ADR extraction step** that keeps the
-> docs (`progress.md`, `findings.md`) as thin indexes.
+> docs (`progress.md`, `task_plan.md`) as thin indexes.
 
 ## Before a change
 
@@ -17,11 +17,13 @@
 
 ## During the change
 
-- After every 2 web fetches / searches, write a short note to
-  [findings.md](../findings.md) **only if** the note is a **decision-class** fact
-  (i.e. something that will become an ADR). Otherwise discard it.
+- After every 2 web fetches / searches, write a short note to your scratch
+  buffer **only if** the note is a **decision-class** fact (i.e. something that
+  will become an ADR). Otherwise discard it. Decision-class notes migrate to
+  an ADR per §"ADR extraction step" below — there is no separate findings file.
 - If you hit a non-obvious error, append a one-liner to "Errors Encountered" in
-  [task_plan.md](../task_plan.md). Don't accumulate them in `findings.md`.
+  [task_plan.md](../task_plan.md). Don't accumulate it in scratch or
+  `progress.md`.
 - Do not commit mid-task. One task = one commit (see [05-commit.md](05-commit.md)).
 
 ## Finishing a task
@@ -39,7 +41,7 @@ After the code works, run this checklist **in order**:
    `just build`). All green.
 2. **Doc discipline.** Run `just check-links` (see
    [06-justfile.md](06-justfile.md)). Fix any broken link.
-3. **ADR extraction step** — this is what keeps `progress.md` / `findings.md` thin.
+3. **ADR extraction step** — this is what keeps `progress.md` / `task_plan.md` thin.
    See the [next section](#adr-extraction-step).
 4. **Commit.** Conventional Commit (see [05-commit.md](05-commit.md)). Message format:
    `<type>(<scope>): <subject>` where `type` ∈ `feat` / `fix` / `refactor` / `test` /
@@ -49,12 +51,12 @@ After the code works, run this checklist **in order**:
 ### ADR extraction step
 
 This step runs **after every task**, not just at release time. It is the only thing
-keeping `findings.md` from bloating into a second `agents.md`.
+keeping `progress.md` / `task_plan.md` from bloating into a second `agents.md`.
 
 **Goal.** Decide what is a real decision worth promoting to an ADR, file it
 (`docs/adr/XXX-...md`), register it in [`docs/adr/README.md`](../docs/adr/README.md),
-and remove the prose from `findings.md` / `progress.md` — replacing it with an ADR
-link.
+and remove the prose from `progress.md` / `task_plan.md` — replacing it with an
+ADR link.
 
 **What counts as a decision (migrate to ADR)?** A choice that:
 
@@ -86,14 +88,16 @@ Examples that belong in an ADR: "calendar uses window-refresh, not append",
    ADRs.
 4. Add a row to the relevant table in
    [docs/adr/README.md](../docs/adr/README.md) under its series section.
-5. Replace the prose in [findings.md](../findings.md) /
-   [progress.md](../progress.md) with `[id](docs/adr/<id>-...).md` links. If both
+5. Replace the prose in [progress.md](../progress.md) /
+   [task_plan.md](../task_plan.md) with `[id](docs/adr/<id>-...).md` links. If both
    files mention the same decision, leave only the canonical reference in one and
-   point to it from the other.
+   point to it from the other. Per [governance.md](../governance.md) §4, neither
+   file may keep sub-task lists, post-mortem paragraphs, or other execution traces
+   — only phase summaries and ADR links.
 6. Re-run `just check-links` to confirm.
 
 **Caveat — release-time only:** if the task is itself the **release commit**,
-[findings.md](../findings.md) should be re-read once more end-to-end. Any leftover
+[progress.md](../progress.md) should be re-read once more end-to-end. Any leftover
 prose that still smuggles a decision into the body of the document is migrated now.
 
 ## Release (runbook summary)
@@ -118,6 +122,7 @@ Full release runbook lives in the project long-term memory
 | [CONTEXT.md](../CONTEXT.md) | Domain glossary for each module (terms only) |
 | [task_plan.md](../task_plan.md) | Phases, errors encountered, design-decision summary table |
 | [progress.md](../progress.md) | Current status + ADR timeline index |
-| [findings.md](../findings.md) | Pure ADR index (by topic) — no prose |
+| [progress.md](../progress.md) | Current state (one-liner per release) + ADR timeline + release log |
+| [task_plan.md](../task_plan.md) | Phases + Errors Encountered + key design decisions (no execution traces) |
 | [README.md](../README.md) / [README_ZH.md](../README_ZH.md) | End-user docs |
 | [skills/](../skills/) | Agent-facing skill files |

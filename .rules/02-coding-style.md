@@ -54,9 +54,11 @@
   needs it for one module, gate it behind a feature flag.
 - Prefer `rustls-tls` over `native-tls` to avoid OpenSSL chains.
 - Avoid `default-features = true` — list the features you need.
-- Record the reason for every new dep in `findings.md` **only if** the choice is
-  a decision (e.g. "shared Notion client SDK vs module-local HTTP"). Otherwise it
-  lives in [07-dependency-pitfalls.md](07-dependency-pitfalls.md) as a footnote.
+- Record the reason for every new dep in your scratch buffer **only if** the
+  choice is a decision (e.g. "shared Notion client SDK vs module-local HTTP") —
+  then migrate it to an ADR per [01-workflow.md](01-workflow.md) §"ADR extraction
+  step". Otherwise it lives in [07-dependency-pitfalls.md](07-dependency-pitfalls.md)
+  as a footnote.
 - Knowledge-cutoff-detected crate quirks live in
   [07-dependency-pitfalls.md](07-dependency-pitfalls.md).
 
