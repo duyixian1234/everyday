@@ -150,6 +150,13 @@ impl ModuleRegistry {
             )),
         );
 
+        // Memory module (Phase 15, ADR K001–K004): single global instance,
+        // no account, no `auth` module touch.
+        modules.insert(
+            "memory",
+            Box::new(crate::modules::memory::MemoryModule::new()),
+        );
+
         // Cross-module unified search (Phase 11, ADR S001–S006).
         modules.insert(
             "search",
@@ -187,6 +194,7 @@ pub mod email;
 pub mod email_cache;
 pub mod email_pool;
 pub mod local;
+pub mod memory;
 pub mod note;
 pub mod rss;
 pub mod rss_items;

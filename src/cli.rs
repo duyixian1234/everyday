@@ -93,7 +93,7 @@ pub(crate) fn build_root_command(registry: &ModuleRegistry) -> Command {
         .about("The Rust-powered hands for your AI Agent")
         .long_about(
             "Unified CLI: everyday <module> <action> [options].\n\
-                 Modules: mail, cal, rss, note, todo, bookmark, timeline, config, auth.",
+                 Modules: mail, cal, rss, note, todo, bookmark, timeline, memory, config, auth.",
         )
         .arg(
             Arg::new("json")

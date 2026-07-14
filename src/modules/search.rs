@@ -19,6 +19,7 @@ use crate::config::Config;
 use crate::error::{AgentError, Result};
 use crate::modules::bookmark::local as bookmark_local;
 use crate::modules::local::is_local_provider;
+use crate::modules::memory;
 use crate::modules::note::local as note_local;
 use crate::modules::parse_simple_args;
 use crate::modules::timeline::parse_source_list;
@@ -34,9 +35,11 @@ use crate::util::datetime::parse_since;
 const DEFAULT_GLOBAL_LIMIT: usize = 20;
 
 /// Modules searchable (mail joined in v1.1, see ADR S007 — it queries the
-/// local envelope cache rather than IMAP `SEARCH`).
+/// local envelope cache rather than IMAP `SEARCH`; memory joined in v1.2,
+/// see ADR K003 — single global provider over the current-state view).
 /// See [S005](../../docs/adr/S005-time-semantics-scope.md).
-pub const SEARCHABLE_MODULES: &[&str] = &["note", "todo", "bookmark", "rss", "cal", "mail"];
+pub const SEARCHABLE_MODULES: &[&str] =
+    &["note", "todo", "bookmark", "rss", "cal", "mail", "memory"];
 
 pub struct SearchModule {
     config: Arc<Config>,
@@ -88,6 +91,10 @@ impl SearchModule {
             // all accounts (local-first, see ADR S007).
             reg.register(Arc::new(email::MailSearchProvider::new()));
         }
+        // Memory is single-instance (K004); register unconditionally.
+        // Empty database just yields zero hits — no reason to gate on
+        // config presence.
+        reg.register(memory::search_provider());
         reg
     }
 }
@@ -95,7 +102,7 @@ impl SearchModule {
 #[async_trait]
 impl Executor for SearchModule {
     fn description(&self) -> &'static str {
-        "Cross-module unified search: query note / todo / bookmark / rss / cal / mail in one shot."
+        "Cross-module unified search: query note / todo / bookmark / rss / cal / mail / memory in one shot."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
@@ -103,7 +110,7 @@ impl Executor for SearchModule {
         static QUERY_ARGS: &[ArgSpec] = &[
             ArgSpec {
                 name: "module",
-                help: "模块过滤：note,todo,bookmark,rss,cal,mail（逗号分隔）",
+                help: "模块过滤：note,todo,bookmark,rss,cal,mail,memory（逗号分隔）",
                 kind: ArgKind::Value,
             },
             ArgSpec {
@@ -272,14 +279,24 @@ fn render_search(outcome: &SearchOutcome, q: &SearchQuery, json_mode: bool) -> R
 mod tests {
     use super::*;
 
-    /// Build a SearchModule with an empty config; verifies the registry
-    /// is empty (no accounts).
+    /// Build a SearchModule with an empty config; memory is registered
+    /// unconditionally (single-instance, see K004) so the registry is
+    /// not empty — only the account-bound providers are absent.
     #[test]
     fn build_registry_empty_config() {
         let cfg = Arc::new(Config::default());
         let m = SearchModule::new(cfg);
         let reg = m.build_registry();
-        assert!(reg.modules().is_empty());
+        let mods = reg.modules();
+        // memory is single-instance; it should always be present.
+        assert!(mods.contains(&"memory"));
+        // account-bound providers should NOT be present (no accounts).
+        assert!(!mods.contains(&"note"));
+        assert!(!mods.contains(&"todo"));
+        assert!(!mods.contains(&"bookmark"));
+        assert!(!mods.contains(&"cal"));
+        assert!(!mods.contains(&"mail"));
+        assert!(!mods.contains(&"rss"));
     }
 
     /// A configured local note account yields one note provider.
