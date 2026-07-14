@@ -23,6 +23,8 @@ use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::modules::{email_cache, email_pool};
 use crate::output::Output;
+use crate::search::{Hit, SearchQuery, Searchable};
+use sqlx::sqlite::SqlitePool;
 
 pub struct EmailModule {
     config: Arc<Config>,
@@ -1320,6 +1322,175 @@ async fn fetch_timeline_summaries(
         });
     }
     Ok(entries)
+}
+
+/// Search adapter: implements [`Searchable`] for the mail module by querying
+/// the local envelope cache (`mail_cache.db`) — NOT live IMAP `SEARCH`.
+///
+/// This keeps the `search` module local-first / best-effort (see ADR S007),
+/// consistent with `rss` (local cache) and `cal` (full-pull local filter).
+/// The provider scans all accounts/folders in one shot; `Hit::id` is
+/// `{account}:{folder}:{uid}` so an agent can act on the message via
+/// `everyday mail read`.
+pub struct MailSearchProvider {
+    /// Injected pool for tests; `None` opens the real `mail_cache.db`.
+    pool: Option<SqlitePool>,
+}
+
+impl MailSearchProvider {
+    /// Construct the production provider (opens the cache lazily on search).
+    pub fn new() -> Self {
+        Self { pool: None }
+    }
+
+    /// Construct with an explicit pool (used by tests to avoid touching the
+    /// real cache path).
+    #[cfg(test)]
+    pub fn with_pool(pool: SqlitePool) -> Self {
+        Self { pool: Some(pool) }
+    }
+}
+
+impl Default for MailSearchProvider {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[async_trait]
+impl Searchable for MailSearchProvider {
+    fn module_name(&self) -> &'static str {
+        "mail"
+    }
+
+    async fn search(&self, q: &SearchQuery, _cfg: &Config) -> Result<Vec<Hit>> {
+        if q.raw.trim().is_empty() {
+            return Ok(Vec::new());
+        }
+        let tokens = q.tokens();
+        if tokens.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // Open the cache (or use the injected test pool).
+        let owned;
+        let pool = match &self.pool {
+            Some(p) => p,
+            None => {
+                owned = email_cache::open().await?;
+                &owned
+            }
+        };
+
+        let envelopes = email_cache::search_envelopes(pool, &tokens).await?;
+
+        // Per-module cap (default 50, matches the aggregator's per-provider
+        // expectation; the global `--limit` truncates again after merge).
+        let envelopes = &envelopes[..envelopes.len().min(q.limit.unwrap_or(50))];
+
+        let hits = envelopes
+            .iter()
+            .map(|e| Hit {
+                module: "mail",
+                account: Some(e.account.clone()),
+                // Agent can reference the message via `mail read <uid> --folder <folder> --account <account>`.
+                id: format!("{}:{}:{}", e.account, e.folder, e.uid),
+                title: e.subject.clone(),
+                snippet: e.from_addr.clone(),
+                url: None,
+                ts: crate::util::datetime::parse_rfc3339(&e.date),
+                kind: "mail",
+            })
+            .collect();
+        Ok(hits)
+    }
+}
+
+#[cfg(test)]
+mod mail_search_tests {
+    use super::*;
+    use crate::config::Config;
+    use crate::search::SearchQuery;
+
+    #[test]
+    fn module_name_is_mail() {
+        assert_eq!(MailSearchProvider::new().module_name(), "mail");
+    }
+
+    #[tokio::test]
+    async fn empty_query_returns_no_hits_without_opening_cache() {
+        // An empty query short-circuits before touching the cache.
+        let hits = MailSearchProvider::new()
+            .search(&SearchQuery::new("   "), &Config::default())
+            .await
+            .unwrap();
+        assert!(hits.is_empty());
+    }
+
+    #[tokio::test]
+    async fn search_maps_cache_envelopes_to_hits() {
+        let pool = email_cache::open_temp_pool().await;
+        let env = email_cache::CachedEnvelope {
+            account: "work".into(),
+            folder: "INBOX".into(),
+            uid: 42,
+            date: "2026-07-11T10:00:00+00:00".into(),
+            from_addr: "carol@example.com".into(),
+            subject: "Rust release notes".into(),
+            flags: String::new(),
+            message_id: None,
+            size: None,
+            to_addr: None,
+            fetched_at: String::new(),
+        };
+        email_cache::upsert_envelopes(&pool, "work", "INBOX", 1, &[env])
+            .await
+            .unwrap();
+
+        let provider = MailSearchProvider::with_pool(pool);
+        let hits = provider
+            .search(&SearchQuery::new("rust"), &Config::default())
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        let h = &hits[0];
+        assert_eq!(h.module, "mail");
+        assert_eq!(h.account.as_deref(), Some("work"));
+        assert_eq!(h.id, "work:INBOX:42");
+        assert_eq!(h.title, "Rust release notes");
+        assert_eq!(h.snippet, "carol@example.com");
+        assert!(h.ts.is_some());
+        assert_eq!(h.kind, "mail");
+    }
+
+    #[tokio::test]
+    async fn search_respects_per_module_cap() {
+        let pool = email_cache::open_temp_pool().await;
+        let envs: Vec<email_cache::CachedEnvelope> = (1..=10)
+            .map(|uid| email_cache::CachedEnvelope {
+                account: "work".into(),
+                folder: "INBOX".into(),
+                uid,
+                date: "2026-07-11T10:00:00+00:00".into(),
+                from_addr: "a@example.com".into(),
+                subject: "rust discussion".into(),
+                flags: String::new(),
+                message_id: None,
+                size: None,
+                to_addr: None,
+                fetched_at: String::new(),
+            })
+            .collect();
+        email_cache::upsert_envelopes(&pool, "work", "INBOX", 1, &envs)
+            .await
+            .unwrap();
+
+        let provider = MailSearchProvider::with_pool(pool);
+        let mut q = SearchQuery::new("rust");
+        q.limit = Some(3);
+        let hits = provider.search(&q, &Config::default()).await.unwrap();
+        assert_eq!(hits.len(), 3, "per-module cap from q.limit");
+    }
 }
 
 #[cfg(test)]

@@ -329,7 +329,6 @@ fn row_to_cached_envelope(r: &SqliteRow) -> CachedEnvelope {
 /// consistent with `rss` (local cache) and `cal` (full-pull local filter). A
 /// stale or empty cache simply yields fewer / zero hits; the aggregator treats
 /// zero hits as a non-error (exit 0).
-#[allow(dead_code)] // public API: wired into MailSearchProvider in a later commit.
 pub async fn search_envelopes(pool: &SqlitePool, tokens: &[&str]) -> Result<Vec<CachedEnvelope>> {
     // Build per-token OR across the 3 columns. Skip unusable tokens.
     let mut clauses: Vec<String> = Vec::new();
@@ -388,6 +387,42 @@ pub fn is_stale(state: &FolderState, now: DateTime<Utc>) -> bool {
         None => true,
         Some(t) => (now - t).num_seconds() > STALENESS_THRESHOLD_SECS,
     }
+}
+
+/// Test helper: build a throwaway `mail_cache.db` (temp file, schema created)
+/// and return the pool. `pub(crate)` so other modules' `#[cfg(test)]` can
+/// exercise the cache without touching the real config path.
+#[cfg(test)]
+pub(crate) async fn open_temp_pool() -> SqlitePool {
+    let file = std::env::temp_dir().join(format!(
+        "everyday-mailcache-test-{}.db",
+        crate::util::id::gen_id("mc")
+    ));
+    let opts = SqliteConnectOptions::new()
+        .filename(&file)
+        .create_if_missing(true);
+    let pool = SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect_with(opts)
+        .await
+        .unwrap();
+    sqlx::query(CREATE_ENVELOPES_SQL)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(CREATE_FOLDER_STATE_SQL)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(IX_ENVELOPES_DATE_SQL)
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(IX_ENVELOPES_FOLDER_SQL)
+        .execute(&pool)
+        .await
+        .unwrap();
+    pool
 }
 
 // ============ Tests ============

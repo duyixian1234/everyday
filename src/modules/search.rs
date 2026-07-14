@@ -23,7 +23,7 @@ use crate::modules::note::local as note_local;
 use crate::modules::parse_simple_args;
 use crate::modules::timeline::parse_source_list;
 use crate::modules::todo::local as todo_local;
-use crate::modules::{Executor, calendar, rss_items};
+use crate::modules::{Executor, calendar, email, rss_items};
 use crate::output::Output;
 use crate::search::{SearchOutcome, SearchQuery, SearchRegistry};
 use crate::util::datetime::parse_since;
@@ -33,9 +33,10 @@ use crate::util::datetime::parse_since;
 /// applied to the merged result.
 const DEFAULT_GLOBAL_LIMIT: usize = 20;
 
-/// Modules searchable in v1 (mail deferred to v1.1).
+/// Modules searchable (mail joined in v1.1, see ADR S007 — it queries the
+/// local envelope cache rather than IMAP `SEARCH`).
 /// See [S005](../../docs/adr/S005-time-semantics-scope.md).
-pub const SEARCHABLE_MODULES: &[&str] = &["note", "todo", "bookmark", "rss", "cal"];
+pub const SEARCHABLE_MODULES: &[&str] = &["note", "todo", "bookmark", "rss", "cal", "mail"];
 
 pub struct SearchModule {
     config: Arc<Config>,
@@ -82,6 +83,11 @@ impl SearchModule {
         if !self.config.rss.feeds.is_empty() {
             reg.register(Arc::new(rss_items::RssSearchProvider::new()));
         }
+        if !self.config.mail.accounts.is_empty() {
+            // Single global provider: scans the whole envelope cache across
+            // all accounts (local-first, see ADR S007).
+            reg.register(Arc::new(email::MailSearchProvider::new()));
+        }
         reg
     }
 }
@@ -89,7 +95,7 @@ impl SearchModule {
 #[async_trait]
 impl Executor for SearchModule {
     fn description(&self) -> &'static str {
-        "Cross-module unified search: query note / todo / bookmark / rss / cal in one shot."
+        "Cross-module unified search: query note / todo / bookmark / rss / cal / mail in one shot."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
@@ -97,7 +103,7 @@ impl Executor for SearchModule {
         static QUERY_ARGS: &[ArgSpec] = &[
             ArgSpec {
                 name: "module",
-                help: "模块过滤：note,todo,bookmark,rss,cal（逗号分隔）",
+                help: "模块过滤：note,todo,bookmark,rss,cal,mail（逗号分隔）",
                 kind: ArgKind::Value,
             },
             ArgSpec {
@@ -336,6 +342,25 @@ mod tests {
         let m = SearchModule::new(Arc::new(cfg));
         let reg = m.build_registry();
         assert!(reg.modules().contains(&"rss"));
+    }
+
+    /// Mail provider is registered (single global instance) when at least one
+    /// mail account is configured.
+    #[test]
+    fn build_registry_registers_mail_when_accounts_exist() {
+        let mut cfg = Config::default();
+        cfg.mail.accounts.push(crate::config::MailAccount {
+            name: "work".into(),
+            imap_host: "imap.example.com".into(),
+            imap_port: 993,
+            smtp_host: "smtp.example.com".into(),
+            smtp_port: 465,
+            username: "me@example.com".into(),
+            tls: true,
+        });
+        let m = SearchModule::new(Arc::new(cfg));
+        let reg = m.build_registry();
+        assert!(reg.modules().contains(&"mail"));
     }
 
     /// Module spec exposes a single `query` action.
