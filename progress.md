@@ -1,55 +1,29 @@
 # Progress Log — Everyday
 
-> 当前状态 + **ADR 时间序索引** + 发版流水。所有决策性叙述见
-> [docs/adr/](./docs/adr/README.md)；按主题查找见 [findings.md](./findings.md)。
-> 本文件的维护规则见 [`.rules/01-workflow.md`](./.rules/01-workflow.md)
-> §"Finishing a task"。
+> 当前状态 + **ADR 时间序索引** + 发版流水。决策性叙述见
+> [docs/adr/](./docs/adr/README.md)；按 ADR 编号前缀查找见
+> `docs/adr/README.md` 的索引节。
+> 本文件的维护规则见 [governance.md](./governance.md) §4.2 与
+> [`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Finishing a task"。
 
 ## 当前状态
 
-- **v0.8.1 已发布**：Phase 13 动作层 Backend DI 重构（[R016–R018](./docs/adr/R016-action-backend-di.md)）落地——note/todo/bookmark 动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取；加 in-memory `Mock*Backend` 做 DI 回归护栏（各 2 条验收单测）。非破坏性内部重构；258 tests / clippy `-D warnings` 零警告 / fmt clean。
-- **Phase 14 完成（待发版 v0.9.0）**：跨模块统一搜索 `everyday search` 收口 v1.1 —— 新增 `mail` 模块 Searchable 适配器，扫 `mail_cache.db` 本地 envelope 缓存而非 live IMAP `SEARCH`，与 `rss`（本地缓存）/ `cal`（full-pull 本地过滤）一致。`search_envelopes` 单 token OR 跨 subject/from/to，大小写不敏感 GLOB；metacharacter token 跳过。`Hit::id = "{account}:{folder}:{uid}"` 供 agent 经 `mail read` 后续操作。Searchable 注册单全局 provider；per-module cap 50 → global cap 20 双层收紧。265 tests / clippy `-D warnings` 零警告 / fmt clean。详见 [ADR S007](./docs/adr/S007-mail-search-local-cache.md)。
-- **v0.8.0 已发布**：Phase 12 凭据 / `login` 逻辑收拢到顶层 `auth` 模块。
-  删除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令及本地 provider
-  的 no-op `login`，改为统一 `everyday auth login|logout|verify|list --module <mod>`
-  （[R013](./docs/adr/R013-auth-module-consolidation.md) 收拢总设计 / [R014](./docs/adr/R014-auth-verify-opt-in.md)
-  verify 显式可选 / [R015](./docs/adr/R015-auth-credential-io.md) 非交互输入契约）。
-  模块内部凭据读取改走 `auth::get_credential`；`--verify` 存后显式验证，
-  默认只存。`auth verify` / `list` 对 local/sqlite、rss 短路 `not_required`。
-  250 tests / clippy `-D warnings` 零警告 / fmt clean。破坏性变更：各模块 `login` 已移除。
-- **v0.7.0 已发布**：Phase 11 跨模块统一搜索 `everyday search query "<q>"`
-  落地，新增 `search` 模块（[S001–S006](./docs/adr/S001-search-architecture.md)）。
-  Searchable 适配器覆盖 note / todo / bookmark / rss（新增本地条目缓存表）
-  / cal（full-pull + in-memory GLOB）；best-effort 并发扇出，per-module cap 50，
-  global cap 20，空结果 exit 0；warning 走 stderr（`--json` 结构化）。
-  241 tests / clippy `-D warnings` 零警告 / fmt clean。
-- **v0.7.0 已发布**：tag `v0.7.0`，跨模块统一搜索（search 模块 + Searchable/Registry），ADR S001–S006。
-- **v0.6.2 已发布**：tag `v0.6.2`，修复 Rust 1.97 stable clippy
-  `doc_lazy_continuation` + `doc_overindented_list_items` 两 lint 阻塞 CI 的问题
-  （`src/modules/calendar.rs:10` 补 2 空格缩进、`src/modules/todo.rs:14` 由 14 空格
-  缩至 2 空格）。纯注释 / 文档格式 patch，无功能性改动。
-- **v0.6.1 已发布**：tag `v0.6.1`，修复 timeline `--from` 单独给定被静默回退
-  preset 的问题。详见 [ADR L013](./docs/adr/L013-from-explicit-error.md)。
-- **v0.6.0 已发布**：Mail Cache 落地 + CLI 重构（clap 子命令树 + 移除
-  help-registry）。详见 [ADR M002–M005](./docs/adr/M002-imap-connection-pool.md) 与
-  [ADR F007](./docs/adr/F007-clap-subcommand-tree.md)。
-- **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline`
-  / `config` / **`search`**（9 个，走统一 Executor trait）均可用。
-- **本地 provider 默认**：[note](./docs/adr/N001-notion-note-module.md) /
-  [todo](./docs/adr/T001-notion-todo-module.md) /
-  [bookmark](./docs/adr/B001-bookmark-dual-provider.md) 三模块默认走本地
-  SQLite，Notion 显式声明。
-- **Timeline**：append-only event log + ops-log AOP 统一 6 个 source 的事件捕获，
-  详见 [L001–L013](./docs/adr/L001-append-only-event-log.md)。
-- **Phase 13 已随 v0.8.1 发布**：动作层 Backend DI 重构完成（[R016–R018](./docs/adr/R016-action-backend-di.md)）——note/todo/bookmark 动作层去除 `NotionClient` 直接引用，改走 `Note/Todo/BookmarkBackend::for_account` 工厂 + `Notion*Backend`/`Local*Backend` 双实现，加 in-memory `Mock*Backend` 做 DI 回归护栏（各 2 条验收单测）。非破坏性内部重构，已随 v0.8.1 发布；258 tests / clippy `-D warnings` 零警告 / fmt clean。
-- **质量门禁**：`cargo build` ✅ / `cargo clippy --all-targets -- -D warnings` ✅
-  零警告 / `cargo test`（具体数字见各版本发版行）/ `cargo fmt --check` ✅；
-  CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
+每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件（见
+[governance.md](./governance.md) §4）。
+
+- **v0.9.0 已发布** — 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存（[S007](./docs/adr/S007-mail-search-local-cache.md)）。
+- **v0.8.1 已发布** — 动作层 Backend DI 重构（[R016–R018](./docs/adr/R016-action-backend-di.md)）。
+- **v0.8.0 已发布** — 凭据 / `login` 收拢到顶层 `auth` 模块（[R013–R015](./docs/adr/R013-auth-module-consolidation.md)；破坏性）。
+- **v0.7.0 已发布** — 跨模块统一搜索 `everyday search`（[S001–S006](./docs/adr/S001-search-architecture.md)）。
+- **v0.6.x 已发布** — Mail Cache 落地（[M002–M005](./docs/adr/M002-imap-connection-pool.md)）+ timeline `--from` 显式报错（[L013](./docs/adr/L013-from-explicit-error.md)）+ Rust 1.97 clippy 注释 lint 修复。
+- **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline` / `config` / `search`（9 个，走 Executor trait）。
+- **本地 provider 默认**：[note](./docs/adr/N001-notion-note-module.md) / [todo](./docs/adr/T001-notion-todo-module.md) / [bookmark](./docs/adr/B001-bookmark-dual-provider.md) 三模块默认本地 SQLite，Notion 显式声明。
+- **Timeline**：append-only event log + ops-log AOP 统一 6 source 事件捕获（[L001–L013](./docs/adr/L001-append-only-event-log.md)）。
+- **质量门禁**：`cargo build` / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` / `cargo fmt --check` 全绿；CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
 
 ## ADR 时间序索引
 
-按 ADR 时间倒序排列。完整列表见
-[docs/adr/README.md](./docs/adr/README.md)。
+按 ADR 时间倒序排列。完整列表见 [docs/adr/README.md](./docs/adr/README.md)。
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
@@ -86,9 +60,9 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
-| **v0.9.0** | `v0.9.0`（待发版） | 跨模块统一搜索 v1.1 收口：`mail` Searchable 适配器（本地 envelope 缓存，非 live IMAP） | [S007](./docs/adr/S007-mail-search-local-cache.md) |
-| **v0.8.1** | `v0.8.1` | 动作层 Backend DI 重构：note/todo/bookmark 去 `NotionClient` 直接引用，改走 `Note/Todo/BookmarkBackend::for_account` 工厂 + 双实现，加 Mock 回归护栏（非破坏性） | [R016–R018](./docs/adr/R016-action-backend-di.md) |
-| **v0.8.0** | `v0.8.0` | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块（破坏性：移除各模块 `login`） | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) |
+| **v0.9.0** | `v0.9.0` | 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存 | [S007](./docs/adr/S007-mail-search-local-cache.md) |
+| **v0.8.1** | `v0.8.1` | 动作层 Backend DI 重构：note/todo/bookmark 去 `NotionClient` 直接引用 | [R016–R018](./docs/adr/R016-action-backend-di.md) |
+| **v0.8.0** | `v0.8.0` | 凭据 / `login` 收拢到顶层 `auth` 模块（破坏性：移除各模块 `login`） | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) |
 | **v0.7.0** | `v0.7.0` | 跨模块统一搜索：`everyday search` + Searchable/Registry | [S001–S006](./docs/adr/S001-search-architecture.md) |
 | **v0.6.2** | `v0.6.2` | 修 Rust 1.97 clippy 注释 lint 阻塞 CI | （纯格式 patch，无新 ADR） |
 | **v0.6.1** | `v0.6.1` | 修 timeline `--from` 单独给定被静默回退 | [L013](./docs/adr/L013-from-explicit-error.md) |
@@ -99,5 +73,5 @@
 | **v0.2.0** | `v0.2.0` | todo Notion + 共享 notion-client | [T001](./docs/adr/T001-notion-todo-module.md), [F004](./docs/adr/F004-shared-notion-client.md) |
 | **v0.1.0** | `v0.1.0` | 初始发布：mail / cal / rss / note + CI | [F001](./docs/adr/F001-cli-shape.md), [F002](./docs/adr/F002-multi-account-keyring.md), [M001](./docs/adr/M001-imap-stack.md), [C001](./docs/adr/C001-caldav-stack.md) |
 
-发版流程步骤见
+发版流程步骤见 [governance.md](./governance.md) §17 与
 [`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Release (runbook summary)"。
