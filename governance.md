@@ -132,21 +132,18 @@
 
 ### 3.3 编号方案
 
-按**模块前缀 + 三位数字**编号，永远不重用编号：
+按**模块前缀 + 三位数字**编号，永远不重用编号。
 
-| 前缀 | 范围 |
+通用约定：
+
+| 通用前缀 | 适用范围 |
 | --- | --- |
-| `F` | 跨切面（CLI 形态、账户、CI、性能预算） |
-| `M` | 邮件类模块 |
-| `C` | 日历类模块 |
-| `N` | 笔记类模块 |
-| `T` | 待办类模块 |
-| `B` | 书签类模块 |
-| `L` | 跨模块日志/事件层 |
-| `R` | 重构模式（可复用结构决策） |
-| `S` | 跨模块搜索/聚合 |
+| `F` | 跨切面（CLI 形态、账户体系、CI、性能预算、安全模型） |
+| `R` | 重构模式 / 可复用的结构决策 |
 
-> 每个项目按自身领域调整前缀集合，例如：`AUTH` `PAY` `ORDER` `INFRA` 等。
+> 项目级前缀由各项目根据自己的领域自定义；前缀集合由该项目第一篇 ADR（即 F 或等价总设类）锁定，并在 `docs/adr/README.md` 顶部公示。
+>
+> 典型自定义前缀例子（**仅作示意，不代表推荐**）：`AUTH`、`PAY`、`ORDER`、`INFRA`、`MAIL`、`CAL`、`NOTE`、`TODO`、`BKMK`、`LOG`、`SRCH`。
 
 ### 3.4 模式类 ADR（R 类）的判定
 
@@ -252,7 +249,7 @@
 | # | 步骤 | 命令/动作 | 通过条件 |
 | --- | --- | --- | --- |
 | 1 | 质量门禁 | 任务运行器一键命令（format → lint → test → build） | 全绿 |
-| 2 | 文档链接完整性 | `just check-links`（或等价工具） | 无失败项 |
+| 2 | 文档链接完整性 | `<task-runner> check-links`（详见 §10 / §11） | 无失败项 |
 | 3 | **ADR 抽取**（见第 7 节） | 决定是否新建/更新 ADR | 决策性内容均落 ADR |
 | 4 | 提交 | 按第 8 节规范 | 提交消息符合格式 |
 | 5 | 进度文档更新 | 在 `progress.md` 时间序索引追加新 ADR id | 索引行数 = 实际 ADR 数 |
@@ -379,13 +376,13 @@
 
 ### 10.1 为什么需要任务运行器
 
-- 把"开发常用命令"集中到一个目录（`Justfile` / `package.json scripts` / `Makefile`）
+- 把"开发常用命令"集中到一个入口文件（`Justfile` / `package.json scripts` / `Makefile` / `Taskfile.yml` 等，统称 **任务运行器**）
 - 提供跨平台 shell（bash + powershell）
 - 组合命令顺序、quiet flag、fail-fast
 
-### 10.2 必备 recipe（按需替换工具名）
+### 10.2 必备 recipe（recipe 名 / 命令按所选运行器替换）
 
-| Recipe | 含义 |
+| 命令 | 含义 |
 | --- | --- |
 | `format` | 自动格式化 |
 | `check` | 格式 + 静态检查（fail-fast on format） |
@@ -396,7 +393,7 @@
 
 ### 10.3 quiet flag 约定
 
-- 跑测试 / 构建的 recipe 默认带 quiet flag
+- 跑测试 / 构建的命令默认带 quiet flag
 - 只在"需要看完整 trace 排查问题"时打开
 
 ### 10.4 跨平台 shell
@@ -413,6 +410,109 @@
 - 解析锚点（`#heading-slug`），做 best-effort 校验
 - 输出三档：`[OK] / [FAIL] / [WARN]`；FAIL 退出码非零
 
+### 10.6 精简 Justfile 模板
+
+`just` 是这一类任务运行器中跨平台做得最干净的选项。最小可工作模板：
+
+```just
+# Cross-platform shells: bash on Unix, PowerShell on Windows.
+set shell := ["bash", "-c"]
+set windows-shell := ["powershell.exe", "-NoProfile", "-NoLogo", "-Command"]
+
+# List available recipes (also the default target).
+default:
+    @just --list
+
+# Auto-format all sources.
+format:
+    <formatter>            # e.g. cargo fmt / prettier --write . / ruff format .
+
+# Format + lint; fail-fast on format before running the linter.
+check: _fmt-check _lint
+
+_fmt-check:
+    <formatter> --check
+
+_lint:
+    <linter> --deny warnings
+
+# Run tests, quiet.
+test:
+    <test-runner> -q
+
+# Build, quiet.
+build:
+    <builder> -q
+
+# Cross-document link integrity.
+check-links:
+    bash scripts/check-doc-links.sh
+
+# Full local CI: check -> check-links -> test -> build.
+ci: check check-links test build
+```
+
+> 替换表：
+>
+> | 占位 | Rust | Node/TS | Python | Go |
+> | --- | --- | --- | --- | --- |
+> | `<formatter> --check` | `cargo fmt` | `prettier` | `ruff format` | `gofmt` |
+> | `<linter> --deny warnings` | `cargo clippy -- -D warnings` | `eslint --max-warnings 0` | `ruff check` | `staticcheck` |
+> | `<test-runner> -q` | `cargo test -q` | `vitest run --reporter=basic` | `pytest -q` | `go test ./...` |
+> | `<builder> -q` | `cargo build -q` | `tsc` / `vite build` | `python -m build` | `go build ./...` |
+
+### 10.7 `check-links` 精简脚本（bash / POSIX）
+
+完整脚本需要支持 fenced code 剔除、ADR id 校验、`..` 路径规范化等。**最小骨架**足以覆盖 90% 的使用场景：
+
+```bash
+#!/usr/bin/env bash
+# scripts/check-doc-links.sh — minimal cross-document link checker.
+set -u
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT" || exit 2
+
+FAILS=0
+mapfile -t FILES < <(find . -type f -name '*.md' \
+  -not -path './target/*' -not -path './.git/*' \
+  -not -path './node_modules/*' -not -path './dist/*' \
+  -not -path '*/.workbuddy/*')
+
+for f in "${FILES[@]}"; do
+  dir="$(dirname "$f")"
+  # Strip fenced code blocks, then extract every [label](target).
+  awk 'BEGIN{c=0} /^```/{c=!c; next} !c' "$f" \
+    | grep -oE '\[[^]]*\]\([^)]+\)' \
+    | sed -E 's/.*\]\(([^)]+)\).*/\1/' \
+    | while IFS= read -r target; do
+        # Skip external / pure anchor.
+        [[ "$target" =~ ^(https?:|mailto:|#) ]] && continue
+        # Drop fragment.
+        path="${target%%#*}"
+        [[ -z "$path" ]] && continue
+        # Skip obvious placeholders.
+        [[ "$path" =~ [\<\>] ]] && continue
+        # Resolve relative to the file's directory.
+        resolved="$(cd "$dir" 2>/dev/null && realpath -m --relative-to=. "$path" 2>/dev/null || echo "$dir/$path")"
+        if [[ ! -e "$resolved" ]]; then
+          printf '[FAIL] %s: %s -> %s\n' "$f" "$target" "$resolved"
+          FAILS=$((FAILS + 1))
+        fi
+      done
+done
+
+[[ $FAILS -eq 0 ]] && echo "[OK] no broken links across ${#FILES[@]} files." && exit 0
+echo "[FAIL] $FAILS broken link(s)." && exit 1
+```
+
+要点：
+
+- **剔除 fenced code**（`/^```/ … /c=!c/`）：占位符语法（如示例里的 `[x](...)`）不会被误判为坏链。
+- **跳过 `http(s)`/`mailto`/`#` 目标**：纯外链与锚点不在本检查范围。
+- **相对于源文件目录解析**：源文件链接全部相对源文件所在目录解析；与 ADR 根目录的绝对位置无关。
+- **退出码**：PASS 返回 0，任何 FAIL 返回 1，方便接进 CI 与任务运行器。
+- **生产级需要补的功能**（按项目复杂度裁剪）：1) 锚点 heading-slug 的 best-effort 匹配；2) ADR 索引文件中 `[<id>](<id>-...)` 形式的批量校验；3) 源码注释里跨 ADR 目录的引用（`<adr-dir>` 与 11.2 的目录深度）；4) `.rules/` / `README` 索引与文件存在性的一致性。
+
 ---
 
 ## 11. 跨文档引用与链接完整性
@@ -427,22 +527,24 @@
 
 ### 11.2 链接深度表（注释文档链接 ADR）
 
-源文件目录层级决定 `../` 段数：
+源文件目录层级决定 `../` 段数。规则按"源文件所在目录到仓库根的层数 + 1"（`+1` 用于穿过 ADR 目录自身）：
 
-| 源文件位置 | ADR 链接前缀 |
+| 源文件位置（举例） | ADR 链接前缀 |
 | --- | --- |
-| 顶层（`src/`） | `[id](../docs/adr/<id>-...md)` |
-| 一层子目录（`src/modules/`） | `[id](../../docs/adr/<id>-...md)` |
-| 两层子目录（`src/modules/timeline/`） | `[id](../../../docs/adr/<id>-...md)` |
+| 顶层（源代码根或一级平铺目录） | `[id](../<adr-dir>/<id>-...md)` |
+| 一层子目录（`modules/<name>/` 等） | `[id](../../<adr-dir>/<id>-...md)` |
+| 两层子目录（`modules/<name>/<sub>/` 等） | `[id](../../../<adr-dir>/<id>-...md)` |
 
 > 任何新成员按"数源文件到仓库根的目录层数"推断；错了 `check-links` 会立刻报。
+>
+> `<adr-dir>` 由项目自行决定（如 `docs/adr/`、`architecture/decisions/`、`docs/decisions/`），但**必须**在 §3.6 索引节固定，所有深度引用指向同一目录。
 
 ### 11.3 链接腐烂的预防
 
 - 文件改名 → 一次提交内更新所有引用
 - 文件删除 → 先在索引删除条目 → 再删文件
 - 章节重命名 → 跑 `check-links` 验证所有 `#heading` 锚点
-- 不依赖 IDE 重构插件处理 markdown 链接；它们往往错过 `.rs` / `.py` 内嵌的 markdown
+- 不依赖 IDE 重构插件处理 markdown 链接；它们往往错过源码文件内嵌的 markdown（如 `///`/`#`/`/** */`/`<!-- -->` 注释里的链接）
 
 ---
 
@@ -533,17 +635,19 @@
 
 | 红线 | 规则 |
 | --- | --- |
-| ❌ | 不得把密码 / Token 写入配置文件、环境变量、命令行、日志 |
-| ✅ | 凭证走 OS 原生 keyring（service = `<project>/<module>/<account>`） |
+| ❌ | 不得把密码 / Token / API key 写入配置文件、环境变量、命令行、日志 |
+| ✅ | 凭证由项目选定的"OS 原生安全存储后端"管理（实现细节写在项目的安全 ADR 中）；命名空间规则在 ADR 中固定（如 `<项目>:<模块>:<账户>`） |
 | ✅ | 空凭证返回"未配置"错误，不 panic、不进入重试循环 |
-| ✅ | 无 keyring 后端的 headless 环境返回明确错误，并提示交互式回退 |
+| ✅ | 缺失安全后端（如 headless 环境）必须返回明确错误，并允许交互式回退 |
+
+> 这条规则的**意图**是"凭证不落盘、不入命令行、永不进日志"。具体后端（keychain / 凭据管理器 / Windows Credential Manager / GPG 加密文件等）由项目安全 ADR 决定；`governance.md` 不锁定实现。
 
 ### 14.2 网络调用
 
 | 红线 | 规则 |
 | --- | --- |
-| ✅ | 任何 HTTP/TCP 客户端必须配置超时（读默认 30s，写默认 10s） |
-| ❌ | 不得裸用 TCP 流而不带超时包裹 |
+| ✅ | 任何 HTTP/TCP 客户端必须配置超时（具体时长写在性能预算 ADR：典型值读默认 30s，写默认 10s） |
+| ❌ | 不得裸用底层 socket 流而不带超时包裹 |
 | ❌ | 认证失败 / 参数错误**不得**进入重试循环——它们是终态 |
 | ✅ | 遇到 429 时按 `Retry-After` 退避，限定次数（默认 1 次） |
 
@@ -559,14 +663,16 @@
 
 | 红线 | 规则 |
 | --- | --- |
-| ❌ | 不得打印完整的网络层内部字段（如邮件 `Message-ID` 等关联标识） |
+| ❌ | 不得打印完整的网络层内部字段（如服务端相关标识） |
 | ✅ | 结构化输出绝不内嵌凭证；认证失败消息只能说"账户 X 缺少凭证"，不出现凭证本身 |
 | ✅ | 结构化输出失败时必须回退到通用信封，不破坏对外契约 |
 
-### 14.5 并发陷阱
+### 14.5 并发与时间陷阱
 
-- 在 `Drop` 实现中调用异步 spawn 之前**必须**探测运行时是否存在，否则 runtime 关闭后会 panic 并泄漏资源
-- 涉及本地时间解析时，对 DST 边界使用显式歧义解析（`earliest` / `latest`），不 `unwrap`
+- 析构/清理路径里要触达异步运行时（spawn、定时器、通道收发）时，**必须**先探测运行时是否还活着；运行时已退出时静默回收资源，不要 panic、不要泄漏已借用的会话/连接。
+- 涉及本地时间 / 日历日（DST 边界、夏令时切换、跨时区用户输入）时，用显式歧义解析策略（如"取最早/最晚有效时间"），不依赖 panic/抛异常类的隐式崩溃路径。
+
+> 上述两项的**具体适配方式**由语言/运行时 ADR 决定；`governance.md` 只锁定"必须探测、必须显式歧义"的意图，不锁定调用形式。
 
 ### 14.6 漏洞披露
 
@@ -587,8 +693,8 @@
 
 ### 15.2 版本与特性配置
 
-- 关闭 `default-features`，只启用真正需要的 feature
-- TLS 优先选择 `rustls` 系（纯 Rust）避免系统 OpenSSL 链
+- 关闭非必要的默认 feature，只启用真正需要的（具体规则由语言/工具链 ADR 锁定，例如 Cargo 的 `default-features = false` / npm 的 `sideEffects` / pip 的 extras）
+- TLS 后端优先选择与运行时同源的纯实现，避免系统 C 库的传递依赖（如适用）
 - 锁文件进入版本控制；CI 用与本地一致的 lockfile
 
 ### 15.3 踩坑日志（dependency-pitfalls）
@@ -615,8 +721,8 @@
 | 静态检查 | 带 `--deny warnings`；CI 与本地同配置 |
 | 公共 API | 必须有文档注释（说明契约、不变量、副作用） |
 | 模块 | 文件顶部必须有模块级文档注释，说明模块目的与关键不变量 |
-| 错误处理 | 非测试代码不使用 `unwrap` / `expect`；用 `?` + `map_err` + 上下文 |
-| 构造器 | 能 `Result` 返回的不 `expect` |
+| 错误处理 | 非测试代码不使用 panic/抛异常类调用（Rust 的 `unwrap`/`expect`、Java 的 `throw`、Python 的 `raise` 未经处理等）；用 `Result?`/error wrapping/结构化错误传递 + 上下文 |
+| 构造器 | 凡能返回错误类型的构造器不 panic；遵循"成功构造或显式失败"原则 |
 
 ### 16.2 命名约定
 
@@ -628,9 +734,9 @@
 
 ### 16.3 异步与运行时
 
-- 显式声明运行时（单线程 / 多线程）
-- 在 `Drop` 中调用 spawn 必须先 `Handle::try_current()` 探测
-- 涉及本地时间 / DST 边界用显式歧义解析
+- 显式声明运行时（单线程 / 多线程、事件驱动 / 多进程等）
+- 在析构/资源回收路径中触达异步资源（spawn / 定时器 / 通道）前，必须先探测运行时是否存活
+- 涉及本地时间 / DST 边界 / 夏令时切换时，用显式歧义解析策略
 
 ### 16.4 参数解析
 
@@ -640,9 +746,9 @@
 
 ### 16.5 持久化与查询
 
-- token 边界匹配使用合适的算子（`GLOB` / 正则 / 自定义解析），不用模糊 `LIKE`
-- 配置路径数组索引访问需要支持自动扩展
-- 字符串字面量与配置值的类型差异（`is_bool` vs `is_boolean` 等）需要约定
+- token 边界匹配使用合适的算子（精确匹配 / `GLOB` / 正则 / 自定义解析），不用模糊子串匹配
+- 配置路径数组索引访问需要支持自动扩展（避免误把缺失下标当成错误）
+- 不同来源的同义配置键（如布尔值的 `on/off`、`true/false`、`yes/no`）需要在配置加载层做规范归一，并在 ADR 中显式列出接受的别名
 
 ---
 
@@ -739,9 +845,9 @@
 
 ### 19.2 应当成为模块的能力类型
 
-- 外部协议封装（IMAP / SMTP / CalDAV / Notion / RSS …）
-- 外部状态抽象（凭证 / 缓存 / 同步水位）
-- 跨模块统一层（事件流 / 搜索 / 配置）
+- 外部协议封装（如邮件 / 日历 / 笔记 / IM / 存储 / 搜索等领域的对外协议）
+- 外部状态抽象（凭证 / 缓存 / 同步水位 / 索引 / 配额）
+- 跨模块统一层（事件流 / 搜索 / 配置 / 通知）
 
 ### 19.3 不应成为模块的能力类型
 
@@ -753,10 +859,10 @@
 ### 19.4 新增模块的提交序列
 
 1. 在 `task_plan.md` 加 Phase 条目
-2. 写 ADR 至少一篇（F 类总设计 + 模块类实现细节）
-3. 实现 `Executor` 接口 + 注册到 `ModuleRegistry`（或等价入口）
-4. 加 `mod_name` scope 至 commit message 规范
-5. 在 `agents.md` 的模块清单加一行
+2. 写 ADR 至少一篇（总设类 + 模块实现细节）
+3. 在项目入口注册一个新模块（具体注册方式由项目决定，例如 trait + registry / 配置即模块 / 命令前缀映射）
+4. 加新模块作用域至 commit message 规范
+5. 在入口文件的模块清单加一行
 6. 在用户文档加使用示例
 
 ---
