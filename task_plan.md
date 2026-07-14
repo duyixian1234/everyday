@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.8.1 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地，Phase 13（动作层 Backend DI 重构 note/todo/bookmark）已实施完成（ADR R016–R018）：三模块动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取，加 in-memory Mock 回归护栏（note/todo/bookmark 各 2 条 DI 验收单测）。258 tests / clippy `-D warnings` 零警告 / fmt clean。Phase 13 为内部重构、非破坏性，已随 v0.8.1 发布；mail 推迟 v1.1。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
+**当前状态：** v0.8.1 已发布：Phase 12（凭据 / `login` 逻辑收拢到顶层 `auth` 模块）落地，Phase 13（动作层 Backend DI 重构 note/todo/bookmark）已实施完成（ADR R016–R018）：三模块动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取，加 in-memory Mock 回归护栏（note/todo/bookmark 各 2 条 DI 验收单测）。258 tests / clippy `-D warnings` 零警告 / fmt clean。Phase 13 为内部重构、非破坏性，已随 v0.8.1 发布。Phase 14（统一搜索 v1.1 收口：mail Searchable 适配器走本地 envelope 缓存）已实施完成，待发版 v0.9.0；265 tests / clippy `-D warnings` 零警告 / fmt clean。v0.6.x 已发布：v0.6.2 修复 Rust 1.97 clippy 注释 lint 阻塞 CI（commit `dd2e786`）。
 
 ---
 
@@ -178,6 +178,39 @@
 - 目录布局落 R017（`xxx/{mod.rs, backend.rs, notion.rs, local.rs}`），模块对外路径 `crate::modules::xxx` 不变；CLI 不变。
 - 质量门禁：build / clippy `--all-targets -- -D warnings` 零警告 / test 258 / fmt clean / check-links(122) 全绿。非破坏性变更，无版本号提升（随下次发版一并发布）。
 
+### Phase 14: 跨模块统一搜索 v1.1 收口 — Mail Searchable 走本地 envelope 缓存 [complete, 待发版 v0.9.0]
+按 ADR [S007](docs/adr/S007-mail-search-local-cache.md) 落地。目标：兑现 [S005](docs/adr/S005-time-semantics-scope.md) 中 mail 推迟 v1.1 的承诺，使 `everyday search` 真正跨 6 模块（note/todo/bookmark/rss/cal/mail），同时坚持 local-first / best-effort 契约（[S004](docs/adr/S004-execution-model.md)，[F009](docs/adr/F009-performance-budget.md)）。
+
+设计要点：
+- **本地缓存优先**：搜索扫 `mail_cache.db`（[M003](docs/adr/M003-envelope-cache.md)–[M005](docs/adr/M005-staleness-auto-sync.md)），**不**走 live IMAP `SEARCH`。避免 cold-start 超预算 + 跨 provider best-effort 污染。
+- **查询语义**：复用 [S003](docs/adr/S003-query-semantics.md) + [R008](docs/adr/R008-sql-glob-not-like.md)：tokens 空白切，单 token OR 跨 `subject|from_addr|to_addr`，大小写不敏感 GLOB；metacharacter token（`* ? [ ]`）跳过防注入。
+- **Provider 形态**：单全局 `MailSearchProvider::new()`，由 `SearchModule::build_registry` 在 `config.mail.accounts` 非空时注册一次；横扫缓存表（按 account/folder 分组 key），下游 merge + global `--limit` 仍生效。
+- **Hit 契约**：`id = "{account}:{folder}:{uid}"` 供 agent 经 `everyday mail read --account <a> --folder <f> <uid>` 回写；`ts` 为 message date（per-module primary time per [S005](docs/adr/S005-time-semantics-scope.md)）。
+- **空输入 / 冷启动**：空 query / 空 token → exit 0；冷启动（无缓存）→ 0 hits；不自动 `mail sync`，调用方负责新鲜度。
+- **测试 DI**：`MailSearchProvider::with_pool(SqlitePool)` `#[cfg(test)]` 注入，零真实 keyring / IMAP 依赖；email_cache 暴露 `open_temp_pool()` 帮跨模块测试造临时缓存。
+
+子任务（one-commit-one-task；每 commit 必过 4 门禁）：
+
+- **T14.1 — `search_envelopes` 本地 GLOB 查询 + 集成单测**（已合 `4a2a86f`）
+  - `src/modules/email_cache.rs`：新增 `pub async fn search_envelopes(pool, tokens)`，跳过空 / metachar token；`row_to_cached_envelope` 抽函数复用；2 条集成单测（subject/from 大小写不敏感；metachar 跳过 + OR）。
+- **T14.2 + T14.3 + T14.4 — `MailSearchProvider` 接入 SearchRegistry + 单测**（已合 `604eed0`，作为单个原子 feature commit，因为 `provider` 与 `wiring` 必须同 commit 才能 clippy 绿）
+  - `src/modules/email.rs::MailSearchProvider` impl `Searchable`：默认 `new()`（lazy open cache）/ 测试 `with_pool(pool)`；4 条单测覆盖空 query 不开缓存、envelope→Hit 映射、per-module cap、module_name。
+  - `src/modules/search.rs`：`SEARCHABLE_MODULES` 增 `mail`；`build_registry` 在 accounts 非空时注册单 provider；description + `--module` help 更新；1 条注册测试。
+  - 移除 `search_envelopes` 上的临时 `#[allow(dead_code)]`。
+- **T14.5 — 文档 + ADR + 版本**（待 commit，与版本 bump 同 commit）
+  - ADR `S007-mail-search-local-cache.md`：Context / Decision / Alternatives / Consequences（拒绝 live IMAP、拒绝 hybrid cache-fallback、拒绝 per-account provider 实例化）。
+  - `docs/adr/README.md` 索引加 S007；`S005-time-semantics-scope.md` 注释 mail 推迟项 → 指向 S007（历史 fact 不变，仅标注落实）。
+  - `progress.md`：当前状态增 Phase 14 行；ADR 时间序加 S007；发版流水加 v0.9.0（待发版）行。
+  - `task_plan.md`：增本节；状态汇总增 v0.9.0 行。
+  - 版本：`Cargo.toml` 0.8.1 → 0.9.0；同步 `Cargo.lock`（cargo build 自动）；`README.md` / `README_ZH.md` / `skills/README.md` / `skills/everyday-cli/SKILL.md` / `skills/everyday-cli/references/COMMANDS.md` 中模块清单与示例同步增 `mail`。
+  - 4 门禁全绿后 `chore: release v0.9.0` commit；注解 tag `v0.9.0`；推 GitHub origin，**不推 cnb 镜像**。
+
+完成小结（实现均已落地）：
+- mail 加入 v1.1 searchable 集，与 rss（本地缓存）/ cal（full-pull 本地过滤）一致；6 模块 search 全覆盖。
+- 7 条新单测：`search_envelopes_matches_subject_from_case_insensitive`、`search_envelopes_token_or_and_skips_metachars`、`mail_search_tests::{module_name_is_mail, empty_query_returns_no_hits_without_opening_cache, search_maps_cache_envelopes_to_hits, search_respects_per_module_cap}`、`search::build_registry_registers_mail_when_accounts_exist`。
+- 质量门禁：build ✅ / clippy `--all-targets -- -D warnings` 零警告 ✅ / 265 tests ✅ / fmt clean ✅。
+- 待 commit + 发版：v0.9.0（非破坏性）。
+
 ---
 
 ## 关键设计决策
@@ -265,3 +298,4 @@ username = "me"
 - Phase 11: complete (search module landed; released as v0.7.0)
 - Phase 12: complete (auth module consolidation; ADRs R013/R014/R015 done, v0.8.0 released)
 - Phase 13: complete (action-layer Backend DI for note/todo/bookmark; ADRs R016/R017/R018 implemented via T13.1–T13.10; released as v0.8.1; 258 tests / clippy `-D warnings` clean / fmt clean; non-breaking)
+- Phase 14: complete (cross-module search v1.1 mail closure via local envelope cache; ADR S007 implemented via T14.1–T14.4; commits `4a2a86f` + `604eed0`; 265 tests / clippy `-D warnings` clean / fmt clean; non-breaking; pending v0.9.0 release)

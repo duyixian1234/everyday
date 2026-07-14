@@ -128,6 +128,7 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [S004](S004-execution-model.md) | Execution model — concurrent, best-effort, cap/limit, exit codes | Accepted | 2026-07-12 |
 | [S005](S005-time-semantics-scope.md) | Time semantics & module scope (v1 / v1.1, rss cache) | Accepted | 2026-07-12 |
 | [S006](S006-search-module-cli.md) | Search module CLI — `query` action + flags | Accepted | 2026-07-12 |
+| [S007](S007-mail-search-local-cache.md) | Mail search via local envelope cache (v1.1) | Accepted | 2026-07-14 |
 
 ---
 

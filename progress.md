@@ -8,6 +8,7 @@
 ## 当前状态
 
 - **v0.8.1 已发布**：Phase 13 动作层 Backend DI 重构（[R016–R018](./docs/adr/R016-action-backend-di.md)）落地——note/todo/bookmark 动作层经 `for_account` 工厂 + `Note/Todo/BookmarkBackend` trait 依赖倒置，零 `NotionClient` 泄漏、零 provider 分支、零 keyring 读取；加 in-memory `Mock*Backend` 做 DI 回归护栏（各 2 条验收单测）。非破坏性内部重构；258 tests / clippy `-D warnings` 零警告 / fmt clean。
+- **Phase 14 完成（待发版 v0.9.0）**：跨模块统一搜索 `everyday search` 收口 v1.1 —— 新增 `mail` 模块 Searchable 适配器，扫 `mail_cache.db` 本地 envelope 缓存而非 live IMAP `SEARCH`，与 `rss`（本地缓存）/ `cal`（full-pull 本地过滤）一致。`search_envelopes` 单 token OR 跨 subject/from/to，大小写不敏感 GLOB；metacharacter token 跳过。`Hit::id = "{account}:{folder}:{uid}"` 供 agent 经 `mail read` 后续操作。Searchable 注册单全局 provider；per-module cap 50 → global cap 20 双层收紧。265 tests / clippy `-D warnings` 零警告 / fmt clean。详见 [ADR S007](./docs/adr/S007-mail-search-local-cache.md)。
 - **v0.8.0 已发布**：Phase 12 凭据 / `login` 逻辑收拢到顶层 `auth` 模块。
   删除 `mail` / `cal` / `note` / `todo` / `bookmark` 各自 `login` 子命令及本地 provider
   的 no-op `login`，改为统一 `everyday auth login|logout|verify|list --module <mod>`
@@ -52,6 +53,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-07-14 | S | [S007](./docs/adr/S007-mail-search-local-cache.md) | Mail 搜索走本地 envelope 缓存（非 live IMAP `SEARCH`），与 rss/cal 一致 |
 | 2026-07-12 | R | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块；verify 显式可选；非交互输入契约 |
 | 2026-07-12 | R | [R016–R018](./docs/adr/R016-action-backend-di.md) | 动作层 Backend trait + DI：note/todo/bookmark 去除 `NotionClient` 直接泄漏；目录布局；domain 类型 + Mock 回归护栏 |
 | 2026-07-12 | S | [S001–S006](./docs/adr/S001-search-architecture.md) | 跨模块统一搜索：架构 / Hit 契约 / 查询语义 / 执行模型 / 时间语义与范围 / CLI |
@@ -84,6 +86,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.9.0** | `v0.9.0`（待发版） | 跨模块统一搜索 v1.1 收口：`mail` Searchable 适配器（本地 envelope 缓存，非 live IMAP） | [S007](./docs/adr/S007-mail-search-local-cache.md) |
 | **v0.8.1** | `v0.8.1` | 动作层 Backend DI 重构：note/todo/bookmark 去 `NotionClient` 直接引用，改走 `Note/Todo/BookmarkBackend::for_account` 工厂 + 双实现，加 Mock 回归护栏（非破坏性） | [R016–R018](./docs/adr/R016-action-backend-di.md) |
 | **v0.8.0** | `v0.8.0` | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块（破坏性：移除各模块 `login`） | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) |
 | **v0.7.0** | `v0.7.0` | 跨模块统一搜索：`everyday search` + Searchable/Registry | [S001–S006](./docs/adr/S001-search-architecture.md) |

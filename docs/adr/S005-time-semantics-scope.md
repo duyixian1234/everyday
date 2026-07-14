@@ -16,7 +16,7 @@ Different modules have different notions of "the time" for an item, and not ever
   - `bookmark` → added time
 - **v1 scope:** `note`, `todo`, `bookmark` (local SQLite `GLOB`), `rss` (new local item cache), `cal` (full-pull `GLOB`).
 - **`rss` gains a local item cache table** (SQLite), populated by `sync`/`digest`. Search queries this cache (offline-capable, consistent with the other local modules). Live-fetch-on-search was rejected (slow, rate-limit risk).
-- **`mail` is deferred to v1.1** (IMAP `SEARCH`, see [S003](S003-query-semantics.md)). It does not implement `Searchable` until then.
+- **`mail` is deferred to v1.1** (IMAP `SEARCH`, see [S003](S003-query-semantics.md)). It does not implement `Searchable` until then. Resolved in v1.1 via the local envelope cache — see [S007](S007-mail-search-local-cache.md).
 - **Fusion (v1):** group hits by module, sort `ts desc` within the merged list. `--sort relevance` is deferred to v2 (avoiding false-precision ranking).
 
 ## Alternatives considered
