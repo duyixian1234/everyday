@@ -18,6 +18,7 @@ ADRs are numbered by **module prefix**, not chronologically:
 | `B00x`   | Bookmark module |
 | `L00x`   | Timeline unified event layer |
 | `R00x`   | Refactoring patterns (caveman review, 2026-07-11/12) |
+| `K00x`   | Knowledge base — agent's own notebook (memory module) |
 
 Status legend: **Accepted** = in production; **Superseded** = replaced by a later ADR (see the link).
 
@@ -129,6 +130,17 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [S005](S005-time-semantics-scope.md) | Time semantics & module scope (v1 / v1.1, rss cache) | Accepted | 2026-07-12 |
 | [S006](S006-search-module-cli.md) | Search module CLI — `query` action + flags | Accepted | 2026-07-12 |
 | [S007](S007-mail-search-local-cache.md) | Mail search via local envelope cache (v1.1) | Accepted | 2026-07-14 |
+
+## Knowledge base (K-series)
+
+Append-only triple store for the agent's own notebook. Distinguishes from Timeline (timestamped events) and Note (unstructured prose) — see [`CONTEXT.md` §Memory](../../CONTEXT.md) for the conceptual boundary.
+
+| # | Title | Status | Date |
+|---|-------|--------|------|
+| [K001](K001-memory-module.md) | Memory module — agent's own notebook (append-only triple store) | Accepted | 2026-07-14 |
+| [K002](K002-memory-graph-query.md) | Memory graph query — forward-only recursive traversal on current state | Accepted | 2026-07-14 |
+| [K003](K003-memory-searchable.md) | Memory participates in cross-module `Searchable` trait (current-state GLOB) | Accepted | 2026-07-14 |
+| [K004](K004-memory-single-instance.md) | Memory single-instance storage — no account column | Accepted | 2026-07-14 |
 
 ---
 

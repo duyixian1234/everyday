@@ -36,6 +36,7 @@ shell 做不到的事"。
 | `bookmark` | 书签：本地 SQLite 默认，Notion 备选 | [B001](./docs/adr/B001-bookmark-dual-provider.md) |
 | `timeline` | 跨模块统一事件层（append-only log） | [L001](./docs/adr/L001-append-only-event-log.md) – [L013](./docs/adr/L013-from-explicit-error.md) |
 | `config` | 配置查看 / 修改；走 Executor trait | [R012](./docs/adr/R012-config-executor-trait.md) |
+| `memory` | Agent 结构化事实笔记本（append-only 三元组） | [K001](./docs/adr/K001-memory-module.md) – [K004](./docs/adr/K004-memory-single-instance.md) |
 
 ## 文档约定
 
@@ -52,7 +53,7 @@ Agents 与协作者在改代码前，按以下顺序读：
 | --- | --- |
 | `agents.md` | 项目入口、技术栈、模块清单、文档约定 |
 | [`.rules/`](./.rules/RULES.md) | 非决策类约定（workflow / style / testing / security / commit / justfile / crate 踩坑 / **注释策略**） |
-| [`docs/adr/`](./docs/adr/README.md) | 每个架构决策的"上下文 / 决策 / 备选 / 影响"（F/M/C/N/T/B/L/R 系列） |
+| [`docs/adr/`](./docs/adr/README.md) | 每个架构决策的"上下文 / 决策 / 备选 / 影响"（F/M/C/N/T/B/L/R/S/K 系列） |
 | [`CONTEXT.md`](./CONTEXT.md) | 领域术语表（仅定义，不涉及实现） |
 | [`task_plan.md`](./task_plan.md) | 阶段 + 错误表 + 设计决策摘要 |
 | [`progress.md`](./progress.md) | 当前状态（每行 ≤ 1 句）+ ADR 时间序索引 + 发版流水 |

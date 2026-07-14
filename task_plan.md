@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.9.0 已发布（Phase 14：mail Searchable 走本地 envelope 缓存）。
+**当前状态：** v0.10.0 已发布（Phase 15：memory 模块落地，append-only 三元组 + 当前态视图 + graph + Searchable）。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）——见 [governance.md](./governance.md) §4.1。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
@@ -59,6 +59,9 @@
 
 ### Phase 14: 跨模块统一搜索 v1.1 收口 — Mail Searchable 走本地 envelope 缓存 [complete]
 按 ADR [S007](./docs/adr/S007-mail-search-local-cache.md) 落地。`MailSearchProvider` 扫 `mail_cache.db`（非 live IMAP `SEARCH`）；复用 [S003](./docs/adr/S003-query-semantics.md) + [R008](./docs/adr/R008-sql-glob-not-like.md)：tokens 空白切，单 token OR 跨 `subject|from_addr|to_addr`，大小写不敏感 GLOB，metacharacter token 跳过。单全局 provider；`Hit::id = "{account}:{folder}:{uid}"` 供 agent 经 `mail read` 回写。**v0.9.0 已发布**（非破坏性）。
+
+### Phase 15: Memory 模块（agent's own notebook）[complete]
+按 ADR [K001](./docs/adr/K001-memory-module.md)–[K004](./docs/adr/K004-memory-single-instance.md) 设计 + 实现。`src/modules/memory/{mod,store,actions,search}.rs`；append-only `(subject, predicate, object)` 三元组 + confidence/source 元数据 + soft delete；独立 `~/.config/everyday/memory.db`；v1 命令集 `add / get / relation / list / delete / graph / history`（7 个）；参与 `everyday search`（当前态 GLOB 适配器，K003）；graph 前向 BFS 深度 1..=5（K002）；无 account 列、无 `auth` 模块触及（K004）。**v0.10.0 已发布**。
 
 ---
 

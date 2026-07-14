@@ -4,7 +4,7 @@
 
 **语言 / Language：** [English](README.md) · **简体中文**
 
-`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（默认本地 SQLite / 可选 Notion）、待办（默认本地 SQLite / 可选 Notion）、书签（默认本地 SQLite / 可选 Notion）等外部集成场景，支持 Text / JSON 双输出模式。
+`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（默认本地 SQLite / 可选 Notion）、待办（默认本地 SQLite / 可选 Notion）、书签（默认本地 SQLite / 可选 Notion）、以及 Agent 自身的结构化记忆笔记本等场景，支持 Text / JSON 双输出模式。
 
 ## 特性
 
@@ -343,15 +343,15 @@ everyday timeline today --source todo --json
 
 ### search — 跨模块统一搜索（v0.7.0 新增）
 
-一次查询跨所有模块。`everyday search` 并发扇出到每个已注册的 `Searchable` provider（note / todo / bookmark / rss / cal），合并命中、按时间排序后统一输出。空结果 exit 0；模块级失败以 `SearchWarning` 走 stderr（text）或结构化 `{"_warning": ...}` 行（`--json`），不中断整个查询。
+一次查询跨所有模块。`everyday search` 并发扇出到每个已注册的 `Searchable` provider（note / todo / bookmark / rss / cal / mail / memory），合并命中、按时间排序后统一输出。空结果 exit 0；模块级失败以 `SearchWarning` 走 stderr（text）或结构化 `{"_warning": ...}` 行（`--json`），不中断整个查询。
 
 | 命令 | 描述 | 用法 |
 |------|------|------|
 | `query` | 在所有可搜索模块上跑自由文本查询 | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
 
-**模块范围（v1）**：`note` / `todo` / `bookmark`（本地 SQLite，GLOB 命中 title + content/url/tag），`rss`（本地条目缓存表 `~/.config/everyday/rss-items.db`，由 `rss digest` / `rss fetch` 同步写入），`cal`（全量拉取 + 内存 GLOB 命中 summary / location / start）。Mail 推迟 v1.1；Notion-backed 账户 v1 不参与搜索（live-fetch-on-search 被 ADR S005 拒绝，理由：慢 / rate-limit）。
+**模块范围**：`note` / `todo` / `bookmark`（本地 SQLite，GLOB 命中 title + content/url/tag），`rss`（本地条目缓存表 `~/.config/everyday/rss-items.db`，由 `rss digest` / `rss fetch` 同步写入），`cal`（全量拉取 + 内存 GLOB 命中 summary / location / start），`mail`（本地 envelope 缓存，[S007]，v0.9.0 起），`memory`（当前态视图上 subject/predicate/object 三字段 GLOB，[K003]，v0.10.0 起）。Notion-backed 账户 v1 不参与搜索（live-fetch-on-search 被 ADR S005 拒绝，理由：慢 / rate-limit）。
 
-**查询语义**：空白切 token、多词 **OR**、大小写不敏感 GLOB 子串（`lower(col) GLOB '*token*'`）。每模块硬上限 50；全局默认 20（可由 `--limit` 覆盖）。全局 `ts desc` 排序；各模块的主时间即 `ts`（note: updated_at，todo: updated_at，bookmark: created_at，rss: published，cal: event_start）。
+**查询语义**：空白切 token、多词 **OR**、大小写不敏感 GLOB 子串（`lower(col) GLOB '*token*'`）。每模块硬上限 50；全局默认 20（可由 `--limit` 覆盖）。全局 `ts desc` 排序；各模块的主时间即 `ts`（note: updated_at，todo: updated_at，bookmark: created_at，rss: published，cal: event_start，mail: envelope date，memory: created_at）。
 
 **示例**：
 
@@ -364,6 +364,55 @@ everyday search query "rust timeline" --module note,todo --since 7d
 
 # 限制合并结果最多 5 条
 everyday search query "release" --limit 5
+```
+
+### memory — Agent 结构化记忆笔记本（v0.10.0 新增）
+
+Agent 自身的持久化、append-only 笔记本 —— 以 `(subject, predicate, object)` 三元组形式存放稳定事实，可附 `confidence` 与 `source`。三元组按版本演进：对同一 `(S, P, O)` 再次 `add` 会创建新行（旧行保留在 history 中）。软删除从当前态查询中隐藏该行，但 `history` 仍可见。存储为全局单例 SQLite 文件 `~/.config/everyday/memory.db`（无 `account` 列，不触及 `auth` 模块）。memory 作为 `Searchable` provider 自动参与 `everyday search`。
+
+| 命令 | 描述 | 用法 |
+|------|------|------|
+| `add` | 追加三元组（重复 `(S,P,O)` 会创建新版本） | `everyday memory add <S> <P> <O> [--confidence N] [--source LABEL]` |
+| `get` | 列出某 subject 当前态全部三元组 | `everyday memory get <SUBJECT>` |
+| `relation` | 列出 `(subject, predicate)` 当前态匹配的对象 | `everyday memory relation <SUBJECT> <PREDICATE>` |
+| `list` | 列出所有当前态三元组（默认上限 100） | `everyday memory list [--limit N]` |
+| `delete` | 软删除某三元组的当前态行 | `everyday memory delete <S> <P> <O>` |
+| `graph` | 从 subject 出发的前向 BFS（深度 1..=5，默认 2） | `everyday memory graph <SUBJECT> [--depth N] [--include-deleted]` |
+| `history` | 查看某三元组的全部版本（含已删除行） | `everyday memory history <S> <P> <O>` |
+
+**选项说明**：
+
+| 选项 | 适用 | 描述 |
+|------|------|------|
+| `--confidence N` | `add` | 置信度，区间 `[0.0, 1.0]`，默认 `1.0` |
+| `--source LABEL` | `add` | 来源标签自由文本（如 `explicit` / `inferred`） |
+| `--limit N` | `list` | 行数上限，默认 100 |
+| `--depth N` | `graph` | 递归深度，`1..=5`，默认 2 |
+| `--include-deleted` | `graph` | 在遍历中包含软删除边 |
+
+**Subject 命名约定**（程序不强制，约定见 `skills/everyday-cli/SKILL.md`）：
+
+```
+user                       # 表示用户本人
+project-everyday           # 项目实体
+tech:rust                  # 领域前缀：技术知识
+team:backend:alice         # 层级：团队 > 子团队 > 人
+```
+
+**示例**：
+
+```bash
+# 记录用户偏好
+everyday memory add user prefers rust --confidence 0.9 --source explicit --json
+
+# 查询与用户相关的全部事实
+everyday memory get user --json
+
+# 多跳图遍历
+everyday memory graph user --depth 2
+
+# memory 自动接入 search
+everyday search query "rust" --module memory --json
 ```
 
 ## 输出模式
@@ -684,6 +733,7 @@ pub trait Executor: Send + Sync {
 | `auth` | ✅ 完整可用（v0.8.0 新增） | login / logout / verify / list — 全模块统一的凭证生命周期管理 |
 | `timeline` | ✅ 完整可用 | 统一事件流：today / yesterday / week / month / sync |
 | `search` | ✅ 完整可用（v0.7.0 新增） | 跨模块统一搜索：query |
+| `memory` | ✅ 完整可用（v0.10.0 新增） | append-only `(subject, predicate, object)` 三元组笔记本 + graph + Searchable |
 
 ## 许可证
 

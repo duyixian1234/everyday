@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, init-db, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, query an aggregated timeline of recent activity, search across all integrations in one shot, manage credentials, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, init-db, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), structured agent memory notebook (memory add / get / relation / list / delete / graph / history), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, persist structured facts to the agent's own memory, query an aggregated timeline of recent activity, search across all integrations in one shot, manage credentials, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -26,7 +26,7 @@ Verify with `everyday --version`. Full install steps (per-platform extraction co
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `search` · `config`
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `config`
 
 ## Rules (follow exactly)
 
@@ -36,8 +36,9 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline
    ```
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
-4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks + `delete`), `timeline` (unified event log: `today` / `yesterday` / `week` / `month` / `sync`), `search` (cross-module unified query: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
+4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks + `delete`), `timeline` (unified event log: `today` / `yesterday` / `week` / `month` / `sync`), `memory` (single-instance append-only triple notebook: `add` / `get` / `relation` / `list` / `delete` / `graph` / `history` — no account, no auth touch), `search` (cross-module unified query: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
 5. **`timeline today --json` is the aggregated activity snapshot.** It is one of the cheapest ways to answer "what's happened recently across all my integrations?". Always prefer it over per-module polling unless the user explicitly asks for a specific module.
+6. **`memory` is the agent's own structured notebook.** Use `everyday memory add` to persist stable facts about the user, projects, or the world (subjects like `user`, `project-everyday`, `tech:rust`); use `memory get <SUBJECT>` to recall them. Subject naming is a convention enforced by the agent, not the program — see [Subject naming convention](#memory-subject-naming-convention) below. Memory facts automatically participate in `everyday search`.
 
 ## First-time setup (only if config is missing)
 
@@ -181,6 +182,63 @@ everyday timeline sync --source mail,rss --json
 ```
 
 First-time todo setup: store the token via `everyday auth login --module todo` (service `everyday/todo/<account>`), then add `[[todo.accounts]]` with `parent_page_id` and run `everyday todo init-db` (the integration must be granted access to the parent page). `--db` defaults to the `default_database_id` written by `init-db`.
+
+## Memory (agent's own notebook)
+
+`memory` is a single global instance (`~/.config/everyday/memory.db`, no `account` column, no `auth` module touch). It stores append-only `(subject, predicate, object)` triples with optional `--confidence` and `--source`. Re-adding the same triple creates a new version; `history` shows all versions including soft-deleted rows.
+
+```bash
+# Record what the user prefers
+everyday memory add user prefers rust --confidence 0.9 --source explicit --json
+
+# Look up everything we know about the user
+everyday memory get user --json
+# → {"count":1,"facts":[{"id":"m...","subject":"user","predicate":"prefers","object":"rust","confidence":0.9,"source":"explicit","created_at":"..."}]}
+
+# Filter by (subject, predicate)
+everyday memory relation user prefers --json
+
+# Multi-hop traversal — what does the user depend on, transitively?
+everyday memory graph user --depth 2
+# → user
+#      +-- prefers --> rust
+#      `-- works_on --> everyday
+
+# Soft-delete a current fact (history keeps it)
+everyday memory delete user prefers rust --json
+everyday memory history user prefers rust --json    # includes deleted_at
+everyday memory add user prefers go --json          # resurrection = a new version row
+
+# Memory participates in cross-module search automatically
+everyday search query "rust" --module memory --json
+```
+
+### Memory subject naming convention
+
+The program does not enforce a subject schema (no `[a-z][a-z0-9-]+` regex check, no vocabulary file). Conventions live here so multiple agents agree on the same vocabulary:
+
+```
+user                       # bare subject for the human user
+project-everyday           # a project entity
+tech:rust                  # domain-prefixed: a piece of technology knowledge
+team:backend:alice         # hierarchical: team > sub-team > person
+agent:self                 # agent's own self-description (rare)
+```
+
+Hierarchy is colon-delimited; agents that produce triples are expected to pick the right granularity. Cross-agent fact sharing works by default — two agents writing `(user, prefers, rust)` land in the same version history.
+
+### What memory is and isn't
+
+- **Yes**: stable, structured, mostly-timeless facts ("user prefers rust", "project-everyday uses tokio").
+- **No**: timestamped events (use `everyday timeline ...`).
+- **No**: long prose (use `everyday note create` + `append`).
+- **No**: free-form journal entries.
+
+Decision rule: if there is a clear "moment T" at which a fact became true, it belongs in `timeline`. If it is a stable assertion that survives many days, it belongs in `memory`.
+
+### Memory v2 deferred
+
+These are explicitly out of scope for v1 and should not be assumed by callers: `undelete-by-id`, `search` (embedding-based), `merge`, `expire (TTL)`, `cleanup` (physical GC of soft-deleted rows), `stats`. Use `history` + `--include-deleted` for forensics.
 
 ## Error format
 

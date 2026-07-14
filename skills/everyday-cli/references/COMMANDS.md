@@ -25,6 +25,8 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK for notion): init-db / list / add |
 | `auth` | ✅ Complete (v0.8.0) | login / logout / verify / list — consolidated credential lifecycle for all modules |
 | `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + ops-log AOP trace. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`). v0.6.1 修复 `--from` 单独给定被静默回退 preset 的问题 |
+| `memory` | ✅ Complete (v0.10.0) | Single-instance append-only `(subject, predicate, object)` triple notebook with `--confidence` / `--source` metadata; soft delete + full version history; forward-only BFS graph (depth 1..=5); participates in `everyday search`. No `account` column, no `auth` module touch. Storage at `~/.config/everyday/memory.db` |
+| `search` | ✅ Complete (v0.7.0; v0.9.0 +mail, v0.10.0 +memory) | Cross-module unified search fan-out: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`. Modules: `note` / `todo` / `bookmark` / `rss` / `cal` / `mail` (local envelope cache) / `memory` (current-state view). Notion-backed accounts skipped in v1 |
 
 ---
 
@@ -383,6 +385,74 @@ Append-only event log aggregating `mail` / `cal` / `rss` + the `ops-log` AOP tra
 - **Cal is the only window-refresh provider.** Each `sync` rewrites the cal window `[last_sync, now+7d]`, so cancelled events disappear. Other providers are purely append.
 - **No `--from` / `--to` and no `--since` together.** `--from` / `--to` win; `--since` wins over preset; preset is the fallback. The combinations `today + --since 2026-07-09` widen `from` while keeping `to` at `now()` (useful for "today's window expanded to start earlier").
 - **Notion writes never hit the Notion API during sync.** They are inferred from `~/.config/everyday/ops-log.db`. Add `--sync` to ensure a recent write has been AOP-recorded (writes are recorded synchronously by the CLI, so this is rarely needed, but it helps when scripting).
+
+---
+
+## memory — structured agent notebook ✅ (v0.10.0)
+
+A persistent, append-only notebook for the agent itself. Triples `(subject, predicate, object)` with optional `--confidence` (default `1.0`) and `--source`. Re-adding the same triple creates a new version row; `delete` soft-deletes the current-state row; `history` returns every version including deleted ones. Storage is a single global SQLite file at `~/.config/everyday/memory.db` — no `account` column, no `auth` module touch (K004).
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `memory add <S> <P> <O>` | Append a triple; creates a new version if `(S, P, O)` already exists | `everyday memory add user prefers rust --confidence 0.9 --source explicit --json` |
+| `memory get <SUBJECT>` | List current-state triples for a subject | `everyday memory get user --json` |
+| `memory relation <SUBJECT> <PREDICATE>` | List current-state triples matching `(subject, predicate)` | `everyday memory relation user prefers --json` |
+| `memory list` | List all current-state triples (default cap 100) | `everyday memory list --limit 50 --json` |
+| `memory delete <S> <P> <O>` | Soft-delete the current-state row of a triple | `everyday memory delete user prefers rust --json` |
+| `memory graph <SUBJECT>` | Forward BFS from a subject (depth default 2, max 5) | `everyday memory graph user --depth 2` |
+| `memory history <S> <P> <O>` | Show all versions of a triple (incl. deleted) | `everyday memory history user prefers rust --json` |
+
+### memory options
+
+| Flag | Applies to | Description |
+|------|-----------|-------------|
+| `--confidence N` | `add` | Confidence in `[0.0, 1.0]` (default `1.0`); out-of-range or non-numeric → `InvalidArgument` |
+| `--source LABEL` | `add` | Free-text provenance label (e.g. `explicit`, `inferred`) |
+| `--limit N` | `list` | Cap row count (default 100) |
+| `--depth N` | `graph` | Recursion depth in `1..=5` (default 2); out of range → `InvalidArgument` |
+| `--include-deleted` | `graph` | Include soft-deleted edges in the traversal (default hidden) |
+
+### memory JSON output
+
+`add` returns the inserted fact; `get` / `relation` / `list` return `{"facts": [...], "count": N}`; `delete` returns `{id, subject, predicate, object, deleted_at}`; `history` returns `{"history": [...], "count": N}` (each row carries `deleted_at`); `graph` returns a nested object (text mode: indented markdown tree).
+
+```json
+{
+  "facts": [
+    {
+      "id": "m18c2...",
+      "subject": "user",
+      "predicate": "prefers",
+      "object": "rust",
+      "confidence": 0.9,
+      "source": "explicit",
+      "created_at": "2026-07-14T15:03:38+00:00"
+    }
+  ],
+  "count": 1
+}
+```
+
+### memory behavior & semantics
+
+- **Append-only**: `add` always inserts a new row. Re-adding the same `(S, P, O)` does **not** update the existing row; it appends a new version. `history` returns every version.
+- **Soft delete**: `delete` sets `deleted_at = now()` on the **current-state** row (the row with `MAX(created_at) WHERE deleted_at IS NULL`). Subsequent `delete` calls on the same triple return `InvalidArgument("triple not found or already deleted")`.
+- **Resurrection**: `add` after delete creates a new row (append-only). To recover a specific historical row by `id`, wait for v2 `undelete-by-id` (K001, v2 deferred).
+- **No semantic validation**: the program does not enforce `prefers`/`knows`/etc.; triples are free-form. Conventions live in `SKILL.md`.
+- **Graph**: forward-only BFS over current state; cycle detection via visited set keyed by `(subject, predicate, object)`. `--include-deleted` flips the source view to the underlying table for the traversal.
+- **Searchable**: memory facts (current state) participate in `everyday search`. `Hit.id` is `"memory:<row_id>"` so agents can drill into `memory history` / `memory get` via the id.
+
+### Subject naming convention (recommended, not enforced)
+
+```
+user                       # bare subject for the human user
+project-everyday           # project entity
+tech:rust                  # domain-prefixed: technology knowledge
+team:backend:alice         # hierarchical: team > sub-team > person
+agent:self                 # agent's own self-description (rare)
+```
+
+Multiple agents writing `(user, prefers, rust)` land in the same version history. Use `tech:rust` vs `tech:python` to avoid collisions on shared nouns.
 
 ---
 

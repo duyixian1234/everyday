@@ -4,7 +4,7 @@
 
 **语言 / Language:** **English** · [简体中文](README_ZH.md)
 
-`everyday` is a high-performance, memory-safe local CLI toolkit written in Rust. It acts as the "digital hands" of an AI Agent, offering a unified command structure that covers external-integration scenarios — email, calendar, RSS feeds, notes (local SQLite by default / optional Notion), to-dos (local SQLite by default / optional Notion), and bookmarks (local SQLite by default / optional Notion) — with dual Text / JSON output modes.
+`everyday` is a high-performance, memory-safe local CLI toolkit written in Rust. It acts as the "digital hands" of an AI Agent, offering a unified command structure that covers external-integration scenarios — email, calendar, RSS feeds, notes (local SQLite by default / optional Notion), to-dos (local SQLite by default / optional Notion), bookmarks (local SQLite by default / optional Notion), and a structured agent memory notebook — with dual Text / JSON output modes.
 
 ## Features
 
@@ -334,13 +334,13 @@ everyday timeline today --source todo --json
 
 ### search — cross-module unified search (NEW in v0.7.0)
 
-One query, all modules. A single `everyday search` call fans out concurrently to every registered `Searchable` provider (note / todo / bookmark / rss / cal), merges the hits into one time-ordered list, and renders them as Text or JSON. Empty results exit 0; per-module failures are surfaced as `SearchWarning` on stderr (text mode) or as a structured `{"_warning": ...}` line (`--json` mode) without aborting the whole query.
+One query, all modules. A single `everyday search` call fans out concurrently to every registered `Searchable` provider (note / todo / bookmark / rss / cal / mail / memory), merges the hits into one time-ordered list, and renders them as Text or JSON. Empty results exit 0; per-module failures are surfaced as `SearchWarning` on stderr (text mode) or as a structured `{"_warning": ...}` line (`--json` mode) without aborting the whole query.
 
 | Command | Description | Usage |
 |------|------|------|
 | `query` | Run a free-text query across every searchable module | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
 
-**Module scope (v1)**: `note` / `todo` / `bookmark` (local SQLite, GLOB over title + content/url/tag), `rss` (a local item cache table at `~/.config/everyday/rss-items.db` populated by `rss digest` / `rss fetch`), `cal` (full-pull + in-memory GLOB over summary / location / start). Mail is deferred to v1.1. Notion-backed accounts are skipped in v1 (live-fetch-on-search was rejected for being slow / rate-limit prone).
+**Module scope**: `note` / `todo` / `bookmark` (local SQLite, GLOB over title + content/url/tag), `rss` (a local item cache table at `~/.config/everyday/rss-items.db` populated by `rss digest` / `rss fetch`), `cal` (full-pull + in-memory GLOB over summary / location / start), `mail` (local envelope cache via [S007], since v0.9.0), `memory` (current-state view GLOB over subject/predicate/object, since v0.10.0). Notion-backed accounts are skipped in v1 (live-fetch-on-search was rejected for being slow / rate-limit prone).
 
 **Query semantics**: whitespace-tokenized, OR over tokens, case-insensitive GLOB substring (`lower(col) GLOB '*token*'`). Per-module hard cap = 50; global cap = 20 (default). `ts desc` ordering; each module's primary time is its `ts` (note: updated_at; todo: updated_at; bookmark: created_at; rss: published; cal: event start).
 
@@ -365,6 +365,54 @@ everyday search query "release" --limit 5
 - **Notion via ops-log, not via Notion API**: respect the user privacy posture in `CONTEXT.md`; the agent never programmatically browses the Notion workspace — only AOP-recorded writes show up. Local providers, when used, still go through their own `TimelineProvider`.
 
 See `docs/CONTEXT.md` + `docs/adr/0001`–`0009` for the full design rationale.
+
+### memory — structured agent notebook (NEW in v0.10.0)
+
+A persistent, append-only notebook for the agent itself — store stable facts as `(subject, predicate, object)` triples with optional `confidence` and `source`. Triples are versioned: re-adding the same `(S, P, O)` creates a new row (the previous one is preserved in history). Soft delete hides rows from current-state queries but keeps them in `history`. Storage is a single global SQLite file at `~/.config/everyday/memory.db` (no `account`, no `auth` module touch). Memory participates in `everyday search` as a `Searchable` provider over the current-state view.
+
+| Command | Description | Usage |
+|------|------|------|
+| `add` | Append a triple (creates a new version if `(S,P,O)` already exists) | `everyday memory add <S> <P> <O> [--confidence N] [--source LABEL]` |
+| `get` | List current-state triples for a subject | `everyday memory get <SUBJECT>` |
+| `relation` | List current-state triples matching `(subject, predicate)` | `everyday memory relation <SUBJECT> <PREDICATE>` |
+| `list` | List all current-state triples (capped at 100) | `everyday memory list [--limit N]` |
+| `delete` | Soft-delete the current-state row of a triple | `everyday memory delete <S> <P> <O>` |
+| `graph` | Forward BFS from a subject (depth 1..=5, default 2) | `everyday memory graph <SUBJECT> [--depth N] [--include-deleted]` |
+| `history` | Show all versions of a triple (including deleted rows) | `everyday memory history <S> <P> <O>` |
+
+**Option details**:
+
+| Option | Applies to | Description |
+|------|----------|------|
+| `--confidence N` | `add` | Confidence in `[0.0, 1.0]` (default `1.0`) |
+| `--source LABEL` | `add` | Free-text provenance label (e.g. `explicit`, `inferred`) |
+| `--limit N` | `list` | Cap row count, default 100 |
+| `--depth N` | `graph` | Recursion depth in `1..=5`, default 2 |
+| `--include-deleted` | `graph` | Include soft-deleted edges in the traversal |
+
+**Subject naming convention** (program does not enforce; documented in `skills/everyday-cli/SKILL.md`):
+
+```
+user                       # bare subject for the human user
+project-everyday           # project entity
+tech:rust                  # domain-prefixed: technology knowledge
+team:backend:alice         # hierarchical: team > sub-team > person
+```
+
+**Example**:
+```bash
+# Record what the user prefers
+everyday memory add user prefers rust --confidence 0.9 --source explicit --json
+
+# Look up everything we know about the user
+everyday memory get user --json
+
+# Multi-hop traversal
+everyday memory graph user --depth 2
+
+# Memory facts join `everyday search` automatically
+everyday search query "rust" --module memory --json
+```
 
 ## Output Modes
 
@@ -684,6 +732,7 @@ Adding a module only takes: create a file + implement the trait + register one l
 | `auth` | ✅ Fully available (v0.8.0) | login / logout / verify / list — consolidated credential lifecycle for all modules |
 | `timeline` | ✅ Fully available | unified event log: today / yesterday / week / month / sync |
 | `search` | ✅ Fully available (NEW in v0.7.0) | cross-module unified search: query all modules in one shot |
+| `memory` | ✅ Fully available (NEW in v0.10.0) | append-only `(subject, predicate, object)` triple notebook with confidence/source + graph + Searchable |
 
 ## License
 

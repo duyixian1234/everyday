@@ -165,6 +165,102 @@ TimelineModule 实现 `Executor`，注册到 `ModuleRegistry`。`name()` = `"tim
 
 ---
 
+## Memory
+
+> Agent 的私人结构化事实笔记本。与 Timeline（时间戳事件）和 Note（自由文本）正交——本节定义"无时间点的稳定事实"领域。
+> 设计决策见 [`docs/adr/K001`](docs/adr/K001-memory-module.md) – [`K004`](docs/adr/K004-memory-single-instance.md)。
+
+### Memory
+Memory 模块（`everyday memory <action>`）存储 agent 关于 user / project / world 的稳定结构化事实——偏好、关系、项目元数据、技术知识。本地 SQLite 单实例，无外部协议、无凭证、无网络；与 Timeline（"X 在 T 时刻发生"）和 Note（"以下是一段散文"）形成三分天下。
+
+### Triple（三元组）
+单个 memory 事实，形如 `(subject, predicate, object)`。例如 `(user, prefers, rust)`。三个 TEXT 字段；与 RDF / SPARQL 无关系。
+
+### Memory row
+`memory` 表的一行：`id`（TEXT 短 UUID 主键）、`subject` / `predicate` / `object`（NOT NULL TEXT）、`confidence`（REAL ∈ [0.0, 1.0]，默认 1.0）、`source`（TEXT 自由 provenance 标签，可空）、`created_at`（RFC3339 UTC 毫秒精度）、`deleted_at`（RFC3339 UTC，软删除标记，可空）。无复合自然键；幂等完全由 agent 自己负责。
+
+### Current state（当前态）
+对每个 `(subject, predicate, object)`，取 `MAX(created_at) WHERE deleted_at IS NULL` 的那一行。所有读命令（`get` / `relation` / `list` / `graph`）默认走当前态视图。`memory history` 是 v1 唯一返回全历史（含 deleted 行）的命令。当前态视图以 SQLite 3.25+ 窗口函数 `ROW_NUMBER() OVER (PARTITION BY subject, predicate, object ORDER BY created_at DESC)` 实现。
+
+### Append-only versions
+数据模型是 **append-only**——同一三元组再次 `add` 创建新行（新 `id`、新 `created_at`），旧行保留；当前态视图自动选最新。与项目 append-only 哲学一致（[L001](docs/adr/L001-append-only-event-log.md)），支持 agent 自省（"我曾认为 X，现在 Y，留痕可查"）。
+
+### Soft delete
+`memory delete <S> <P> <O>` 将**当前态行**（即 `MAX(created_at) WHERE deleted_at IS NULL AND (s,p,o) = (?,?,?)` 那一行）的 `deleted_at` 设为 `now()`。已删除当前态再次 delete → `AgentError::InvalidArgument("already deleted")`。删除不存在的当前态 → `AgentError::InvalidArgument("triple not found or already deleted")`。已删行保留在表中，所有当前态查询默认过滤；`memory history` 始终返回全量。
+
+### Resurrection（复活）
+delete 后再 add 同一三元组 → 新行（`deleted_at` NULL），append-only 历史自然形成：原行（带 `deleted_at`）+ 复活行（`created_at` 更新）。v1 不提供独立的 `undelete-by-id` 命令——`add` 即复活动词。
+
+### Confidence
+`REAL ∈ [0.0, 1.0]`，越界 → `AgentError::InvalidArgument`。默认 1.0（"agent 没指定 = 完全置信"）。Confidence 演进通过 append-only 版本记录：`(user, prefers, java, 0.5, conv, T1)` → `(user, prefers, rust, 0.9, explicit, T2)`，`memory get user` 返回 T2 行，`memory history user prefers rust` 返回空（object 不同），agent 通过 subject + 时间窗查询可还原完整时间线。
+
+### Source
+自由文本 provenance 标签：`conversation` / `explicit` / `inferred` / `user_correction` 等，agent 自填。**不约束**——agent 决定词汇表。供 agent 后续过滤（"只信 `explicit` 来源"）。
+
+### Storage location
+`~/.config/everyday/memory.db`——独立 SQLite 文件，**不**与 `timeline.db` / `ops-log.db` / `mail_cache.db` 共享。理由：写入模型不同（append-only triples vs append-only events vs append-only envelopes vs append-only ops）、失败域独立、迁移节奏不同。详见 [K004](docs/adr/K004-memory-single-instance.md) 与 [K001](docs/adr/K001-memory-module.md) §Storage。
+
+### No account column
+Memory 单实例全局，无 `account` 列。多 agent 隔离靠 subject 命名约定（见下）。`auth` 模块**不**被 memory 调用——无 `everyday auth login --module memory`。
+
+### Subject naming convention（写进 skill.md，不强制）
+推荐的 subject 形式：`domain:entity` 或层级 `domain:subdomain:entity`。例：`user` / `project-everyday` / `tech:rust` / `agent:self` / `team:backend:alice`。程序不解析、不校验——agent 自治。比 schema 加 `account` 列灵活：可任意粒度（per-user、per-project、per-team、per-domain），跨 agent 共享 facts 不冲突。
+
+### Schema
+```
+memory(
+    id          TEXT PRIMARY KEY,           -- 短 UUID
+    subject     TEXT NOT NULL,
+    predicate   TEXT NOT NULL,
+    object      TEXT NOT NULL,
+    confidence  REAL NOT NULL DEFAULT 1.0,  -- [0.0, 1.0]
+    source      TEXT,                       -- 自由文本 provenance
+    created_at  TEXT NOT NULL,              -- RFC3339 UTC 毫秒
+    deleted_at  TEXT                        -- RFC3339 UTC，软删除
+)
+ix_memory_spo_created        (subject, predicate, object, created_at DESC)
+ix_memory_subject_created    (subject, created_at DESC)
+ix_memory_subject_predicate  (subject, predicate, created_at DESC)
+ix_memory_created_at         (created_at DESC)
+```
+
+### Graph query（memory graph）
+`memory graph <SUBJECT> [--depth N] [--include-deleted]`——顺向 BFS（subject → object），depth 默认 2、最大 5；操作当前态（`deleted_at IS NULL` 默认过滤，`--include-deleted` 显示）；环检测用 visited set；文本输出 markdown 缩进列表，JSON 输出嵌套树。详见 [K002](docs/adr/K002-memory-graph-query.md)。
+
+### Searchable 集成
+Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。当前态 `(subject OR predicate OR object)` 三字段 GLOB 匹配；`Hit.id = "memory:<row_id>"`，`Hit.title = "{s} {p} {o}"`，`Hit.snippet = ""`；与 [S003](docs/adr/S003-query-semantics.md) token 语义 + [R008](docs/adr/R008-sql-glob-not-like.md) GLOB 约定一致。详见 [K003](docs/adr/K003-memory-searchable.md)。
+
+### Boundary: memory vs timeline vs note
+- **timeline** = 时间戳事件（"X 在 T 发生"）——append-only 事件日志
+- **memory** = 跨时间稳定事实（"X 是 Y"）——append-only 三元组库
+- **note** = 可读文本（"以下是散文"）——Notion blocks
+
+判定问题："这条信息有没有确定的时刻 T，过了 T 它就成历史？" 有 → timeline；没有 → memory。内容是不是给人读的散文？是 → note。
+
+### v1 命令集（7）
+`add` / `get` / `relation` / `list` / `delete` / `graph` / `history`。详见 [K001](docs/adr/K001-memory-module.md) §v1 commands。
+
+### Semantic correctness
+程序**不**校验三元组的语义合法性（predicate 是否"事实形"、object 是否合理等）——这是 agent 的责任。规则写进 `skills/everyday-cli/SKILL.md`，不在代码层强制。用户原话："memory 是由具体的 agent 发起的，不应在程序中限制"。
+
+### 错误模型
+不开新 `AgentError` 变体，全部走现有 `InvalidArgument` / `Io`：
+- confidence 越界 → `InvalidArgument`
+- depth 越界（< 1 或 > 5）→ `InvalidArgument`
+- delete 不存在 / 已删除的当前态 → `InvalidArgument`
+- SQLite IO 失败 → `Io`
+
+### Deferred to v2（明确不在 v1 scope）
+- `memory undelete-by-id <id>` — 按 row id 精确复活特定历史行（区别于"add 新版本"）
+- `memory search <query>` — embedding 语义检索
+- `memory merge <S> <P>` — 冲突事实合并
+- `memory expire <S> <P> <O> --ttl DURATION` — TTL 自动过期
+- `memory cleanup` — 物理 GC `deleted_at IS NOT NULL` 行
+- `memory stats` — 库规模 / 分布指标
+- 多实例 / per-agent partition（若 v1 单实例被证不足）
+
+---
+
 ## Auth
 
 > 凭据与认证层。设计决策见 `docs/adr/R013` `R014` `R015`。

@@ -11,12 +11,13 @@
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件（见
 [governance.md](./governance.md) §4）。
 
+- **v0.10.0 已发布** — Memory 模块落地：append-only `(subject, predicate, object)` 三元组 + 当前态视图 + 前向 graph + Searchable（[K001–K004](./docs/adr/K001-memory-module.md)）。
 - **v0.9.0 已发布** — 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存（[S007](./docs/adr/S007-mail-search-local-cache.md)）。
 - **v0.8.1 已发布** — 动作层 Backend DI 重构（[R016–R018](./docs/adr/R016-action-backend-di.md)）。
 - **v0.8.0 已发布** — 凭据 / `login` 收拢到顶层 `auth` 模块（[R013–R015](./docs/adr/R013-auth-module-consolidation.md)；破坏性）。
 - **v0.7.0 已发布** — 跨模块统一搜索 `everyday search`（[S001–S006](./docs/adr/S001-search-architecture.md)）。
 - **v0.6.x 已发布** — Mail Cache 落地（[M002–M005](./docs/adr/M002-imap-connection-pool.md)）+ timeline `--from` 显式报错（[L013](./docs/adr/L013-from-explicit-error.md)）+ Rust 1.97 clippy 注释 lint 修复。
-- **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline` / `config` / `search`（9 个，走 Executor trait）。
+- **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline` / `memory` / `config` / `search`（10 个，走 Executor trait）。
 - **本地 provider 默认**：[note](./docs/adr/N001-notion-note-module.md) / [todo](./docs/adr/T001-notion-todo-module.md) / [bookmark](./docs/adr/B001-bookmark-dual-provider.md) 三模块默认本地 SQLite，Notion 显式声明。
 - **Timeline**：append-only event log + ops-log AOP 统一 6 source 事件捕获（[L001–L013](./docs/adr/L001-append-only-event-log.md)）。
 - **质量门禁**：`cargo build` / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` / `cargo fmt --check` 全绿；CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
@@ -27,6 +28,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-07-14 | K | [K001–K004](./docs/adr/K001-memory-module.md) | Memory 模块设计完成（append-only 三元组 / 当前态视图 / graph / Searchable / 单实例） |
 | 2026-07-14 | S | [S007](./docs/adr/S007-mail-search-local-cache.md) | Mail 搜索走本地 envelope 缓存（非 live IMAP `SEARCH`），与 rss/cal 一致 |
 | 2026-07-12 | R | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块；verify 显式可选；非交互输入契约 |
 | 2026-07-12 | R | [R016–R018](./docs/adr/R016-action-backend-di.md) | 动作层 Backend trait + DI：note/todo/bookmark 去除 `NotionClient` 直接泄漏；目录布局；domain 类型 + Mock 回归护栏 |
@@ -60,6 +62,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.10.0** | `v0.10.0` | Memory 模块落地：append-only `(subject, predicate, object)` 三元组 + 当前态视图 + graph + Searchable | [K001–K004](./docs/adr/K001-memory-module.md) |
 | **v0.9.0** | `v0.9.0` | 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存 | [S007](./docs/adr/S007-mail-search-local-cache.md) |
 | **v0.8.1** | `v0.8.1` | 动作层 Backend DI 重构：note/todo/bookmark 去 `NotionClient` 直接引用 | [R016–R018](./docs/adr/R016-action-backend-di.md) |
 | **v0.8.0** | `v0.8.0` | 凭据 / `login` 收拢到顶层 `auth` 模块（破坏性：移除各模块 `login`） | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) |
