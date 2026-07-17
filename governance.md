@@ -4,10 +4,16 @@
 > 本文件只描述**通用方法论**——治理文档结构、ADR 纪律、提交流程、文档规则、
 > 质量门禁等。不绑定特定技术栈、目录命名、第三方库或业务领域。
 >
-> 项目级落地细节(具体任务运行器、工具替换表、链接深度、注释桶、测试必测项、
-> 命名空间、发版平台矩阵等)放在 [`everyday-conventions.md`](./everyday-conventions.md)。
+> **本文档是通用治理方法论,用于指引任意项目搭建治理体系。** 采用本方法论的
+> 项目可直接复制本文件,并以任意文件名落地(如 `GOVERNANCE.md`、
+> `docs/GOVERNANCE.md`、或并入 `CONTRIBUTING.md` 的治理节)——**不要求**使用
+> `governance.md` 这一名称。下文中的"本文件"均指你采用的方法论文档。
 >
-> **读法**:从第 1 节按顺序读;搭建新项目时按第 18 节清单初始化;
+> 项目级落地细节(具体任务运行器、工具替换表、链接深度、注释桶、测试必测项、
+> 命名空间、发版平台矩阵等)放在**项目级约定文件**(如 `<project>-conventions.md`),
+> 与通用方法论分文件维护;该文件不绑定特定项目名,各项目自定。
+>
+> **读法**:从第 1 节按顺序读;搭建新项目时按第 19 节清单初始化;
 > 既有项目按差异增量补充。本方法论自身增删前请先评估"是否对所有项目通用"。
 
 ---
@@ -48,7 +54,7 @@
 | **链接不腐烂** | 跨文档引用必须能被自动验证;坏链接等于决策丢失。 |
 | **凭证零信任** | 任何密钥、Token、密码不得落盘到配置文件或日志;具体后端由项目决定。 |
 | **显式优于回退** | 校验失败的参数必须显式报错,不允许静默回退默认值。 |
-| **通用与项目分层** | 通用方法论与项目级约定分文件维护;项目级条款放 [`everyday-conventions.md`](./everyday-conventions.md)。 |
+| **通用与项目分层** | 通用方法论与项目级约定分文件维护;项目级条款放项目级约定文件(如 `<project>-conventions.md`)。 |
 
 ---
 
@@ -63,10 +69,10 @@
 | **ADR 目录**(`docs/adr/`) | 每个架构决策的"上下文 / 决策 / 备选 / 影响" | 流程步骤;只引用 `.rules/` |
 | **领域术语表**(`CONTEXT.md`) | 领域术语定义(仅定义) | 实现细节、API 描述 |
 | **任务计划**(`task_plan.md`) | 阶段拆分 + 错误表 + 关键设计决策摘要 | 决策全文、子任务清单、完成小结 |
-| **进度日志**(`progress.md`) | 当前状态(每行 ≤ 1 句)+ ADR 时间序索引 + 发版流水 | 决策全文、Phase 实现细节、流水账 |
+| **进度日志**(`progress.md`) | 当前状态(每行 ≤ 1 句)+ 发版流水 | 决策全文、Phase 实现细节、流水账 |
 | **用户文档**(`README*.md` / `skills/`) | 终端用户与 AI 协作方的使用手册 | 内部架构、决策 |
-| **通用方法论**(`governance.md`) | 跨项目通用的治理纪律 | 项目级落地细节、具体工具替换表 |
-| **项目级约定**(`everyday-conventions.md` 或等价文件) | 仅适用于本项目的形态绑定条款 | 跨项目通用原则 |
+| **通用方法论**(`GOVERNANCE.md`) | 跨项目通用的治理纪律 | 项目级落地细节、具体工具替换表 |
+| **项目级约定**(`<project>-conventions.md` 或等价文件) | 仅适用于本项目的形态绑定条款 | 跨项目通用原则 |
 
 ### 2.2 产权冲突仲裁规则
 
@@ -80,7 +86,7 @@
 每周/每发版前过一遍:
 
 - [ ] ADR 数量与 `docs/adr/README.md` 索引行数一致
-- [ ] 进度文档中所有 `[id](...)` 链接均有效
+- [ ] `docs/adr/README.md` 索引中所有 `[id](...)` 链接均有效
 - [ ] 规则目录的索引表行数与文件数一致
 - [ ] 入口文档列出的模块清单与代码模块一致
 - [ ] 不存在"事实只活在某段叙述里"的情况(所有事实都能定位到 ADR 或规则)
@@ -205,13 +211,17 @@
 >
 > 判定疑问句:这段叙述未来读者**会**通过 ADR 或 commit 历史查到吗?是 → 删除本文件内容,只保留 ADR 链接;否 → 说明这是一个**新决策**,先建 ADR。
 
-### 4.2 `progress.md`:当前状态 + 时间序索引 + 发版流水
+### 4.2 `progress.md`:当前状态 + 发版流水
 
 | 节 | 内容 | 更新频率 |
 | --- | --- | --- |
 | 当前状态 | 已发布版本 + 当前阶段 + 各模块一句话;**每行 ≤ 1 句话**,禁止段落 | 每个 Phase 完成 |
-| ADR 时间序索引 | 按日期倒序;新 ADR 必加 | 每新增 ADR |
 | 发版流水 | 版本号 + tag + 一句话变更 + 关联 ADR | 每次发版 |
+
+> **不再强制在 `progress.md` 中维护 ADR 时间序索引。** ADR 的统一索引由
+> `docs/adr/README.md` 专门维护(见 §3.6);`progress.md` 只承载"当前状态"与
+> "发版流水"。若某项目仍希望在进度文档中保留一个 ADR 快速索引节,属于**可选**
+> 增强,不纳入通用约束,且不因此要求每次新增 ADR 都同步更新进度文档。
 
 > **不允许出现在 `progress.md` 的内容**——完成后立即清理:
 >
@@ -219,7 +229,7 @@
 > - "顺手修"、"质量门禁:265 tests..."等流水账
 > - 已发版模块的功能展开描述(属于 ADR + commit 历史)
 >
-> 一行式当前状态 = "vX.Y.Z 已发布 — <一句话变更>+ <ADR 链接>";超出一行的内容都属于其他文档。
+> 一行式当前状态 = "vX.Y.Z 已发布 — <一句话变更>";关联 ADR 可附也可不附,超链接全文属于 `docs/adr/README.md`,不强制在此重复。
 
 ---
 
@@ -247,7 +257,7 @@
 
 - 每 2 次外部检索/抓取后,问一次"这次抓的内容是不是一个决策"——是 → 写到 scratch buffer,任务完成时按 §7 抽到 ADR;否 → 丢弃。
 - 遇到非显然错误 → 追加一行到 `task_plan.md` 的 `Errors Encountered` 表(项目级,**不**按 Phase 分),不要塞到 `progress.md`。
-- 不提交半成品;提交前先关闭任务。**项目级"半成品"的具体判定见 `everyday-conventions.md` §2.1。**
+- 不提交半成品;提交前先关闭任务。**项目级"半成品"的具体判定由项目约定文件定义。**
 
 ### 6.3 完成一个任务
 
@@ -259,10 +269,10 @@
 | 2 | 文档链接完整性 | `<task-runner> check-links`(详见 §10 / §11) | 无失败项 |
 | 3 | **ADR 抽取**(见第 7 节) | 决定是否新建/更新 ADR | 决策性内容均落 ADR |
 | 4 | 提交 | 按第 8 节规范 | 提交消息符合格式 |
-| 5 | 进度文档更新 | 在 `progress.md` 时间序索引追加新 ADR id | 索引行数 = 实际 ADR 数 |
+| 5 | 进度文档更新 | 同步 `progress.md` 当前状态与发版流水(如适用) | 状态/发版信息为最新 |
 
 > 一个"任务"的定义:完整 feature / 模块骨架 / 一个 Phase / 紧密耦合的小改动包(bug + 测试)。
-> 项目级 4 步门禁顺序与项目级补充见 `everyday-conventions.md` §2。
+> 项目级门禁顺序与补充由项目约定文件定义。
 
 ---
 
@@ -279,7 +289,7 @@
 逐条审视本任务的 diff 与临时笔记,按 3.1 节的判定条件:
 
 - 是决策 → 选前缀与编号 → 写 ADR → 登记到 `docs/adr/README.md`
-- 否 → 删除 `progress.md` / `task_plan.md` 中的叙述,替换为 ADR 链接(按 §4.1 / §4.2 严禁保留执行痕迹)
+- 否 → 删除 `progress.md` / `task_plan.md` 中的叙述(按 §4.1 / §4.2 严禁保留执行痕迹;如需关联可链 ADR,但 `progress.md` 不强制维护 ADR 索引)
 
 ### 7.3 双向交叉引用
 
@@ -346,7 +356,6 @@
 - [ ] 质量门禁全绿
 - [ ] 跨文档链接完整
 - [ ] 决策类改动已建/更新 ADR
-- [ ] `progress.md` 时间序索引已更新
 - [ ] 提交消息符合格式
 - [ ] 改动是单任务的,不夹带无关修改
 
@@ -365,7 +374,7 @@
 | 5 | 链接完整性 | `check-links` | 修复坏链 |
 
 > 顺序原则:format 必须先于 lint 跑——格式不对时 lint 的提示往往误导。
-> 项目级工具替换表见 `everyday-conventions.md` §3。
+> 项目级工具替换表由各项目约定文件定义;通用占位见 §10.6。
 
 ### 9.2 "零警告"策略
 
@@ -419,7 +428,7 @@
 - 解析锚点(`#heading-slug`),做 best-effort 校验
 - 输出三档:`[OK] / [FAIL] / [WARN]`;FAIL 退出码非零
 
-> 项目级具体排除路径与 Rust `target/` 等构建产物目录见 `everyday-conventions.md` §3.4。
+> 各项目需根据自身构建产物目录(如 `target/`、`dist/`、`node_modules/`、`out/`)调整排除路径;通用骨架见 §10.7 示例。
 
 ### 10.6 通用工具替换表
 
@@ -430,7 +439,70 @@
 | `<test-runner> -q` | `cargo test -q` | `vitest run --reporter=basic` | `pytest -q` | `go test ./...` |
 | `<builder> -q` | `cargo build -q` | `tsc` / `vite build` | `python -m build` | `go build ./...` |
 
-> 本项目实际选用的 `just` + Rust 工具链配置见 `everyday-conventions.md` §3.2–§3.3。
+> 各项目按所选运行器与语言替换上述占位;完整脚本示例见 §10.7。
+
+---
+
+### 10.7 链接完整性校验脚本示例
+
+下面是一份**通用骨架**,可直接落地为 `scripts/check-doc-links.sh`(或任意路径),由任务运行器的 `check-links` recipe 调用。它只做相对路径解析 + `test -e`,不依赖任何第三方库:
+
+```bash
+#!/usr/bin/env bash
+# scripts/check-doc-links.sh — 跨文档链接完整性校验(通用骨架)。
+# 退出码:0 = 无坏链;1 = 至少一条坏链。
+set -u
+
+# 1. 仓库根:优先用 git 根,否则用当前目录。
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+cd "$ROOT" || exit 2
+
+# 2. 收集文件:所有 .md,排除版本控制与构建产物目录。
+#    需要同时扫描源码注释(含内嵌 markdown 链接)的项目,
+#    把对应扩展名加进 -o -name 即可(如 -o -name '*.rs')。
+mapfile -t FILES < <(find . -type f \( -name '*.md' \) \
+  -not -path './.git/*' \
+  -not -path './node_modules/*' \
+  -not -path './dist/*' \
+  -not -path './out/*' \
+  -not -path './target/*')
+
+FAILS=0
+
+for f in "${FILES[@]}"; do
+  dir="$(dirname "$f")"
+  # 3. 去掉 fenced code block(```...```)与内联反引号,避免占位语法被误判。
+  awk 'BEGIN{c=0} /^```/{c=!c; next} !c' "$f" \
+    | grep -oE '\[[^]]*\]\([^)]+\)' \
+    | sed -E 's/.*\]\(([^)]+)\).*/\1/' \
+    | while IFS= read -r target; do
+        # 4. 跳过外部链接 / 纯锚点 / 占位符。
+        [[ "$target" =~ ^(https?:|mailto:|#) ]] && continue
+        [[ "$target" =~ [\<\>] ]] && continue
+        # 5. 去掉 #fragment,相对源文件目录解析。
+        path="${target%%#*}"
+        [[ -z "$path" ]] && continue
+        resolved="$dir/$path"
+        if [[ ! -e "$resolved" ]]; then
+          printf '[FAIL] %s: %s -> %s\n' "$f" "$target" "$resolved"
+          FAILS=$((FAILS + 1))
+        fi
+      done
+done
+
+if [[ $FAILS -eq 0 ]]; then
+  echo "[OK] no broken links across ${#FILES[@]} files."
+  exit 0
+fi
+echo "[FAIL] $FAILS broken link(s)." && exit 1
+```
+
+要点:
+
+- 排除目录按项目构建产物调整(`target/` / `dist/` / `out/` / `node_modules/` 等)。
+- 链接相对**源文件目录**解析,因此 ADR 根目录的绝对位置无关,深度规则见 §11.2。
+- 若要在源码注释里也校验 ADR 链接,把 `*.rs`(或对应扩展名)纳入扫描,并在 strip 阶段只保留文档注释(如 `///` / `//!`)。
+- 校验锚点(`#heading`)属于 best-effort,不做强约束;需要严格锚点校验的项目自行扩展。
 
 ---
 
@@ -458,7 +530,7 @@
 >
 > `<adr-dir>` 由项目自行决定(如 `docs/adr/`、`architecture/decisions/`、`docs/decisions/`),但**必须**在 §3.6 索引节固定,所有深度引用指向同一目录。
 >
-> 项目级实际深度示例见 `everyday-conventions.md` §4.1。
+> 各项目按自身目录形态确定深度;通用推算规则见上表。
 
 ### 11.3 链接腐烂的预防
 
@@ -498,7 +570,7 @@
 - 不允许把两个文件的注释翻译打包成一次提交(diff 难审、难回退)
 - commit 类型用 `refactor(comments)` 或 `docs(comments)`
 
-> 项目级四桶分类(Rust 字符串字面量 vs 注释二分类)见 `everyday-conventions.md` §5。
+> 项目级注释/字符串分类按语言调整;通用判定原则见 §12。
 
 ---
 
@@ -537,7 +609,7 @@
 - 性能预算写入 F 类 ADR(冷启动 < 100ms / 网络超时 / 大输出流式)
 - CI 不跑 perf 断言;用结构约束(禁止全量加载、强制分页)
 
-> 项目级必测项(Text/JSON 双输出、append-only 持久化指标等)见 `everyday-conventions.md` §6.2。
+> 项目级必测项按模块形态自定义;通用必测项见 §13.2。
 
 ---
 
@@ -585,7 +657,7 @@
 - 涉及本地时间 / 日历日(DST 边界、夏令时切换、跨时区用户输入)时,用显式歧义解析策略(如"取最早/最晚有效时间"),不依赖 panic/抛异常类的隐式崩溃路径。
 
 > 上述两项的**具体适配方式**由语言/运行时 ADR 决定;`governance.md` 只锁定"必须探测、必须显式歧义"的意图,不锁定调用形式。
-> 项目级具体踩坑(如 Rust `tokio::spawn` 前探测、`chrono::Local` DST 边界)见 `everyday-conventions.md` §7.4。
+> 项目级具体适配由语言/运行时 ADR 决定;通用约束意图见 §14.5。
 
 ### 14.6 漏洞披露
 
@@ -715,7 +787,7 @@
 - workflow 必须包含:构建(三平台及以上)/ 产物上传 / 发布说明生成
 - CI 失败 → 立即修复后重打 tag(删除 + 重打);不要 force push 已发布 tag
 
-> 项目级 release 平台矩阵(Linux / macOS x86_64 / macOS aarch64 / Windows)见 `everyday-conventions.md` §9.1。
+> 项目级 release 平台矩阵由 CI 配置决定;通用触发规则见 §17.5。
 
 ---
 
@@ -756,10 +828,10 @@
 
 - [ ] `README.md`(或 `agents.md`):项目目标、技术栈、模块清单、文档导航
 - [ ] `task_plan.md`:阶段拆分 + 当前 Phase
-- [ ] `progress.md`:当前状态 + ADR 时间序索引(初始为空)+ 发版流水
+- [ ] `progress.md`:当前状态 + 发版流水(初始为空;不强制 ADR 索引)
 - [ ] `CONTEXT.md`:领域术语表(至少覆盖核心模块的术语)
-- [ ] `governance.md`:通用治理方法论(本文件,可直接复制)
-- [ ] 项目级约定文件(如 `everyday-conventions.md`):仅放与本项目形态绑定的条款
+- [ ] 通用治理方法论文档(本文件,可直接复制或按需重命名,如 `GOVERNANCE.md`)
+- [ ] 项目级约定文件(如 `<project>-conventions.md`):仅放与本项目形态绑定的条款
 - [ ] `docs/adr/README.md`:ADR 索引(初始为空表)
 - [ ] `.rules/RULES.md`:规则目录索引
 - [ ] `.rules/01-workflow.md`:开发工作流
@@ -824,8 +896,8 @@
 | --- | --- | --- |
 | 入口文件 | `agents.md` / `AGENTS.md` / `README.md`(当 README 同时承担入口职责) | `CONTRIBUTING.md`(那是贡献流程,不是入口) |
 | 规则目录 | `.rules/` / `.standards/` / `.conventions/` | `docs/`(那是文档,不是规则) |
-| 通用方法论 | `governance.md` | `STYLE.md`(那是单文件风格指南,不是治理方法论) |
-| 项目级约定 | `everyday-conventions.md` / `<project>-conventions.md` | `CONTRIBUTING.md`(那是贡献流程) |
+| 通用方法论 | `GOVERNANCE.md` | `STYLE.md`(那是单文件风格指南,不是治理方法论) |
+| 项目级约定 | `<project>-conventions.md` / `CONVENTIONS.md` | `CONTRIBUTING.md`(那是贡献流程) |
 | ADR | Architecture Decision Record / 设计决策记录 | `RFC`(更轻、未必强制留底) |
 | 任务计划 | `task_plan.md` / `ROADMAP.md` / `PLAN.md` | `TODO.md`(那是杂项清单) |
 | 进度日志 | `progress.md` / `CHANGELOG.md`(结构化版) | `CHANGELOG`(那是发布说明) |
@@ -836,4 +908,4 @@
 ---
 
 _本方法论本身也按"决策可追溯"原则维护。增删任何一节前,请先评估"是否对所有项目通用"——
-通用 → 入本文件;仅适用特定项目 → 入该项目级约定文件(如 `everyday-conventions.md`)。_
+通用 → 入本文件;仅适用特定项目 → 入该项目级约定文件(如 `<project>-conventions.md`)。_
