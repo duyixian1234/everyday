@@ -14,7 +14,8 @@ JSON 为 AI 交互主模式。
 - **目标平台：** Linux / macOS / Windows（含 Apple Silicon aarch64）
 - **异步运行时：** `tokio`
 - **规划文件：** `task_plan.md`（阶段 + Errors）/ `progress.md`（当前状态 + ADR
-  时间序索引）。详见 [文档约定](#文档约定) 与 [governance.md](./governance.md)。
+  时间序索引）。详见 [文档约定](#文档约定)、
+  [`governance.md`](./governance.md) 与 [`everyday-conventions.md`](./everyday-conventions.md)。
 
 ## 何时使用本仓库
 
@@ -57,7 +58,8 @@ Agents 与协作者在改代码前，按以下顺序读：
 | [`CONTEXT.md`](./CONTEXT.md) | 领域术语表（仅定义，不涉及实现） |
 | [`task_plan.md`](./task_plan.md) | 阶段 + 错误表 + 设计决策摘要 |
 | [`progress.md`](./progress.md) | 当前状态（每行 ≤ 1 句）+ ADR 时间序索引 + 发版流水 |
-| [`governance.md`](./governance.md) | 跨项目的治理方法论（文档结构 / 文档角色 / ADR / 质量门禁 / 发版 / 模块边界等） |
+| [`governance.md`](./governance.md) | 通用治理方法论（文档结构 / 文档角色 / ADR / 质量门禁 / 发版等），跨项目通用 |
+| [`everyday-conventions.md`](./everyday-conventions.md) | 项目级约定（CLI 双输出 / Rust 工具链 / Justfile / 链接深度 / 注释桶 / 测试必测项 / 命名空间 / 发版平台矩阵），仅 Everyday 适用 |
 | `README.md` / `README_ZH.md` / `skills/` | 终端用户与 Agent 用户文档 |
 
 跨文档引用都用相对路径。每次提交后跑 `just check-links` 验证引用未腐烂（见

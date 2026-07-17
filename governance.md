@@ -1,10 +1,14 @@
 # 项目治理方法论
 
-> 适用范围：任意语言、任意框架的工程团队与 AI 协作工作流。
-> 本文件只描述**方法论**——治理文档结构、开发工作流、提交规范、文档规则、质量门禁等。
-> 不绑定特定技术栈、目录命名、第三方库或业务领域。
+> 适用范围:任意语言、任意框架的工程团队与 AI 协作工作流。
+> 本文件只描述**通用方法论**——治理文档结构、ADR 纪律、提交流程、文档规则、
+> 质量门禁等。不绑定特定技术栈、目录命名、第三方库或业务领域。
 >
-> **读法**：从第 1 节按顺序读，搭建新项目时按第 21 节清单初始化既有项目时按差异增量补充。
+> 项目级落地细节(具体任务运行器、工具替换表、链接深度、注释桶、测试必测项、
+> 命名空间、发版平台矩阵等)放在 [`everyday-conventions.md`](./everyday-conventions.md)。
+>
+> **读法**:从第 1 节按顺序读;搭建新项目时按第 18 节清单初始化;
+> 既有项目按差异增量补充。本方法论自身增删前请先评估"是否对所有项目通用"。
 
 ---
 
@@ -28,9 +32,7 @@
 16. [编码风格基线](#16-编码风格基线)
 17. [发版流程](#17-发版流程)
 18. [发版流水与版本号策略](#18-发版流水与版本号策略)
-19. [模块边界与新增准入](#19-模块边界与新增准入)
-20. [AI Agent 协作入口](#20-ai-agent-协作入口)
-21. [新项目初始化清单](#21-新项目初始化清单)
+19. [新项目初始化清单](#19-新项目初始化清单)
 
 ---
 
@@ -39,13 +41,14 @@
 | 原则 | 含义 |
 | --- | --- |
 | **决策可追溯** | 任何长期约束、对外契约、数据模型选择都必须留下可追溯的 ADR。 |
-| **文档分而治之** | 每个文档只负责一类信息；出现新内容时先问"它属于哪个文档"。 |
-| **ADR 是单一真相** | 当 ADR 与叙述性文档冲突时，ADR 胜出；叙述性文档只放索引。 |
-| **原子提交** | 一个提交 = 一个独立可验证的任务；不允许混搭重构与功能。 |
-| **质量门禁硬约束** | 格式 / 静态检查 / 测试 / 构建任意一项未绿，禁止提交。 |
-| **链接不腐烂** | 跨文档引用必须能被自动验证；坏链接等于决策丢失。 |
-| **凭证零信任** | 任何密钥、Token、密码不得落盘到配置文件、环境变量或日志。 |
-| **显式优于回退** | 校验失败的参数必须显式报错，不允许静默回退默认值。 |
+| **文档分而治之** | 每个文档只负责一类信息;出现新内容时先问"它属于哪个文档"。 |
+| **ADR 是单一真相** | 当 ADR 与叙述性文档冲突时,ADR 胜出;叙述性文档只放索引。 |
+| **原子提交** | 一个提交 = 一个独立可验证的任务;不允许混搭重构与功能。 |
+| **质量门禁硬约束** | 格式 / 静态检查 / 测试 / 构建任意一项未绿,禁止提交。 |
+| **链接不腐烂** | 跨文档引用必须能被自动验证;坏链接等于决策丢失。 |
+| **凭证零信任** | 任何密钥、Token、密码不得落盘到配置文件或日志;具体后端由项目决定。 |
+| **显式优于回退** | 校验失败的参数必须显式报错,不允许静默回退默认值。 |
+| **通用与项目分层** | 通用方法论与项目级约定分文件维护;项目级条款放 [`everyday-conventions.md`](./everyday-conventions.md)。 |
 
 ---
 
@@ -55,29 +58,33 @@
 
 | 文档 | 内容 | 不应包含 |
 | --- | --- | --- |
-| **入口文件**（如 `agents.md` / `README.md`） | 项目目标、技术栈、模块清单、文档导航 | 决策细节、流程细则 |
-| **规则目录**（`.rules/`） | 非决策类约定（工作流 / 风格 / 测试 / 安全 / 提交 / 运行器 / 依赖踩坑 / 注释） | 决策本身；只引用 ADR |
-| **ADR 目录**（`docs/adr/`） | 每个架构决策的"上下文 / 决策 / 备选 / 影响" | 流程步骤；只引用 `.rules/` |
-| **领域术语表**（`CONTEXT.md`） | 领域术语定义（仅定义） | 实现细节、API 描述 |
-| **任务计划**（`task_plan.md`） | 阶段拆分 + 错误表 + 关键设计决策摘要 | 决策全文、子任务清单、完成小结 |
-| **进度日志**（`progress.md`） | 当前状态（每行 ≤ 1 句）+ ADR 时间序索引 + 发版流水 | 决策全文、Phase 实现细节、流水账 |
-| **用户文档**（`README*.md` / `skills/`） | 终端用户与 AI 协作方的使用手册 | 内部架构、决策 |
+| **入口文件**(如 `agents.md` / `README.md`) | 项目目标、技术栈、模块清单、文档导航 | 决策细节、流程细则 |
+| **规则目录**(`.rules/`) | 非决策类约定(工作流 / 风格 / 测试 / 安全 / 提交 / 运行器 / 依赖踩坑 / 注释) | 决策本身;只引用 ADR |
+| **ADR 目录**(`docs/adr/`) | 每个架构决策的"上下文 / 决策 / 备选 / 影响" | 流程步骤;只引用 `.rules/` |
+| **领域术语表**(`CONTEXT.md`) | 领域术语定义(仅定义) | 实现细节、API 描述 |
+| **任务计划**(`task_plan.md`) | 阶段拆分 + 错误表 + 关键设计决策摘要 | 决策全文、子任务清单、完成小结 |
+| **进度日志**(`progress.md`) | 当前状态(每行 ≤ 1 句)+ ADR 时间序索引 + 发版流水 | 决策全文、Phase 实现细节、流水账 |
+| **用户文档**(`README*.md` / `skills/`) | 终端用户与 AI 协作方的使用手册 | 内部架构、决策 |
+| **通用方法论**(`governance.md`) | 跨项目通用的治理纪律 | 项目级落地细节、具体工具替换表 |
+| **项目级约定**(`everyday-conventions.md` 或等价文件) | 仅适用于本项目的形态绑定条款 | 跨项目通用原则 |
 
 ### 2.2 产权冲突仲裁规则
 
 1. ADR 与其他文档冲突 → ADR 胜出。
-2. 规则目录与 ADR 冲突 → ADR 胜出，规则目录更新为引用 ADR。
-3. 进度/计划/发现三个文档出现重复内容 → 只在 ADR 中保留全文，其余文档只放链接。
+2. 规则目录与 ADR 冲突 → ADR 胜出,规则目录更新为引用 ADR。
+3. 进度/计划/发现三个文档出现重复内容 → 只在 ADR 中保留全文,其余文档只放链接。
+4. **项目级约定与通用方法论冲突 → 项目级约定胜出**(项目级 override 通用方法论);但任何 override 都应在 ADR 中留下决策痕迹。
 
 ### 2.3 文档体检清单
 
-每周/每发版前过一遍：
+每周/每发版前过一遍:
 
 - [ ] ADR 数量与 `docs/adr/README.md` 索引行数一致
 - [ ] 进度文档中所有 `[id](...)` 链接均有效
 - [ ] 规则目录的索引表行数与文件数一致
 - [ ] 入口文档列出的模块清单与代码模块一致
-- [ ] 不存在"事实只活在某段叙述里"的情况（所有事实都能定位到 ADR 或规则）
+- [ ] 不存在"事实只活在某段叙述里"的情况(所有事实都能定位到 ADR 或规则)
+- [ ] 通用方法论与项目级约定无重复段落(重复内容合并到一边)
 
 ---
 
@@ -85,23 +92,23 @@
 
 ### 3.1 何时必须建 ADR
 
-满足以下**任一**条件，就要建：
+满足以下**任一**条件,就要建:
 
 - 约束未来的代码组织、公开接口或数据模型
 - 未来的读者会惊讶于"为何反向操作"
 - 建立长期不变的契约、安全边界、性能预算
 - 推翻或取代此前的决策
 
-反例（**不要**建 ADR）：
+反例(**不要**建 ADR):
 
 - 拼写修正、重命名、格式调整
-- 单点 bug 修复，测试已自证
+- 单点 bug 修复,测试已自证
 - 单个第三方库的 API 怪癖 → 写入依赖踩坑日志
-- 仅产出一个可复用宏/模式的纯重构 → 写**模式类** ADR（见 3.4）
+- 仅产出一个可复用宏/模式的纯重构 → 写**模式类** ADR(见 3.4)
 
 ### 3.2 ADR 标准结构
 
-每个 ADR **必须**包含以下小节，且顺序固定：
+每个 ADR **必须**包含以下小节,且顺序固定:
 
 ```markdown
 # ADR <id>: <标题>
@@ -110,10 +117,10 @@
 **Date:** YYYY-MM-DD
 
 ## Context
-<问题背景、约束、动机；不少于 3 句话>
+<问题背景、约束、动机;不少于 3 句话>
 
 ## Decision
-<最终选择；可含代码示例、数据模型、协议格式>
+<最终选择;可含代码示例、数据模型、协议格式>
 
 ## Alternatives considered
 ### <备选 1>
@@ -132,40 +139,40 @@
 
 ### 3.3 编号方案
 
-按**模块前缀 + 三位数字**编号，永远不重用编号。
+按**模块前缀 + 三位数字**编号,永远不重用编号。
 
-通用约定：
+通用约定:
 
 | 通用前缀 | 适用范围 |
 | --- | --- |
-| `F` | 跨切面（CLI 形态、账户体系、CI、性能预算、安全模型） |
+| `F` | 跨切面(CLI 形态、账户体系、CI、性能预算、安全模型) |
 | `R` | 重构模式 / 可复用的结构决策 |
 
-> 项目级前缀由各项目根据自己的领域自定义；前缀集合由该项目第一篇 ADR（即 F 或等价总设类）锁定，并在 `docs/adr/README.md` 顶部公示。
+> 项目级前缀由各项目根据自己的领域自定义;前缀集合由该项目第一篇 ADR(即 F 或等价总设类)锁定,并在 `docs/adr/README.md` 顶部公示。
 >
-> 典型自定义前缀例子（**仅作示意，不代表推荐**）：`AUTH`、`PAY`、`ORDER`、`INFRA`、`MAIL`、`CAL`、`NOTE`、`TODO`、`BKMK`、`LOG`、`SRCH`。
+> 典型自定义前缀例子(**仅作示意,不代表推荐**):`AUTH`、`PAY`、`ORDER`、`INFRA`、`MAIL`、`CAL`、`NOTE`、`TODO`、`BKMK`、`LOG`、`SRCH`。
 
-### 3.4 模式类 ADR（R 类）的判定
+### 3.4 模式类 ADR(R 类)的判定
 
-满足以下**全部**条件，归入模式类：
+满足以下**全部**条件,归入模式类:
 
 - 影响 ≥ 2 个独立模块
 - 提供可复用的接口、宏、trait 或工具函数
-- 未来代码若不遵守，会被视为破坏既定约定
+- 未来代码若不遵守,会被视为破坏既定约定
 
-模式类 ADR 的 Consequences 节必须显式说明"应在何处应用"，便于后续审计。
+模式类 ADR 的 Consequences 节必须显式说明"应在何处应用",便于后续审计。
 
 ### 3.5 ADR 生命周期
 
 | 状态 | 含义 | 操作 |
 | --- | --- | --- |
-| **Proposed** | 已起草，未落地 | 仅讨论，不引用 |
+| **Proposed** | 已起草,未落地 | 仅讨论,不引用 |
 | **Accepted** | 已被代码采纳 | 可被 `.rules/` 与代码引用 |
-| **Superseded by [id]** | 被新决策取代 | **保留旧文件**，头部加 `**Superseded by**`；不得删除 |
+| **Superseded by [id]** | 被新决策取代 | **保留旧文件**,头部加 `**Superseded by**`;不得删除 |
 
 ### 3.6 索引入口
 
-`docs/adr/README.md` 必须按前缀分组、按编号升序列出：
+`docs/adr/README.md` 必须按前缀分组、按编号升序列出:
 
 ```markdown
 ## Mail (M-series)
@@ -178,51 +185,51 @@
 
 ## 4. 项目计划与进度
 
-### 4.1 `task_plan.md`：阶段 + 错误表 + 关键设计决策
+### 4.1 `task_plan.md`:阶段 + 错误表 + 关键设计决策
 
 | 节 | 内容 |
 | --- | --- |
-| 顶部状态 | 一行说明：当前发布版本 + 最近阶段完成情况 |
+| 顶部状态 | 一行说明:当前发布版本 + 最近阶段完成情况 |
 | 总体目标 | 1–3 句项目愿景 |
-| 阶段规划 | 编号 `Phase N: <标题> [complete\|in_progress\|pending]`，每个阶段 2–10 行摘要 |
-| 错误表 | 项目级 `Errors Encountered` 表，记非显然错误与解法 |
-| 关键设计决策 | 项目级 `关键设计决策` 表，列已采用的关键选择与理由（仅放摘要，决策全文在 ADR） |
-| 配置示例（如有） | 多账户 / 协议相关的配置文件设计草案 |
+| 阶段规划 | 编号 `Phase N: <标题> [complete\|in_progress\|pending]`,每个阶段 2–10 行摘要 |
+| 错误表 | 项目级 `Errors Encountered` 表,记非显然错误与解法 |
+| 关键设计决策 | 项目级 `关键设计决策` 表,列已采用的关键选择与理由(仅放摘要,决策全文在 ADR) |
+| 配置示例(如有) | 多账户 / 协议相关的配置文件设计草案 |
 
-> **不允许出现在 `task_plan.md` 的内容**——完成后立即清理：
+> **不允许出现在 `task_plan.md` 的内容**——完成后立即清理:
 >
-> - 子任务清单（`T1.1` / `T1.2` / `T13.10` 等带编号的子步骤列表）
-> - 完成小结 / post-mortem 段落（"完成小结（落地…）"、"实现细节…"、"顺手修…"）
-> - 每 commit 的逐条验收复述（"T13.1 门禁全绿"等流水账）
-> - 已发布版本的逐项变更描述（属于 `progress.md` 发版流水 + commit 历史）
+> - 子任务清单(`T1.1` / `T1.2` / `T13.10` 等带编号的子步骤列表)
+> - 完成小结 / post-mortem 段落("完成小结(落地…)"、"实现细节…"、"顺手修…")
+> - 每 commit 的逐条验收复述("T13.1 门禁全绿"等流水账)
+> - 已发布版本的逐项变更描述(属于 `progress.md` 发版流水 + commit 历史)
 >
-> 判定疑问句：这段叙述未来读者**会**通过 ADR 或 commit 历史查到吗？是 → 删除本文件内容，只保留 ADR 链接；否 → 说明这是一个**新决策**，先建 ADR。
+> 判定疑问句:这段叙述未来读者**会**通过 ADR 或 commit 历史查到吗?是 → 删除本文件内容,只保留 ADR 链接;否 → 说明这是一个**新决策**,先建 ADR。
 
-### 4.2 `progress.md`：当前状态 + 时间序索引 + 发版流水
+### 4.2 `progress.md`:当前状态 + 时间序索引 + 发版流水
 
 | 节 | 内容 | 更新频率 |
 | --- | --- | --- |
-| 当前状态 | 已发布版本 + 当前阶段 + 各模块一句话；**每行 ≤ 1 句话**，禁止段落 | 每个 Phase 完成 |
-| ADR 时间序索引 | 按日期倒序；新 ADR 必加 | 每新增 ADR |
+| 当前状态 | 已发布版本 + 当前阶段 + 各模块一句话;**每行 ≤ 1 句话**,禁止段落 | 每个 Phase 完成 |
+| ADR 时间序索引 | 按日期倒序;新 ADR 必加 | 每新增 ADR |
 | 发版流水 | 版本号 + tag + 一句话变更 + 关联 ADR | 每次发版 |
 
-> **不允许出现在 `progress.md` 的内容**——完成后立即清理：
+> **不允许出现在 `progress.md` 的内容**——完成后立即清理:
 >
 > - 任何 Phase 的实现细节段落、子任务清单、完成小结
-> - "顺手修"、"质量门禁：265 tests..."等流水账
-> - 已发版模块的功能展开描述（属于 ADR + commit 历史）
+> - "顺手修"、"质量门禁:265 tests..."等流水账
+> - 已发版模块的功能展开描述(属于 ADR + commit 历史)
 >
-> 一行式当前状态 = "vX.Y.Z 已发布 — <一句话变更>+ <ADR 链接>"；超出一行的内容都属于其他文档。
+> 一行式当前状态 = "vX.Y.Z 已发布 — <一句话变更>+ <ADR 链接>";超出一行的内容都属于其他文档。
 
 ---
 
 ## 5. 领域术语表
 
-`CONTEXT.md` 只回答"这个领域的词是什么"，不回答"它怎么实现"。
+`CONTEXT.md` 只回答"这个领域的词是什么",不回答"它怎么实现"。
 
-- 每个术语 = 一段：定义 + 在本项目里的语义角色 + 反例（避免混淆的概念）
-- 实施细节（API、数据模型、行为）一律不写；放 ADR
-- 模块新增时，先建术语，再写模块
+- 每个术语 = 一段:定义 + 在本项目里的语义角色 + 反例(避免混淆的概念)
+- 实施细节(API、数据模型、行为)一律不写;放 ADR
+- 模块新增时,先建术语,再写模块
 
 ---
 
@@ -230,74 +237,75 @@
 
 ### 6.1 开始一个任务之前
 
-1. 打开入口文档，确认项目当前阶段。
-2. 在 `task_plan.md` 找到对应阶段，标 `in_progress`。
-3. 只读与本任务相关的 `.rules/*.md`，不读全部。
-4. 对涉及的模块，按 `docs/adr/README.md` 列出本模块的 ADR id 并依次打开。
-5. 阅读相关源文件，不靠记忆。
+1. 打开入口文档,确认项目当前阶段。
+2. 在 `task_plan.md` 找到对应阶段,标 `in_progress`。
+3. 只读与本任务相关的 `.rules/*.md`,不读全部。
+4. 对涉及的模块,按 `docs/adr/README.md` 列出本模块的 ADR id 并依次打开。
+5. 阅读相关源文件,不靠记忆。
 
 ### 6.2 任务进行中
 
-- 每 2 次外部检索/抓取后，问一次"这次抓的内容是不是一个决策"——是 → 写到 scratch buffer，任务完成时按 §7 抽到 ADR；否 → 丢弃。
-- 遇到非显然错误 → 追加一行到 `task_plan.md` 的 `Errors Encountered` 表（项目级，**不**按 Phase 分），不要塞到 `progress.md`。
-- 不提交半成品；提交前先关闭任务。
+- 每 2 次外部检索/抓取后,问一次"这次抓的内容是不是一个决策"——是 → 写到 scratch buffer,任务完成时按 §7 抽到 ADR;否 → 丢弃。
+- 遇到非显然错误 → 追加一行到 `task_plan.md` 的 `Errors Encountered` 表(项目级,**不**按 Phase 分),不要塞到 `progress.md`。
+- 不提交半成品;提交前先关闭任务。**项目级"半成品"的具体判定见 `everyday-conventions.md` §2.1。**
 
 ### 6.3 完成一个任务
 
-按下列顺序执行，每一步独立可失败：
+按下列顺序执行,每一步独立可失败:
 
 | # | 步骤 | 命令/动作 | 通过条件 |
 | --- | --- | --- | --- |
-| 1 | 质量门禁 | 任务运行器一键命令（format → lint → test → build） | 全绿 |
-| 2 | 文档链接完整性 | `<task-runner> check-links`（详见 §10 / §11） | 无失败项 |
-| 3 | **ADR 抽取**（见第 7 节） | 决定是否新建/更新 ADR | 决策性内容均落 ADR |
+| 1 | 质量门禁 | 任务运行器一键命令(format → lint → test → build) | 全绿 |
+| 2 | 文档链接完整性 | `<task-runner> check-links`(详见 §10 / §11) | 无失败项 |
+| 3 | **ADR 抽取**(见第 7 节) | 决定是否新建/更新 ADR | 决策性内容均落 ADR |
 | 4 | 提交 | 按第 8 节规范 | 提交消息符合格式 |
 | 5 | 进度文档更新 | 在 `progress.md` 时间序索引追加新 ADR id | 索引行数 = 实际 ADR 数 |
 
-> 一个"任务"的定义：完整 feature / 模块骨架 / 一个 Phase / 紧密耦合的小改动包（bug + 测试）。
+> 一个"任务"的定义:完整 feature / 模块骨架 / 一个 Phase / 紧密耦合的小改动包(bug + 测试)。
+> 项目级 4 步门禁顺序与项目级补充见 `everyday-conventions.md` §2。
 
 ---
 
 ## 7. ADR 抽取纪律
 
-这是整套治理里**最容易腐烂、最容易忘**的一环。规则强制：
+这是整套治理里**最容易腐烂、最容易忘**的一环。规则强制:
 
 ### 7.1 触发条件
 
-每完成一个任务，**必须**走一遍 ADR 抽取步骤；不是仅在发版时做。
+每完成一个任务,**必须**走一遍 ADR 抽取步骤;不是仅在发版时做。
 
 ### 7.2 决策归类
 
-逐条审视本任务的 diff 与临时笔记，按 3.1 节的判定条件：
+逐条审视本任务的 diff 与临时笔记,按 3.1 节的判定条件:
 
 - 是决策 → 选前缀与编号 → 写 ADR → 登记到 `docs/adr/README.md`
-- 否 → 删除 `progress.md` / `task_plan.md` 中的叙述，替换为 ADR 链接（按 §4.1 / §4.2 严禁保留执行痕迹）
+- 否 → 删除 `progress.md` / `task_plan.md` 中的叙述,替换为 ADR 链接(按 §4.1 / §4.2 严禁保留执行痕迹)
 
 ### 7.3 双向交叉引用
 
 - 在源代码/注释中提到 ADR → 该 ADR 的 `Cross-references` 节必须有反向引用
-- ADR 取代旧 ADR → 旧 ADR 头部加 `**Superseded by [<id>](...)`；新 ADR `Cross-references` 节列出旧 id
+- ADR 取代旧 ADR → 旧 ADR 头部加 `**Superseded by [<id>](...)`;新 ADR `Cross-references` 节列出旧 id
 
 ### 7.4 发版前最后一次清扫
 
-发版 commit 前，必须再读一遍 `progress.md` 与 `task_plan.md`，确认：
+发版 commit 前,必须再读一遍 `progress.md` 与 `task_plan.md`,确认:
 
 - 没有"事实只活在叙述里"的情况
-- 所有表格只列 ADR 链接，无解释段落
-- 没有子任务清单 / 完成小结 / 流水账段落（§4.1 / §4.2 禁止项）
+- 所有表格只列 ADR 链接,无解释段落
+- 没有子任务清单 / 完成小结 / 流水账段落(§4.1 / §4.2 禁止项)
 
 ---
 
 ## 8. 提交规范
 
-采用 **Conventional Commits**，辅以提交前检查清单。
+采用 **Conventional Commits**,辅以提交前检查清单。
 
 ### 8.1 消息格式
 
 ```
 <type>(<scope>): <subject>
 
-<body — 72 列换行；说明 what 与 why，不说明 how>
+<body — 72 列换行;说明 what 与 why,不说明 how>
 
 <footer — 关联 issue、breaking change、co-author>
 ```
@@ -306,32 +314,32 @@
 
 | Type | 触发条件 |
 | --- | --- |
-| `feat` | 新的用户可见行为（命令 / action / flag） |
+| `feat` | 新的用户可见行为(命令 / action / flag) |
 | `fix` | 行为可观察的 bug 修复 |
-| `refactor` | 行为不变，仅内部结构调整 |
+| `refactor` | 行为不变,仅内部结构调整 |
 | `test` | 仅测试改动 |
 | `docs` | 仅文档改动 |
 | `chore` | 构建 / CI / 依赖 / 发版 commit |
-| `perf` | 罕见；仅在有量化收益时使用，正文必须给出数字 |
+| `perf` | 罕见;仅在有量化收益时使用,正文必须给出数字 |
 
 ### 8.3 scope 规范
 
-- 取主模块/层名（具体值按项目实际定义）
-- 跨项目级改动可省略 scope（如 `chore: release vX.Y.Z`）
+- 取主模块/层名(具体值由项目实际定义;Rust CLI 项目典型 = CLI 子命令名)
+- 跨项目级改动可省略 scope(如 `chore: release vX.Y.Z`)
 
 ### 8.4 原子提交
 
 - **一个提交 = 一个任务**
 - 每次提交后必须能完成构建 + 测试
-- feature 与版本号 bump 必须分两次提交（推荐 `feat(...)` → `chore: bump version`）
+- feature 与版本号 bump 必须分两次提交(推荐 `feat(...)` → `chore: bump version`)
 - body 超过 ~10 行就要怀疑"塞了两个改动"
 
 ### 8.5 body 应回答的问题
 
-1. **What** 改了什么（一句话）
-2. **Why** 为何这么改（非显然时）
-3. **Tradeoffs** 与拒绝的备选（决策类改动必给，链接 ADR）
-4. **Impact** 影响面（哪些模块/用户行为）
+1. **What** 改了什么(一句话)
+2. **Why** 为何这么改(非显然时)
+3. **Tradeoffs** 与拒绝的备选(决策类改动必给,链接 ADR)
+4. **Impact** 影响面(哪些模块/用户行为)
 
 ### 8.6 提交前清单
 
@@ -340,7 +348,7 @@
 - [ ] 决策类改动已建/更新 ADR
 - [ ] `progress.md` 时间序索引已更新
 - [ ] 提交消息符合格式
-- [ ] 改动是单任务的，不夹带无关修改
+- [ ] 改动是单任务的,不夹带无关修改
 
 ---
 
@@ -348,7 +356,7 @@
 
 ### 9.1 必查项与执行顺序
 
-| 顺序 | 检查 | 工具示例（按语言替换） | 失败处理 |
+| 顺序 | 检查 | 工具示例(按语言替换) | 失败处理 |
 | --- | --- | --- | --- |
 | 1 | 格式 | `formatter --check` | 直接修复后重跑 |
 | 2 | 静态检查 | `linter --deny warnings` | 必须零警告 |
@@ -356,19 +364,20 @@
 | 4 | 构建 | `build` | 必须成功 |
 | 5 | 链接完整性 | `check-links` | 修复坏链 |
 
-> 顺序原则：format 必须先于 lint 跑——格式不对时 lint 的提示往往误导。
+> 顺序原则:format 必须先于 lint 跑——格式不对时 lint 的提示往往误导。
+> 项目级工具替换表见 `everyday-conventions.md` §3。
 
 ### 9.2 "零警告"策略
 
-- 静态检查带 `--deny warnings`（或等价配置）
-- 第三方库带来的 lint 噪音按需在本项目配置中抑制，并在 `.rules/` 留一行解释
-- CI 与本地门禁使用同一组配置；CI 不允许"只在本地通过"
+- 静态检查带 `--deny warnings`(或等价配置)
+- 第三方库带来的 lint 噪音按需在本项目配置中抑制,并在 `.rules/` 留一行解释
+- CI 与本地门禁使用同一组配置;CI 不允许"只在本地通过"
 
 ### 9.3 skip 测试的纪律
 
 - 不允许在主干上提交被 skip 的测试
-- 需要外部基础设施（网络、第三方账号、付费 API）的测试用条件 feature / `@ignore` + 注释说明所需设施
-- CI 默认不跑 ignore 测试；本地需跑时显式开启
+- 需要外部基础设施(网络、第三方账号、付费 API)的测试用条件 feature / `@ignore` + 注释说明所需设施
+- CI 默认不跑 ignore 测试;本地需跑时显式开启
 
 ---
 
@@ -376,18 +385,18 @@
 
 ### 10.1 为什么需要任务运行器
 
-- 把"开发常用命令"集中到一个入口文件（`Justfile` / `package.json scripts` / `Makefile` / `Taskfile.yml` 等，统称 **任务运行器**）
-- 提供跨平台 shell（bash + powershell）
+- 把"开发常用命令"集中到一个入口文件(`Justfile` / `package.json scripts` / `Makefile` / `Taskfile.yml` 等,统称 **任务运行器**)
+- 提供跨平台 shell(bash + powershell)
 - 组合命令顺序、quiet flag、fail-fast
 
-### 10.2 必备 recipe（recipe 名 / 命令按所选运行器替换）
+### 10.2 必备 recipe(recipe 名 / 命令按所选运行器替换)
 
 | 命令 | 含义 |
 | --- | --- |
 | `format` | 自动格式化 |
-| `check` | 格式 + 静态检查（fail-fast on format） |
-| `test` | 跑测试，quiet |
-| `build` | 构建，quiet |
+| `check` | 格式 + 静态检查(fail-fast on format) |
+| `test` | 跑测试,quiet |
+| `build` | 构建,quiet |
 | `ci` | check → test → build 全跑 |
 | `check-links` | 跨文档链接完整性 |
 
@@ -399,119 +408,29 @@
 ### 10.4 跨平台 shell
 
 - Linux / macOS / Git Bash → bash
-- Windows 原生 → powershell（无 profile、无 logo）
-- recipe body 内只用 `&&` 串联，避免 shell 差异
+- Windows 原生 → powershell(无 profile、无 logo)
+- recipe body 内只用 `&&` 串联,避免 shell 差异
 
 ### 10.5 `check-links` 实现要点
 
-- 遍历所有 `.md` 文件（排除构建产物与版本控制目录）
-- 解析每个 `[label](path)`，验证相对路径解析后的文件存在
-- 解析每个 `[id](id-name.md)`，验证对应目录有该 id 前缀的文件
-- 解析锚点（`#heading-slug`），做 best-effort 校验
-- 输出三档：`[OK] / [FAIL] / [WARN]`；FAIL 退出码非零
+- 遍历所有 `.md` 文件(排除构建产物与版本控制目录)
+- 解析每个 `[label](path)`,验证相对路径解析后的文件存在
+- 解析每个 `[id](id-name.md)`,验证对应目录有该 id 前缀的文件
+- 解析锚点(`#heading-slug`),做 best-effort 校验
+- 输出三档:`[OK] / [FAIL] / [WARN]`;FAIL 退出码非零
 
-### 10.6 精简 Justfile 模板
+> 项目级具体排除路径与 Rust `target/` 等构建产物目录见 `everyday-conventions.md` §3.4。
 
-`just` 是这一类任务运行器中跨平台做得最干净的选项。最小可工作模板：
+### 10.6 通用工具替换表
 
-```just
-# Cross-platform shells: bash on Unix, PowerShell on Windows.
-set shell := ["bash", "-c"]
-set windows-shell := ["powershell.exe", "-NoProfile", "-NoLogo", "-Command"]
+| 占位 | Rust | Node/TS | Python | Go |
+| --- | --- | --- | --- | --- |
+| `<formatter> --check` | `cargo fmt` | `prettier` | `ruff format` | `gofmt` |
+| `<linter> --deny warnings` | `cargo clippy -- -D warnings` | `eslint --max-warnings 0` | `ruff check` | `staticcheck` |
+| `<test-runner> -q` | `cargo test -q` | `vitest run --reporter=basic` | `pytest -q` | `go test ./...` |
+| `<builder> -q` | `cargo build -q` | `tsc` / `vite build` | `python -m build` | `go build ./...` |
 
-# List available recipes (also the default target).
-default:
-    @just --list
-
-# Auto-format all sources.
-format:
-    <formatter>            # e.g. cargo fmt / prettier --write . / ruff format .
-
-# Format + lint; fail-fast on format before running the linter.
-check: _fmt-check _lint
-
-_fmt-check:
-    <formatter> --check
-
-_lint:
-    <linter> --deny warnings
-
-# Run tests, quiet.
-test:
-    <test-runner> -q
-
-# Build, quiet.
-build:
-    <builder> -q
-
-# Cross-document link integrity.
-check-links:
-    bash scripts/check-doc-links.sh
-
-# Full local CI: check -> check-links -> test -> build.
-ci: check check-links test build
-```
-
-> 替换表：
->
-> | 占位 | Rust | Node/TS | Python | Go |
-> | --- | --- | --- | --- | --- |
-> | `<formatter> --check` | `cargo fmt` | `prettier` | `ruff format` | `gofmt` |
-> | `<linter> --deny warnings` | `cargo clippy -- -D warnings` | `eslint --max-warnings 0` | `ruff check` | `staticcheck` |
-> | `<test-runner> -q` | `cargo test -q` | `vitest run --reporter=basic` | `pytest -q` | `go test ./...` |
-> | `<builder> -q` | `cargo build -q` | `tsc` / `vite build` | `python -m build` | `go build ./...` |
-
-### 10.7 `check-links` 精简脚本（bash / POSIX）
-
-完整脚本需要支持 fenced code 剔除、ADR id 校验、`..` 路径规范化等。**最小骨架**足以覆盖 90% 的使用场景：
-
-```bash
-#!/usr/bin/env bash
-# scripts/check-doc-links.sh — minimal cross-document link checker.
-set -u
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-cd "$ROOT" || exit 2
-
-FAILS=0
-mapfile -t FILES < <(find . -type f -name '*.md' \
-  -not -path './target/*' -not -path './.git/*' \
-  -not -path './node_modules/*' -not -path './dist/*' \
-  -not -path '*/.workbuddy/*')
-
-for f in "${FILES[@]}"; do
-  dir="$(dirname "$f")"
-  # Strip fenced code blocks, then extract every [label](target).
-  awk 'BEGIN{c=0} /^```/{c=!c; next} !c' "$f" \
-    | grep -oE '\[[^]]*\]\([^)]+\)' \
-    | sed -E 's/.*\]\(([^)]+)\).*/\1/' \
-    | while IFS= read -r target; do
-        # Skip external / pure anchor.
-        [[ "$target" =~ ^(https?:|mailto:|#) ]] && continue
-        # Drop fragment.
-        path="${target%%#*}"
-        [[ -z "$path" ]] && continue
-        # Skip obvious placeholders.
-        [[ "$path" =~ [\<\>] ]] && continue
-        # Resolve relative to the file's directory.
-        resolved="$(cd "$dir" 2>/dev/null && realpath -m --relative-to=. "$path" 2>/dev/null || echo "$dir/$path")"
-        if [[ ! -e "$resolved" ]]; then
-          printf '[FAIL] %s: %s -> %s\n' "$f" "$target" "$resolved"
-          FAILS=$((FAILS + 1))
-        fi
-      done
-done
-
-[[ $FAILS -eq 0 ]] && echo "[OK] no broken links across ${#FILES[@]} files." && exit 0
-echo "[FAIL] $FAILS broken link(s)." && exit 1
-```
-
-要点：
-
-- **剔除 fenced code**（`/^```/ … /c=!c/`）：占位符语法（如示例里的 `[x](...)`）不会被误判为坏链。
-- **跳过 `http(s)`/`mailto`/`#` 目标**：纯外链与锚点不在本检查范围。
-- **相对于源文件目录解析**：源文件链接全部相对源文件所在目录解析；与 ADR 根目录的绝对位置无关。
-- **退出码**：PASS 返回 0，任何 FAIL 返回 1，方便接进 CI 与任务运行器。
-- **生产级需要补的功能**（按项目复杂度裁剪）：1) 锚点 heading-slug 的 best-effort 匹配；2) ADR 索引文件中 `[<id>](<id>-...)` 形式的批量校验；3) 源码注释里跨 ADR 目录的引用（`<adr-dir>` 与 11.2 的目录深度）；4) `.rules/` / `README` 索引与文件存在性的一致性。
+> 本项目实际选用的 `just` + Rust 工具链配置见 `everyday-conventions.md` §3.2–§3.3。
 
 ---
 
@@ -525,26 +444,28 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 - 子目录引父目录文件 → `../file.md`
 - 父目录引子目录 → `subdir/file.md`
 
-### 11.2 链接深度表（注释文档链接 ADR）
+### 11.2 链接深度表(通用规则)
 
-源文件目录层级决定 `../` 段数。规则按"源文件所在目录到仓库根的层数 + 1"（`+1` 用于穿过 ADR 目录自身）：
+源文件目录层级决定 `../` 段数。规则按"源文件所在目录到仓库根的层数 + 1"(`+1` 用于穿过 ADR 目录自身):
 
-| 源文件位置（举例） | ADR 链接前缀 |
+| 源文件位置(举例) | ADR 链接前缀 |
 | --- | --- |
-| 顶层（源代码根或一级平铺目录） | `[id](../<adr-dir>/<id>-...md)` |
-| 一层子目录（`modules/<name>/` 等） | `[id](../../<adr-dir>/<id>-...md)` |
-| 两层子目录（`modules/<name>/<sub>/` 等） | `[id](../../../<adr-dir>/<id>-...md)` |
+| 顶层(源代码根或一级平铺目录) | `[id](../<adr-dir>/<id>-...md)` |
+| 一层子目录(`modules/<name>/` 等) | `[id](../../<adr-dir>/<id>-...md)` |
+| 两层子目录(`modules/<name>/<sub>/` 等) | `[id](../../../<adr-dir>/<id>-...md)` |
 
-> 任何新成员按"数源文件到仓库根的目录层数"推断；错了 `check-links` 会立刻报。
+> 任何新成员按"数源文件到仓库根的目录层数"推断;错了 `check-links` 会立刻报。
 >
-> `<adr-dir>` 由项目自行决定（如 `docs/adr/`、`architecture/decisions/`、`docs/decisions/`），但**必须**在 §3.6 索引节固定，所有深度引用指向同一目录。
+> `<adr-dir>` 由项目自行决定(如 `docs/adr/`、`architecture/decisions/`、`docs/decisions/`),但**必须**在 §3.6 索引节固定,所有深度引用指向同一目录。
+>
+> 项目级实际深度示例见 `everyday-conventions.md` §4.1。
 
 ### 11.3 链接腐烂的预防
 
 - 文件改名 → 一次提交内更新所有引用
 - 文件删除 → 先在索引删除条目 → 再删文件
 - 章节重命名 → 跑 `check-links` 验证所有 `#heading` 锚点
-- 不依赖 IDE 重构插件处理 markdown 链接；它们往往错过源码文件内嵌的 markdown（如 `///`/`#`/`/** */`/`<!-- -->` 注释里的链接）
+- 不依赖 IDE 重构插件处理 markdown 链接;它们往往错过源码文件内嵌的 markdown(如 `///`/`#`/`/** */`/`<!-- -->` 注释里的链接)
 
 ---
 
@@ -552,41 +473,32 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 ### 12.1 语言统一
 
-源码注释使用**单一语言**（团队通用语），避免多语言混杂。任何其他语言的注释按"误植"处理。
+源码注释使用**单一语言**(团队通用语),避免多语言混杂。任何其他语言的注释按"误植"处理。
 
-### 12.2 四桶分类
+### 12.2 注释判定原则
 
-任何包含非通用语的行，先判定它是"注释"还是"字符串字面量"：
+判定疑问句:这一行是注释(`//` / `/* */` / `#` / `"""` / `<!-- -->`)吗?
 
-| 桶 | 类别 | 处理 |
-| --- | --- | --- |
-| 1 | 注释含非通用语 | 翻译为通用语；若是决策内容，替换为 ADR 链接 |
-| 2 | 章节横幅注释 | 翻译为通用语，保留 `// ===` 风格 |
-| 3 | 用户可见字符串（CLI 帮助文案 / UI 提示） | **保留**——是面向终端用户的 UX |
-| 4 | 测试 fixture / 示例数据 / 业务 URL 字面量 | **保留**——不是注释 |
-
-判定疑问句：这一行是注释（`//` / `/* */` / `#` / `"""` / `<!-- -->`）吗？是 → 走翻译；否 → 保留。
+- 是注释 → 走翻译(通用语化);若是决策内容,替换为 ADR 链接
+- 否(用户可见字符串 / 测试 fixture / 业务 URL)→ 保留
 
 ### 12.3 决策注释的判定
 
-注释包含决策性内容（约束 / 取舍 / 边界 / 反向操作会令人惊讶），**必须**替换为 ADR 链接：
+注释包含决策性内容(约束 / 取舍 / 边界 / 反向操作会令人惊讶),**必须**替换为 ADR 链接。
 
-```text
-// Pulled from current-state snapshot, not full history.
-// See [R007](../../docs/adr/R007-snapshot-vs-history.md).
-```
+判定疑问句:
 
-判定疑问句：
-
-- 是否说明未来代码必须遵守的约束？→ ADR
-- 是否说明为什么选这种形态？→ ADR
-- 是否只是重复代码本身？→ 删掉，代码已经说清楚了
+- 是否说明未来代码必须遵守的约束?→ ADR
+- 是否说明为什么选这种形态?→ ADR
+- 是否只是重复代码本身?→ 删掉,代码已经说清楚了
 
 ### 12.4 注释清理的提交纪律
 
 - 每个被清理的源文件 = 一个独立提交
-- 不允许把两个文件的注释翻译打包成一次提交（diff 难审、难回退）
+- 不允许把两个文件的注释翻译打包成一次提交(diff 难审、难回退)
 - commit 类型用 `refactor(comments)` 或 `docs(comments)`
+
+> 项目级四桶分类(Rust 字符串字面量 vs 注释二分类)见 `everyday-conventions.md` §5。
 
 ---
 
@@ -596,36 +508,36 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 | 类型 | 位置 | 何时用 |
 | --- | --- | --- |
-| 单元测试 | 与被测代码同文件末尾（`#[cfg(test)]` 等价物） | 测试某模块内部逻辑 |
+| 单元测试 | 与被测代码同文件末尾(`#[cfg(test)]` 等价物) | 测试某模块内部逻辑 |
 | 集成测试 | 顶层 `tests/` 目录 | 跨模块 / 入口点行为 |
 | 需要外部设施的测试 | 标记 ignore 或 feature gate | 网络、第三方账号、付费 API |
 
-### 13.2 必测项（每模块必覆盖）
+### 13.2 必测项(每模块通用必覆盖)
 
 1. 配置加载 + 多账户解析
-2. 输出渲染：Text 与结构化两种路径，含失败信封
-3. 错误类型到结构化信封的序列化
-4. 每个核心执行单元：至少一个 happy-path 集成测试 + JSON 断言
-5. 持久化层：upsert 幂等性、水位单调性、ID 重置、append-only 保留、token 边界匹配
+2. 错误类型到结构化信封的序列化
+3. 每个核心执行单元:至少一个 happy-path 集成测试
 
 ### 13.3 mock 纪律
 
-- 网络调用必须封装在接口/抽象背后，测试注入 fake
-- 时间相关代码接受 `Clock` 函数对象（或测试框架的时间控制）
+- 网络调用必须封装在接口/抽象背后,测试注入 fake
+- 时间相关代码接受 `Clock` 函数对象(或测试框架的时间控制)
 - 随机 ID 接受 `gen_id` 函数对象或可重置计数器
-- mock 与被测代码放在同一文件，命名清晰
+- mock 与被测代码放在同一文件,命名清晰
 
 ### 13.4 覆盖率策略
 
 - 不强制百分比门槛
 - 每个模块的核心路径至少有一个测试命中
-- 每个 bug 修复**必须**至少附带一个新测试，重现失败模式
+- 每个 bug 修复**必须**至少附带一个新测试,重现失败模式
 
-### 13.5 性能基准（可选）
+### 13.5 性能基准(可选)
 
 - 不强制用 bench 框架
-- 性能预算写入 F 类 ADR（冷启动 < 100ms / 网络超时 / 大输出流式）
-- CI 不跑 perf 断言；用结构约束（禁止全量加载、强制分页）
+- 性能预算写入 F 类 ADR(冷启动 < 100ms / 网络超时 / 大输出流式)
+- CI 不跑 perf 断言;用结构约束(禁止全量加载、强制分页)
+
+> 项目级必测项(Text/JSON 双输出、append-only 持久化指标等)见 `everyday-conventions.md` §6.2。
 
 ---
 
@@ -635,21 +547,21 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 | 红线 | 规则 |
 | --- | --- |
-| ❌ | 不得把密码 / Token / API key 写入配置文件、环境变量、命令行、日志 |
-| ✅ | 凭证由项目选定的"OS 原生安全存储后端"管理（实现细节写在项目的安全 ADR 中）；命名空间规则在 ADR 中固定（如 `<项目>:<模块>:<账户>`） |
-| ✅ | 空凭证返回"未配置"错误，不 panic、不进入重试循环 |
-| ✅ | 缺失安全后端（如 headless 环境）必须返回明确错误，并允许交互式回退 |
+| ❌ | 不得把密码 / Token / API key 写入配置文件、命令行、日志 |
+| ✅ | 凭证由项目实际采用的安全凭据管理方式管理(实现细节写在项目的安全 ADR 中);命名空间规则在 ADR 中固定(如 `<项目>:<模块>:<账户>`) |
+| ✅ | 空凭证返回"未配置"错误,不 panic、不进入重试循环 |
+| ✅ | 缺失安全后端(如 headless 环境)必须返回明确错误,并允许交互式回退 |
 
-> 这条规则的**意图**是"凭证不落盘、不入命令行、永不进日志"。具体后端（keychain / 凭据管理器 / Windows Credential Manager / GPG 加密文件等）由项目安全 ADR 决定；`governance.md` 不锁定实现。
+> 这条规则的**意图**是"凭证不落盘、不入命令行、永不进日志"。具体后端(keychain / 凭据管理器 / Windows Credential Manager / GPG 加密文件 / 环境变量等)由项目安全 ADR 决定;`governance.md` 不锁定实现。
 
 ### 14.2 网络调用
 
 | 红线 | 规则 |
 | --- | --- |
-| ✅ | 任何 HTTP/TCP 客户端必须配置超时（具体时长写在性能预算 ADR：典型值读默认 30s，写默认 10s） |
+| ✅ | 任何 HTTP/TCP 客户端必须配置超时(具体时长写在性能预算 ADR:典型值读默认 30s,写默认 10s) |
 | ❌ | 不得裸用底层 socket 流而不带超时包裹 |
 | ❌ | 认证失败 / 参数错误**不得**进入重试循环——它们是终态 |
-| ✅ | 遇到 429 时按 `Retry-After` 退避，限定次数（默认 1 次） |
+| ✅ | 遇到 429 时按 `Retry-After` 退避,限定次数(默认 1 次) |
 
 ### 14.3 本地文件操作
 
@@ -657,22 +569,23 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 | --- | --- |
 | ✅ | 读取配置时 `PermissionDenied` 必须转为明确错误类型 |
 | ✅ | 写本地缓存数据库必须先确保父目录存在 |
-| ❌ | 不得直接使用未规范化的用户路径（禁止 `..` 注入） |
+| ❌ | 不得直接使用未规范化的用户路径(禁止 `..` 注入) |
 
 ### 14.4 输出与日志
 
 | 红线 | 规则 |
 | --- | --- |
-| ❌ | 不得打印完整的网络层内部字段（如服务端相关标识） |
-| ✅ | 结构化输出绝不内嵌凭证；认证失败消息只能说"账户 X 缺少凭证"，不出现凭证本身 |
-| ✅ | 结构化输出失败时必须回退到通用信封，不破坏对外契约 |
+| ❌ | 不得打印完整的网络层内部字段(如服务端相关标识) |
+| ✅ | 结构化输出绝不内嵌凭证;认证失败消息只能说"账户 X 缺少凭证",不出现凭证本身 |
+| ✅ | 结构化输出失败时必须回退到通用信封,不破坏对外契约 |
 
 ### 14.5 并发与时间陷阱
 
-- 析构/清理路径里要触达异步运行时（spawn、定时器、通道收发）时，**必须**先探测运行时是否还活着；运行时已退出时静默回收资源，不要 panic、不要泄漏已借用的会话/连接。
-- 涉及本地时间 / 日历日（DST 边界、夏令时切换、跨时区用户输入）时，用显式歧义解析策略（如"取最早/最晚有效时间"），不依赖 panic/抛异常类的隐式崩溃路径。
+- 析构/清理路径里要触达异步运行时(spawn、定时器、通道收发)时,**必须**先探测运行时是否还活着;运行时已退出时静默回收资源,不要 panic、不要泄漏已借用的会话/连接。
+- 涉及本地时间 / 日历日(DST 边界、夏令时切换、跨时区用户输入)时,用显式歧义解析策略(如"取最早/最晚有效时间"),不依赖 panic/抛异常类的隐式崩溃路径。
 
-> 上述两项的**具体适配方式**由语言/运行时 ADR 决定；`governance.md` 只锁定"必须探测、必须显式歧义"的意图，不锁定调用形式。
+> 上述两项的**具体适配方式**由语言/运行时 ADR 决定;`governance.md` 只锁定"必须探测、必须显式歧义"的意图,不锁定调用形式。
+> 项目级具体踩坑(如 Rust `tokio::spawn` 前探测、`chrono::Local` DST 边界)见 `everyday-conventions.md` §7.4。
 
 ### 14.6 漏洞披露
 
@@ -685,29 +598,29 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 ### 15.1 添加前的检查清单
 
-1. 该能力是否已被现有依赖覆盖？
-2. 是否真的需要这个依赖，还是 `core` / 标准库即可？
-3. 是否仅一个模块需要？若是 → 用 feature flag 隔离
-4. 依赖的 TLS 后端、运行时、平台要求是否与项目一致？
-5. 该依赖的维护活跃度 / 许可证 / 体积 / 已知 CVE？
+1. 该能力是否已被现有依赖覆盖?
+2. 是否真的需要这个依赖,还是 `core` / 标准库即可?
+3. 是否仅一个模块需要?若是 → 用 feature flag 隔离
+4. 依赖的 TLS 后端、运行时、平台要求是否与项目一致?
+5. 该依赖的维护活跃度 / 许可证 / 体积 / 已知 CVE?
 
 ### 15.2 版本与特性配置
 
-- 关闭非必要的默认 feature，只启用真正需要的（具体规则由语言/工具链 ADR 锁定，例如 Cargo 的 `default-features = false` / npm 的 `sideEffects` / pip 的 extras）
-- TLS 后端优先选择与运行时同源的纯实现，避免系统 C 库的传递依赖（如适用）
-- 锁文件进入版本控制；CI 用与本地一致的 lockfile
+- 关闭非必要的默认 feature,只启用真正需要的(具体规则由语言/工具链 ADR 锁定,例如 Cargo 的 `default-features = false` / npm 的 `sideEffects` / pip 的 extras)
+- TLS 后端优先选择与运行时同源的纯实现,避免系统 C 库的传递依赖(如适用)
+- 锁文件进入版本控制;CI 用与本地一致的 lockfile
 
-### 15.3 踩坑日志（dependency-pitfalls）
+### 15.3 踩坑日志(dependency-pitfalls)
 
-任何"非显然"且解法机械的依赖坑（重命名方法 / 缺 feature / 参数位置陷阱）写入 `.rules/07-dependency-pitfalls.md`：
+任何"非显然"且解法机械的依赖坑(重命名方法 / 缺 feature / 参数位置陷阱)写入 `.rules/07-dependency-pitfalls.md`:
 
-- 一行原则 + 一行修复 + 一行来源（commit / issue 链接）
-- **决策类**选择（如"为何选 A 库而不是 B"）必须走 ADR
+- 一行原则 + 一行修复 + 一行来源(commit / issue 链接)
+- **决策类**选择(如"为何选 A 库而不是 B")必须走 ADR
 
 ### 15.4 安全审计
 
 - 每次升主版本号前跑一次依赖审计
-- 高风险依赖（凭证 / 加密 / 序列化）单独建 ADR 评估
+- 高风险依赖(凭证 / 加密 / 序列化)单独建 ADR 评估
 
 ---
 
@@ -717,38 +630,38 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 | 项 | 规则 |
 | --- | --- |
-| 格式化 | 提交前必跑项目自带 formatter；CI 用 `--check` 验证 |
-| 静态检查 | 带 `--deny warnings`；CI 与本地同配置 |
-| 公共 API | 必须有文档注释（说明契约、不变量、副作用） |
-| 模块 | 文件顶部必须有模块级文档注释，说明模块目的与关键不变量 |
-| 错误处理 | 非测试代码不使用 panic/抛异常类调用（Rust 的 `unwrap`/`expect`、Java 的 `throw`、Python 的 `raise` 未经处理等）；用 `Result?`/error wrapping/结构化错误传递 + 上下文 |
-| 构造器 | 凡能返回错误类型的构造器不 panic；遵循"成功构造或显式失败"原则 |
+| 格式化 | 提交前必跑项目自带 formatter;CI 用 `--check` 验证 |
+| 静态检查 | 带 `--deny warnings`;CI 与本地同配置 |
+| 公共 API | 必须有文档注释(说明契约、不变量、副作用) |
+| 模块 | 文件顶部必须有模块级文档注释,说明模块目的与关键不变量 |
+| 错误处理 | 非测试代码不使用 panic/抛异常类调用;用 `Result?` / error wrapping / 结构化错误传递 + 上下文 |
+| 构造器 | 凡能返回错误类型的构造器不 panic;遵循"成功构造或显式失败"原则 |
 
 ### 16.2 命名约定
 
-- 模块/文件：领域概念命名（**不**用动词 / CLI 命令命名）
-- 类型 / 接口：PascalCase
-- 函数 / 变量：snake_case / camelCase（按语言）
-- 常量：SCREAMING_SNAKE_CASE / UPPER_SNAKE_CASE
+- 模块/文件:领域概念命名(**不**用动词 / CLI 命令命名)
+- 类型 / 接口:PascalCase
+- 函数 / 变量:snake_case / camelCase(按语言)
+- 常量:SCREAMING_SNAKE_CASE / UPPER_SNAKE_CASE
 - 集合类型遵循语言惯例
 
 ### 16.3 异步与运行时
 
-- 显式声明运行时（单线程 / 多线程、事件驱动 / 多进程等）
-- 在析构/资源回收路径中触达异步资源（spawn / 定时器 / 通道）前，必须先探测运行时是否存活
-- 涉及本地时间 / DST 边界 / 夏令时切换时，用显式歧义解析策略
+- 显式声明运行时(单线程 / 多线程、事件驱动 / 多进程等)
+- 在析构/资源回收路径中触达异步资源(spawn / 定时器 / 通道)前,必须先探测运行时是否存活
+- 涉及本地时间 / DST 边界 / 夏令时切换时,用显式歧义解析策略
 
 ### 16.4 参数解析
 
-- 显式校验失败 → 明确错误类型，不静默回退默认值
-- 全局模式 flag（如 `--json`）一次性检测，存入上下文或线程局部，不重复扫描
-- 单字符参数与带前缀参数的区别（值 vs flag）必须显式区分
+- 显式校验失败 → 明确错误类型,不静默回退默认值
+- 全局模式 flag(如 `--json`)一次性检测,存入上下文或线程局部,不重复扫描
+- 单字符参数与带前缀参数的区别(值 vs flag)必须显式区分
 
 ### 16.5 持久化与查询
 
-- token 边界匹配使用合适的算子（精确匹配 / `GLOB` / 正则 / 自定义解析），不用模糊子串匹配
-- 配置路径数组索引访问需要支持自动扩展（避免误把缺失下标当成错误）
-- 不同来源的同义配置键（如布尔值的 `on/off`、`true/false`、`yes/no`）需要在配置加载层做规范归一，并在 ADR 中显式列出接受的别名
+- token 边界匹配使用合适的算子(精确匹配 / `GLOB` / 正则 / 自定义解析),不用模糊子串匹配
+- 配置路径数组索引访问需要支持自动扩展(避免误把缺失下标当成错误)
+- 不同来源的同义配置键(如布尔值的 `on/off`、`true/false`、`yes/no`)需要在配置加载层做规范归一,并在 ADR 中显式列出接受的别名
 
 ---
 
@@ -759,29 +672,29 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 ```
 完成 Phase → 质量门禁全绿 → ADR 抽取完成
     ↓
-版本号 bump commit（独立）
+版本号 bump commit(独立)
     ↓
-文档版本号引用同步（README / skills / ADR 索引）
+文档版本号引用同步(README / skills / ADR 索引)
     ↓
 进度文档追加新版本行
     ↓
-打注解 tag：git tag -a vX.Y.Z -m "..."
+打注解 tag:git tag -a vX.Y.Z -m "..."
     ↓
-推送：仅推主远端；其他镜像不推
+推送:仅推主远端;其他镜像不推
     ↓
 监控 CI release workflow 直至完成
 ```
 
 ### 17.2 版本号 bump commit 步骤
 
-1. 更新项目主配置文件（`package.json` / `Cargo.toml` / `pyproject.toml` 等）的 `version`
-2. 让构建工具自动同步 lockfile（**不要**手改 lockfile）
-3. 更新文档中的版本号引用：
-   - 用户文档（README / skills）
+1. 更新项目主配置文件(`package.json` / `Cargo.toml` / `pyproject.toml` 等)的 `version`
+2. 让构建工具自动同步 lockfile(**不要**手改 lockfile)
+3. 更新文档中的版本号引用:
+   - 用户文档(README / skills)
    - 入口文档的"当前状态"
    - 发版流水表
 4. 在 `progress.md` 的发版流水追加一行
-5. 提交：`chore: release vX.Y.Z`
+5. 提交:`chore: release vX.Y.Z`
 
 ### 17.3 文档版本号的两类
 
@@ -792,15 +705,17 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 ### 17.4 Tag 规范
 
-- 使用注解 tag：`git tag -a vX.Y.Z -m "vX.Y.Z: <highlights>"`
-- tag message 列：本次亮点 + 已知修复 + 破坏性变更（若有）
-- 仅推送到约定的"主远端"（如 GitHub）；其他镜像（内部仓库等）一律不推
+- 使用注解 tag:`git tag -a vX.Y.Z -m "vX.Y.Z: <highlights>"`
+- tag message 列:本次亮点 + 已知修复 + 破坏性变更(若有)
+- 仅推送到约定的"主远端"(如 GitHub);其他镜像(内部仓库等)一律不推
 
 ### 17.5 CI 触发的 release workflow
 
-- tag 格式：`v*`
-- workflow 必须包含：构建（三平台及以上）/ 产物上传 / 发布说明生成
-- CI 失败 → 立即修复后重打 tag（删除 + 重打）；不要 force push 已发布 tag
+- tag 格式:`v*`
+- workflow 必须包含:构建(三平台及以上)/ 产物上传 / 发布说明生成
+- CI 失败 → 立即修复后重打 tag(删除 + 重打);不要 force push 已发布 tag
+
+> 项目级 release 平台矩阵(Linux / macOS x86_64 / macOS aarch64 / Windows)见 `everyday-conventions.md` §9.1。
 
 ---
 
@@ -808,7 +723,7 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 ### 18.1 发版流水表
 
-`progress.md` 内维护，按版本号降序：
+`progress.md` 内维护,按版本号降序:
 
 ```markdown
 ## 发版流水
@@ -819,10 +734,10 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 ### 18.2 SemVer 适用范围
 
-- 公开 API 变更：major bump
-- 新增向后兼容功能：minor bump
-- 内部修复：patch bump
-- 文档 / 测试 / CI：通常不打版本
+- 公开 API 变更:major bump
+- 新增向后兼容功能:minor bump
+- 内部修复:patch bump
+- 文档 / 测试 / CI:通常不打版本
 
 ### 18.3 破坏性变更的处理
 
@@ -833,153 +748,92 @@ echo "[FAIL] $FAILS broken link(s)." && exit 1
 
 ---
 
-## 19. 模块边界与新增准入
+## 19. 新项目初始化清单
 
-### 19.1 模块边界判定问句
+按本方法论启动一个新项目,从零开始:
 
-提议新模块时，**必须**先回答：
+### 19.1 必备文档(首日必建)
 
-> 这个模块封装了什么**通用工具 / shell / curl / fd / rg 做不到的事**？
+- [ ] `README.md`(或 `agents.md`):项目目标、技术栈、模块清单、文档导航
+- [ ] `task_plan.md`:阶段拆分 + 当前 Phase
+- [ ] `progress.md`:当前状态 + ADR 时间序索引(初始为空)+ 发版流水
+- [ ] `CONTEXT.md`:领域术语表(至少覆盖核心模块的术语)
+- [ ] `governance.md`:通用治理方法论(本文件,可直接复制)
+- [ ] 项目级约定文件(如 `everyday-conventions.md`):仅放与本项目形态绑定的条款
+- [ ] `docs/adr/README.md`:ADR 索引(初始为空表)
+- [ ] `.rules/RULES.md`:规则目录索引
+- [ ] `.rules/01-workflow.md`:开发工作流
+- [ ] `.rules/02-coding-style.md`:编码风格基线
+- [ ] `.rules/03-testing.md`:测试规范
+- [ ] `.rules/04-security.md`:安全红线
+- [ ] `.rules/05-commit.md`:提交规范
+- [ ] `.rules/06-task-runner.md`:任务运行器约定
+- [ ] `.rules/07-dependency-pitfalls.md`:依赖踩坑日志(初始为空)
 
-答不上来 → 不建模块，让调用方直接用通用工具。
+### 19.2 必备工具配置
 
-### 19.2 应当成为模块的能力类型
-
-- 外部协议封装（如邮件 / 日历 / 笔记 / IM / 存储 / 搜索等领域的对外协议）
-- 外部状态抽象（凭证 / 缓存 / 同步水位 / 索引 / 配额）
-- 跨模块统一层（事件流 / 搜索 / 配置 / 通知）
-
-### 19.3 不应成为模块的能力类型
-
-- 文件系统读写（用 shell / `fd` / `rg`）
-- 通用网络请求（用 `curl`）
-- 系统信息查询（用 shell）
-- 剪贴板 / 通知等通用桌面能力
-
-### 19.4 新增模块的提交序列
-
-1. 在 `task_plan.md` 加 Phase 条目
-2. 写 ADR 至少一篇（总设类 + 模块实现细节）
-3. 在项目入口注册一个新模块（具体注册方式由项目决定，例如 trait + registry / 配置即模块 / 命令前缀映射）
-4. 加新模块作用域至 commit message 规范
-5. 在入口文件的模块清单加一行
-6. 在用户文档加使用示例
-
----
-
-## 20. AI Agent 协作入口
-
-### 20.1 入口文件职责
-
-`agents.md`（或 `AGENTS.md`）是 AI Agent 协作的唯一入口：
-
-- 告诉 Agent 项目是什么、技术栈、模块清单
-- 给出文档阅读顺序
-- 列出"何时使用本仓库"的判定
-
-### 20.2 Agent 行为约束
-
-进入项目时强制按顺序：
-
-1. 读入口文件
-2. 读 `task_plan.md` 当前 Phase
-3. 只读相关 `.rules/*.md`
-4. 读相关 ADR
-
-不按顺序读 → Agent 容易产出与既定决策冲突的方案。
-
-### 20.3 Agent 提交时的人类审核点
-
-| 项 | 人工确认 |
-| --- | --- |
-| 跨模块重构 | 必审 |
-| 决策类改动（新建 ADR） | 必审 |
-| 凭证 / 安全相关改动 | 必审 |
-| 单文件小修 | 可 AI 自决 |
-| 测试 / 文档独立 commit | 可 AI 自决 |
-
----
-
-## 21. 新项目初始化清单
-
-按本方法论启动一个新项目，从零开始：
-
-### 21.1 必备文档（首日必建）
-
-- [ ] `README.md`（或 `agents.md`）：项目目标、技术栈、模块清单、文档导航
-- [ ] `task_plan.md`：阶段拆分 + 当前 Phase
-- [ ] `progress.md`：当前状态 + ADR 时间序索引（初始为空）+ 发版流水
-- [ ] `CONTEXT.md`：领域术语表（至少覆盖核心模块的术语）
-- [ ] `docs/adr/README.md`：ADR 索引（初始为空表）
-- [ ] `.rules/RULES.md`：规则目录索引
-- [ ] `.rules/01-workflow.md`：开发工作流
-- [ ] `.rules/02-coding-style.md`：编码风格基线
-- [ ] `.rules/03-testing.md`：测试规范
-- [ ] `.rules/04-security.md`：安全红线
-- [ ] `.rules/05-commit.md`：提交规范
-- [ ] `.rules/06-task-runner.md`：任务运行器约定
-- [ ] `.rules/07-dependency-pitfalls.md`：依赖踩坑日志（初始为空）
-
-### 21.2 必备工具配置
-
-- [ ] 任务运行器（Justfile / package scripts / Makefile）：含 `format` / `check` / `test` / `build` / `ci` / `check-links`
-- [ ] CI：与本地门禁同配置（lint + test + build）
+- [ ] 任务运行器(Justfile / package scripts / Makefile):含 `format` / `check` / `test` / `build` / `ci` / `check-links`
+- [ ] CI:与本地门禁同配置(lint + test + build)
 - [ ] 跨文档链接完整性校验脚本
 - [ ] formatter 与 linter 的统一配置文件
 
-### 21.3 必备流程
+### 19.3 必备流程
 
 - [ ] 在 PR 模板中列出"质量门禁 + ADR 抽取 + 进度索引更新"三项必做
-- [ ] 首次发版前完成至少 3 篇 ADR：CLI 形态 / 凭证存储 / 错误模型
+- [ ] 首次发版前完成至少 3 篇 ADR(具体主题由项目形态决定;CLI 项目典型 = CLI 形态 / 凭证存储 / 错误模型)
 - [ ] 给每个模块建立 README + 1 个 ADR 描述模块边界
 
-### 21.4 既有项目迁移清单
+### 19.4 既有项目迁移清单
 
-增量引入本方法论时：
+增量引入本方法论时:
 
-1. 先建 ADR：`MIGRATE-001` 描述"为何引入治理方法论"
+1. 先建 ADR:`MIGRATE-001` 描述"为何引入治理方法论"
 2. 把现有 README 拆为入口文件 + 用户文档
-3. 把临时笔记 / 设计文档逐条判定：决策 → ADR；流程 → `.rules/`；事实 → 索引
+3. 把临时笔记 / 设计文档逐条判定:决策 → ADR;流程 → `.rules/`;事实 → 索引
 4. 跑一次 `check-links` 修复历史坏链
 5. 在 `.rules/01-workflow.md` 加一段"既有项目的 ADR 抽取节奏"
 6. 第一次发版按 17 节流程执行
 
 ---
 
-## 附录 A：方法论自检清单
+## 附录 A:方法论自检清单
 
-把这套方法论交付给一个新项目后，运行此清单验证：
+把这套方法论交付给一个新项目后,运行此清单验证:
 
 | 维度 | 自检问句 |
 | --- | --- |
-| **决策可追溯** | 任意代码约束都能指向一篇 ADR 吗？ |
-| **文档分而治之** | 任意文档的内容都只属于一类吗？ |
-| **ADR 单一真相** | ADR 与叙述冲突时，团队会默认信 ADR 吗？ |
-| **原子提交** | 上一周的提交，每个都能独立 build + test 通过吗？ |
-| **质量门禁硬约束** | 任意提交都跑了 `ci` + `check-links` 才落地吗？ |
-| **链接不腐烂** | 文档改名后多久能发现 / 修复坏链？ |
-| **凭证零信任** | 能在 5 分钟内搜出项目里所有凭证出现的位置并归零吗？ |
-| **显式优于回退** | 用户传错参数时会看到明确错误，还是静默得到默认值？ |
+| **决策可追溯** | 任意代码约束都能指向一篇 ADR 吗? |
+| **文档分而治之** | 任意文档的内容都只属于一类吗? |
+| **ADR 单一真相** | ADR 与叙述冲突时,团队会默认信 ADR 吗? |
+| **原子提交** | 上一周的提交,每个都能独立 build + test 通过吗? |
+| **质量门禁硬约束** | 任意提交都跑了 `ci` + `check-links` 才落地吗? |
+| **链接不腐烂** | 文档改名后多久能发现 / 修复坏链? |
+| **凭证零信任** | 能在 5 分钟内搜出项目里所有凭证出现的位置并归零吗? |
+| **显式优于回退** | 用户传错参数时会看到明确错误,还是静默得到默认值? |
+| **通用与项目分层** | 通用方法论与项目级约定是否分文件维护,无重复段落? |
 
 任何一项答"否"或"不一定" → 回到对应章节补强。
 
 ---
 
-## 附录 B：术语对照表
+## 附录 B:术语对照表
 
-为避免不同项目对同一概念命名分歧：
+为避免不同项目对同一概念命名分歧:
 
-| 本方法论术语 | 常见同义 | 反例（避免混用） |
+| 本方法论术语 | 常见同义 | 反例(避免混用) |
 | --- | --- | --- |
-| 入口文件 | `agents.md` / `AGENTS.md` / `README.md`（当 README 同时承担入口职责） | `CONTRIBUTING.md`（那是贡献流程，不是入口） |
-| 规则目录 | `.rules/` / `.standards/` / `.conventions/` | `docs/`（那是文档，不是规则） |
-| ADR | Architecture Decision Record / 设计决策记录 | `RFC`（更轻、未必强制留底） |
-| 任务计划 | `task_plan.md` / `ROADMAP.md` / `PLAN.md` | `TODO.md`（那是杂项清单） |
-| 进度日志 | `progress.md` / `CHANGELOG.md`（结构化版） | `CHANGELOG`（那是发布说明） |
-| 领域术语表 | `CONTEXT.md` / `GLOSSARY.md` | `DICTIONARY`（那是字典） |
-| 质量门禁 | `ci` / `lint` / `verify` | `build`（构建只是门禁之一） |
-| 链接完整性 | `check-links` / `link-check` | `spell-check`（那是拼写检查） |
+| 入口文件 | `agents.md` / `AGENTS.md` / `README.md`(当 README 同时承担入口职责) | `CONTRIBUTING.md`(那是贡献流程,不是入口) |
+| 规则目录 | `.rules/` / `.standards/` / `.conventions/` | `docs/`(那是文档,不是规则) |
+| 通用方法论 | `governance.md` | `STYLE.md`(那是单文件风格指南,不是治理方法论) |
+| 项目级约定 | `everyday-conventions.md` / `<project>-conventions.md` | `CONTRIBUTING.md`(那是贡献流程) |
+| ADR | Architecture Decision Record / 设计决策记录 | `RFC`(更轻、未必强制留底) |
+| 任务计划 | `task_plan.md` / `ROADMAP.md` / `PLAN.md` | `TODO.md`(那是杂项清单) |
+| 进度日志 | `progress.md` / `CHANGELOG.md`(结构化版) | `CHANGELOG`(那是发布说明) |
+| 领域术语表 | `CONTEXT.md` / `GLOSSARY.md` | `DICTIONARY`(那是字典) |
+| 质量门禁 | `ci` / `lint` / `verify` | `build`(构建只是门禁之一) |
+| 链接完整性 | `check-links` / `link-check` | `spell-check`(那是拼写检查) |
 
 ---
 
-_本方法论本身也按"决策可追溯"原则维护。增删任何一节前，请先建 ADR；改动 ADR 后，请更新本文件对应小节。_
+_本方法论本身也按"决策可追溯"原则维护。增删任何一节前,请先评估"是否对所有项目通用"——
+通用 → 入本文件;仅适用特定项目 → 入该项目级约定文件(如 `everyday-conventions.md`)。_
