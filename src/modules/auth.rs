@@ -125,14 +125,9 @@ pub fn store_credential(config: &Config, module: &str, account: &str, secret: &s
 pub fn get_credential(config: &Config, module: &str, account: &str) -> Result<String> {
     let strategy = resolve_strategy(config, module, account)?;
     let (service, user) = keyring_target(config, module, account, &strategy)?;
-    let entry = keyring::Entry::new(&service, &user)
-        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
-    entry.get_password().map_err(|e| {
-        AgentError::Auth(format!(
-            "no credential in keyring for {module} account '{account}': {e}. \
-             Run `everyday auth login --module {module} --account {account}` to store it."
-        ))
-    })
+    // Delegate to the shared reader; `keyring_target` already rejects
+    // `AuthStrategy::None` (module requires no credential).
+    get_credential_for(module, account, &service, &user)
 }
 
 /// Read a stored credential given an explicit keyring user (P2b,
@@ -144,7 +139,13 @@ pub fn get_credential(config: &Config, module: &str, account: &str) -> Result<St
 /// The keyring service name is a pure function of `(module, account)`.
 pub fn get_credential_with_user(module: &str, account: &str, user: &str) -> Result<String> {
     let service = Config::keyring_service(module, account);
-    let entry = keyring::Entry::new(&service, user)
+    get_credential_for(module, account, &service, user)
+}
+
+/// Shared keyring read: `(service, user)` → stored password (or an auth error
+/// with a login hint). Single error-formatting path for both credential readers.
+fn get_credential_for(module: &str, account: &str, service: &str, user: &str) -> Result<String> {
+    let entry = keyring::Entry::new(service, user)
         .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
     entry.get_password().map_err(|e| {
         AgentError::Auth(format!(

@@ -359,7 +359,8 @@ pub type BookmarkAccount = NotionLocalAccount;
 
 macro_rules! impl_module_config {
     ($name:ident, $config:ident, $account:ty, $default_field:ident, $module_key:literal) => {
-        /// Injected config subset for the module (P2b).
+        /// Injected config subset for the module (P2b,
+        /// [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
         #[derive(Debug, Clone, Default)]
         pub struct $name {
             /// Named account list (mirror of the module's `[[X.accounts]]`).
@@ -377,25 +378,30 @@ macro_rules! impl_module_config {
             }
         }
 
+        // The subset reuses the single `AccountProvider` resolution algorithm
+        // (P2a) instead of duplicating it — `resolve_account` delegates, so
+        // "account resolution duplicates → 1" holds for subsets too.
+        impl AccountProvider for $name {
+            type Account = $account;
+            fn module_name(&self) -> &'static str {
+                $module_key
+            }
+            fn account_list(&self) -> &[Self::Account] {
+                &self.accounts
+            }
+        }
+
         impl $name {
             /// Resolve the effective account: `--account` override > default > error.
             ///
-            /// Same resolution algorithm as [`AccountProvider::resolve_account`],
-            /// applied to the subset (the module no longer needs the full `Config`).
+            /// Delegates to the single [`AccountProvider::resolve_account`]
+            /// algorithm (the module no longer needs the full `Config`).
             pub fn resolve_account(&self, override_name: Option<&str>) -> Result<&$account> {
-                let want = override_name.or(self.default_account.as_deref());
-                let name = want.ok_or_else(|| {
-                    AgentError::AccountNotFound(format!(
-                        "no {} account specified and no default set in [default_account]",
-                        $module_key
-                    ))
-                })?;
-                self.accounts
-                    .iter()
-                    .find(|a| a.name() == name)
-                    .ok_or_else(|| {
-                        AgentError::AccountNotFound(format!("{} account '{name}'", $module_key))
-                    })
+                AccountProvider::resolve_account(
+                    self,
+                    override_name,
+                    self.default_account.as_deref(),
+                )
             }
         }
     };
@@ -407,7 +413,7 @@ impl_module_config!(
     calendar,
     CalendarAccount,
     calendar,
-    "cal"
+    "calendar"
 );
 impl_module_config!(NoteModuleConfig, note, NoteAccount, note, "note");
 impl_module_config!(TodoModuleConfig, todo, TodoAccount, todo, "todo");
