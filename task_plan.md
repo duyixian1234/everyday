@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.10.0 已发布；F012 Phase 1 完成（P6 TypedValue 保类型输出 / P2c Config 加载时校验 / P2a AccountProvider trait），Phase 2（P1+P2b）与 Phase 3（P3–P5）待启动。
+**当前状态：** v0.10.0 已发布；F012 Phase 1 完成（P6 TypedValue 保类型输出 / P2c Config 加载时校验 / P2a AccountProvider trait），Phase 2 完成（P1 CLI/business 分离 + P2b config 子集注入），Phase 3（P3–P5）待启动。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
@@ -64,7 +64,13 @@
 按 ADR [K001](./docs/adr/K001-memory-module.md)–[K004](./docs/adr/K004-memory-single-instance.md) 设计 + 实现。`src/modules/memory/{mod,store,actions,search}.rs`；append-only `(subject, predicate, object)` 三元组 + confidence/source 元数据 + soft delete；独立 `~/.config/everyday/memory.db`；v1 命令集 `add / get / relation / list / delete / graph / history`（7 个）；参与 `everyday search`（当前态 GLOB 适配器，K003）；graph 前向 BFS 深度 1..=5（K002）；无 account 列、无 `auth` 模块触及（K004）。**v0.10.0 已发布**。
 
 ### Phase 16: 架构深化 Phase 1 — Quick Wins（P2c / P2a / P6）[complete]
-按 ADR [F012](./docs/adr/F012-architecture-deepening-phase.md) 落地第一阶段三项低风险改进（未发版，待并入 v0.11.0-rc）：P2c `Config::validate()` 加载时语义校验；P2a `AccountProvider` trait 统一账户解析（替代 R007 宏，旧 `X_account()` 委托保留）；P6 `TypedValue` + `Output::TypedRecords` 保类型输出（mail list uid/unread、memory list/history）。Phase 2（P1 CLI/business 分离 + P2b config 子集）与 Phase 3（P3–P5）按 F012 时间线后续启动。
+按 ADR [F012](./docs/adr/F012-architecture-deepening-phase.md) 落地第一阶段三项低风险改进（未发版，待并入 v0.11.0-rc）：P2c `Config::validate()` 加载时语义校验；P2a `AccountProvider` trait 统一账户解析（替代 R007 宏，旧 `X_account()` 委托保留）；P6 `TypedValue` + `Output::TypedRecords` 保类型输出（mail list uid/unread、memory list/history）。Phase 3（P3–P5）按 F012 时间线后续启动。
+
+### Phase 17: 架构深化 Phase 2 — P1 CLI/business 分离 + P2b config 子集 [complete]
+按 ADR [F012](./docs/adr/F012-architecture-deepening-phase.md) 落地第二阶段（未发版，待并入 v0.11.0-rc）：
+- **P1**：`cli_action!`/`flag!` 宏压缩全 11 模块 ArgSpec（净 -321 行）；mail/cal/rss 建 service-layer trait（`MailBackend`/`CalBackend`/`RssBackend` + domain 类型 + `for_account` DI 工厂 + `dispatch()` 唯一 Output 触点 + Mock backend 直测）；note/todo/bookmark 沿用 R016 `*Backend`；timeline/search/auth/config/memory 已渲染分离 + 直测。
+- **P2b**：业务模块注入 config 子集（`MailModuleConfig` 等，`impl_module_config!` 宏），`ModuleRegistry::build` 经 `Config::X_module_config()` 切片；`for_account()` 弃 Config 参数，凭据走 `auth::get_credential_with_user()`；timeline/search/auth 保留 `Arc<Config>`（跨模块编排器）。
+- Phase 3（P3 lifecycle / P4 request context / P5 middleware）按 F012 时间线后续启动。
 
 ---
 
