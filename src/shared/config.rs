@@ -346,6 +346,94 @@ pub struct BookmarkConfig {
 /// backward compat.
 pub type BookmarkAccount = NotionLocalAccount;
 
+// ---- Module config subsets (P2b, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
+//
+// Each business module receives only its own config section at construction,
+// not the full `Config`. This removes hidden dependencies: a module can be
+// built (and tested) with a minimal subset instead of a full global config.
+// The subset owns account resolution (`override > default > error`), so
+// modules no longer call `Config::X_account()` themselves.
+//
+// `timeline` / `search` / `auth` keep `Arc<Config>`: they are cross-module
+// orchestrators that genuinely need every section.
+
+macro_rules! impl_module_config {
+    ($name:ident, $config:ident, $account:ty, $default_field:ident, $module_key:literal) => {
+        /// Injected config subset for the module (P2b).
+        #[derive(Debug, Clone, Default)]
+        pub struct $name {
+            /// Named account list (mirror of the module's `[[X.accounts]]`).
+            pub accounts: Vec<$account>,
+            /// Default account name (from `[default_account].X`).
+            pub default_account: Option<String>,
+        }
+
+        impl From<&Config> for $name {
+            fn from(c: &Config) -> Self {
+                Self {
+                    accounts: c.$config.accounts.clone(),
+                    default_account: c.default_account.$default_field.clone(),
+                }
+            }
+        }
+
+        impl $name {
+            /// Resolve the effective account: `--account` override > default > error.
+            ///
+            /// Same resolution algorithm as [`AccountProvider::resolve_account`],
+            /// applied to the subset (the module no longer needs the full `Config`).
+            pub fn resolve_account(&self, override_name: Option<&str>) -> Result<&$account> {
+                let want = override_name.or(self.default_account.as_deref());
+                let name = want.ok_or_else(|| {
+                    AgentError::AccountNotFound(format!(
+                        "no {} account specified and no default set in [default_account]",
+                        $module_key
+                    ))
+                })?;
+                self.accounts
+                    .iter()
+                    .find(|a| a.name() == name)
+                    .ok_or_else(|| {
+                        AgentError::AccountNotFound(format!("{} account '{name}'", $module_key))
+                    })
+            }
+        }
+    };
+}
+
+impl_module_config!(MailModuleConfig, mail, MailAccount, mail, "mail");
+impl_module_config!(
+    CalendarModuleConfig,
+    calendar,
+    CalendarAccount,
+    calendar,
+    "cal"
+);
+impl_module_config!(NoteModuleConfig, note, NoteAccount, note, "note");
+impl_module_config!(TodoModuleConfig, todo, TodoAccount, todo, "todo");
+impl_module_config!(
+    BookmarkModuleConfig,
+    bookmark,
+    BookmarkAccount,
+    bookmark,
+    "bookmark"
+);
+
+/// RSS module config subset (no accounts; just the feed list).
+#[derive(Debug, Clone, Default)]
+pub struct RssModuleConfig {
+    /// Subscription feed list.
+    pub feeds: Vec<RssFeed>,
+}
+
+impl From<&Config> for RssModuleConfig {
+    fn from(c: &Config) -> Self {
+        Self {
+            feeds: c.rss.feeds.clone(),
+        }
+    }
+}
+
 // ---- Load / Save ----
 
 impl Config {
@@ -440,6 +528,37 @@ impl Config {
             validate_notion_local_account("bookmark", a)?;
         }
         Ok(())
+    }
+
+    // ---- Config subsets (P2b) ----
+    //
+    // Business modules receive their own section at construction instead of the
+    // full `Config`. These extractors are how `ModuleRegistry::build` slices the
+    // config. See [F012](../../docs/adr/F012-architecture-deepening-phase.md).
+
+    /// Mail module subset.
+    pub fn mail_module_config(&self) -> MailModuleConfig {
+        MailModuleConfig::from(self)
+    }
+    /// Calendar module subset.
+    pub fn calendar_module_config(&self) -> CalendarModuleConfig {
+        CalendarModuleConfig::from(self)
+    }
+    /// RSS module subset.
+    pub fn rss_module_config(&self) -> RssModuleConfig {
+        RssModuleConfig::from(self)
+    }
+    /// Note module subset.
+    pub fn note_module_config(&self) -> NoteModuleConfig {
+        NoteModuleConfig::from(self)
+    }
+    /// Todo module subset.
+    pub fn todo_module_config(&self) -> TodoModuleConfig {
+        TodoModuleConfig::from(self)
+    }
+    /// Bookmark module subset.
+    pub fn bookmark_module_config(&self) -> BookmarkModuleConfig {
+        BookmarkModuleConfig::from(self)
     }
 
     // ---- Account lookup ----

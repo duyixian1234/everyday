@@ -11,13 +11,14 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{BookmarkAccount, Config};
+use crate::config::BookmarkAccount;
 use crate::error::Result;
 use crate::modules::auth;
 use crate::modules::bookmark::local::LocalBookmarkBackend;
 use crate::modules::bookmark::notion::NotionBookmarkBackend;
 use crate::modules::local::is_local_provider;
 use crate::notion_client::NotionClient;
+use crate::shared::keyring_user::KEYRING_USER;
 
 // ============ Domain types (R018) ============
 
@@ -74,11 +75,11 @@ pub trait BookmarkBackend: Send + Sync {
 /// stays provider-agnostic. The Notion backend's `init_db` writes `database_id` back to
 /// config via the static `Config::config_path()` — that side effect is an implementation
 /// detail hidden inside the provider, not a branch in the module.
-pub fn for_account(config: &Config, account: &BookmarkAccount) -> Result<Box<dyn BookmarkBackend>> {
+pub fn for_account(account: &BookmarkAccount) -> Result<Box<dyn BookmarkBackend>> {
     if is_local_provider(&account.provider) {
         Ok(Box::new(LocalBookmarkBackend::new(account.clone())))
     } else {
-        let token = auth::get_credential(config, "bookmark", &account.name)?;
+        let token = auth::get_credential_with_user("bookmark", &account.name, KEYRING_USER)?;
         let client = NotionClient::new(token)?;
         Ok(Box::new(NotionBookmarkBackend::new(
             client,

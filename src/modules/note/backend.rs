@@ -12,13 +12,14 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-use crate::config::{Config, NoteAccount};
+use crate::config::NoteAccount;
 use crate::error::Result;
 use crate::modules::auth;
 use crate::modules::local::is_local_provider;
 use crate::modules::note::local::LocalNoteBackend;
 use crate::modules::note::notion::NotionNoteBackend;
 use crate::notion_client::NotionClient;
+use crate::shared::keyring_user::KEYRING_USER;
 
 // ============ Domain types (R018) ============
 
@@ -107,11 +108,15 @@ pub trait NoteBackend: Send + Sync {
 /// branches on provider, never touches the keyring. The `NotionClient` is constructed
 /// exactly once here (not per action). Returns a `Box<dyn NoteBackend>` so the caller
 /// stays provider-agnostic.
-pub fn for_account(config: &Config, account: &NoteAccount) -> Result<Box<dyn NoteBackend>> {
+///
+/// Takes only the resolved `NoteAccount` (P2b, [F012](../../../docs/adr/F012-architecture-deepening-phase.md)):
+/// the module holds its config subset, not the full `Config`; Notion tokens are stored
+/// under the fixed `KEYRING_USER` keyring user.
+pub fn for_account(account: &NoteAccount) -> Result<Box<dyn NoteBackend>> {
     if is_local_provider(&account.provider) {
         Ok(Box::new(LocalNoteBackend::new(account.clone())))
     } else {
-        let token = auth::get_credential(config, "note", &account.name)?;
+        let token = auth::get_credential_with_user("note", &account.name, KEYRING_USER)?;
         let client = NotionClient::new(token)?;
         Ok(Box::new(NotionNoteBackend::new(client)))
     }

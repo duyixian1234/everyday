@@ -23,7 +23,7 @@ use std::collections::HashMap;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use crate::config::Config;
+use crate::config::BookmarkModuleConfig;
 use crate::error::{AgentError, Result};
 use crate::modules::bookmark::backend::{
     BookmarkAdded, BookmarkBackend, BookmarkInitDb, BookmarkItem, for_account,
@@ -41,11 +41,11 @@ fn mode_json() -> bool {
 // ============ module ============
 
 pub struct BookmarkModule {
-    config: std::sync::Arc<Config>,
+    config: BookmarkModuleConfig,
 }
 
 impl BookmarkModule {
-    pub fn new(config: std::sync::Arc<Config>) -> Self {
+    pub fn new(config: BookmarkModuleConfig) -> Self {
         Self { config }
     }
 }
@@ -94,11 +94,11 @@ impl Executor for BookmarkModule {
         let (flags, _positional) = parse_simple_args(args);
         let account = self
             .config
-            .bookmark_account(flags.get("account").map(|s| s.as_str()))?;
+            .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
         // DI seam: the module never names `NotionClient`, never branches on provider,
         // never touches the keyring — all of that lives in `for_account`.
-        let backend = for_account(&self.config, account)?;
+        let backend = for_account(account)?;
         dispatch(&*backend, action, &flags).await
     }
 }

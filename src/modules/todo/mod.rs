@@ -24,13 +24,11 @@ pub mod backend;
 pub mod local;
 pub mod notion;
 
-use std::collections::HashMap;
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 
-use crate::config::Config;
+use crate::config::TodoModuleConfig;
 use crate::error::{AgentError, Result};
 use crate::modules::todo::backend::{
     STATUS_DONE, STATUS_IN_PROGRESS, TodoAdded, TodoBackend, TodoDeleted, TodoInitDb, TodoItem,
@@ -48,11 +46,11 @@ fn mode_json() -> bool {
 // ============ module ============
 
 pub struct TodoModule {
-    config: Arc<Config>,
+    config: TodoModuleConfig,
 }
 
 impl TodoModule {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: TodoModuleConfig) -> Self {
         Self { config }
     }
 }
@@ -125,11 +123,11 @@ impl Executor for TodoModule {
         let (flags, positional) = parse_simple_args(args);
         let account = self
             .config
-            .todo_account(flags.get("account").map(|s| s.as_str()))?;
+            .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
         // DI seam: the module never names `NotionClient`, never branches on provider,
         // never touches the keyring — all of that lives in `for_account`.
-        let backend = for_account(&self.config, account)?;
+        let backend = for_account(account)?;
         dispatch(&*backend, action, &flags, &positional).await
     }
 }

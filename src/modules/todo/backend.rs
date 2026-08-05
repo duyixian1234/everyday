@@ -11,13 +11,14 @@
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-use crate::config::{Config, TodoAccount};
+use crate::config::TodoAccount;
 use crate::error::Result;
 use crate::modules::auth;
 use crate::modules::local::is_local_provider;
 use crate::modules::todo::local::LocalTodoBackend;
 use crate::modules::todo::notion::NotionTodoBackend;
 use crate::notion_client::NotionClient;
+use crate::shared::keyring_user::KEYRING_USER;
 
 // ============ Status constants (shared by both providers) ============
 
@@ -100,11 +101,11 @@ pub trait TodoBackend: Send + Sync {
 /// stays provider-agnostic. The Notion backend's `init_db` writes `database_id` back to
 /// config via the static `Config::config_path()` — that side effect is an implementation
 /// detail hidden inside the provider, not a branch in the module.
-pub fn for_account(config: &Config, account: &TodoAccount) -> Result<Box<dyn TodoBackend>> {
+pub fn for_account(account: &TodoAccount) -> Result<Box<dyn TodoBackend>> {
     if is_local_provider(&account.provider) {
         Ok(Box::new(LocalTodoBackend::new(account.clone())))
     } else {
-        let token = auth::get_credential(config, "todo", &account.name)?;
+        let token = auth::get_credential_with_user("todo", &account.name, KEYRING_USER)?;
         let client = NotionClient::new(token)?;
         Ok(Box::new(NotionTodoBackend::new(client, account.clone())))
     }

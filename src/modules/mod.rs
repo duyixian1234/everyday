@@ -172,36 +172,51 @@ impl ModuleRegistry {
 
         // Register each module. The module itself decides whether it needs
         // account config and whether missing config is tolerated.
+        //
+        // Business modules receive only their config **subset** (P2b,
+        // [F012](../../docs/adr/F012-architecture-deepening-phase.md)): mail/cal/rss/
+        // note/todo/bookmark depend on just their own section, removing hidden
+        // dependencies on the full `Config`. Cross-module orchestrators
+        // (timeline/search/auth) keep `Arc<Config>` — they genuinely need every
+        // section.
         modules.insert(
             "config",
             Box::new(crate::modules::config::ConfigModule::new()),
         );
         modules.insert(
             "mail",
-            Box::new(crate::modules::email::EmailModule::new(config.clone())),
+            Box::new(crate::modules::email::EmailModule::new(
+                config.mail_module_config(),
+            )),
         );
         modules.insert(
             "cal",
             Box::new(crate::modules::calendar::CalendarModule::new(
-                config.clone(),
+                config.calendar_module_config(),
             )),
         );
         modules.insert(
             "rss",
-            Box::new(crate::modules::rss::RssModule::new(config.clone())),
+            Box::new(crate::modules::rss::RssModule::new(
+                config.rss_module_config(),
+            )),
         );
         modules.insert(
             "note",
-            Box::new(crate::modules::note::NoteModule::new(config.clone())),
+            Box::new(crate::modules::note::NoteModule::new(
+                config.note_module_config(),
+            )),
         );
         modules.insert(
             "todo",
-            Box::new(crate::modules::todo::TodoModule::new(config.clone())),
+            Box::new(crate::modules::todo::TodoModule::new(
+                config.todo_module_config(),
+            )),
         );
         modules.insert(
             "bookmark",
             Box::new(crate::modules::bookmark::BookmarkModule::new(
-                config.clone(),
+                config.bookmark_module_config(),
             )),
         );
         modules.insert(

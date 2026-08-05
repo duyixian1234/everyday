@@ -12,7 +12,6 @@
 //!   overwrites the Authorization header).
 
 use std::collections::HashMap;
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -27,7 +26,7 @@ use libdav::names;
 use libdav::{CalDavClient, Depth, caldav_service_for_url};
 use tower_http::auth::AddAuthorization;
 
-use crate::config::{CalendarAccount, Config};
+use crate::config::{CalendarAccount, CalendarModuleConfig, Config};
 use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
@@ -44,11 +43,11 @@ type HttpsClient = AddAuthorization<HyperClient<HttpsConnector, String>>;
 type CalDav = CalDavClient<HttpsClient>;
 
 pub struct CalendarModule {
-    config: Arc<Config>,
+    config: CalendarModuleConfig,
 }
 
 impl CalendarModule {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: CalendarModuleConfig) -> Self {
         Self { config }
     }
 }
@@ -132,8 +131,12 @@ pub struct CalDavBackend {
 }
 
 /// Build the calendar backend for an account (credential read happens here, once).
-pub fn for_account(config: &Config, account: &CalendarAccount) -> Result<Box<dyn CalBackend>> {
-    let password = crate::modules::auth::get_credential(config, "cal", &account.name)?;
+///
+/// Takes only the resolved `CalendarAccount` (P2b: the module holds its config
+/// subset, not the full `Config`); the keyring user is the account's username.
+pub fn for_account(account: &CalendarAccount) -> Result<Box<dyn CalBackend>> {
+    let password =
+        crate::modules::auth::get_credential_with_user("cal", &account.name, &account.username)?;
     Ok(Box::new(CalDavBackend {
         account: account.clone(),
         password,
@@ -322,13 +325,13 @@ impl Executor for CalendarModule {
         let (flags, _) = parse_simple_args(args);
         let account = self
             .config
-            .calendar_account(flags.get("account").map(|s| s.as_str()))?;
+            .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
         // DI seam (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)):
         // credential lookup + backend construction happen here; `dispatch` only
         // parses CLI args and calls service methods. Tests inject a
         // `MockCalBackend` and drive `dispatch` directly — no CalDAV.
-        let backend = for_account(&self.config, account)?;
+        let backend = for_account(account)?;
         dispatch(backend.as_ref(), action, &flags).await
     }
 }

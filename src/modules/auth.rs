@@ -135,6 +135,25 @@ pub fn get_credential(config: &Config, module: &str, account: &str) -> Result<St
     })
 }
 
+/// Read a stored credential given an explicit keyring user (P2b,
+/// [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// Business modules that receive only their config **subset** (not the full
+/// `Config`) call this: they already know the keyring user from the resolved
+/// account (`username` for mail/cal, `KEYRING_USER` for Notion token modules).
+/// The keyring service name is a pure function of `(module, account)`.
+pub fn get_credential_with_user(module: &str, account: &str, user: &str) -> Result<String> {
+    let service = Config::keyring_service(module, account);
+    let entry = keyring::Entry::new(&service, user)
+        .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
+    entry.get_password().map_err(|e| {
+        AgentError::Auth(format!(
+            "no credential in keyring for {module} account '{account}': {e}. \
+             Run `everyday auth login --module {module} --account {account}` to store it."
+        ))
+    })
+}
+
 /// Delete a stored credential from the OS keyring.
 pub fn delete_credential(config: &Config, module: &str, account: &str) -> Result<()> {
     let strategy = resolve_strategy(config, module, account)?;

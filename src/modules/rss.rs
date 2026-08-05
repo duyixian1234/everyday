@@ -13,14 +13,13 @@
 //!   per-calendar failure degradation.
 
 use std::collections::HashMap;
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use futures::future::join_all;
 
-use crate::config::{Config, RssFeed};
+use crate::config::{Config, RssFeed, RssModuleConfig};
 use crate::error::{AgentError, Result};
 use crate::modules::rss_items;
 use crate::modules::{Executor, parse_simple_args};
@@ -116,11 +115,11 @@ impl EntryForCache {
 }
 
 pub struct RssModule {
-    config: Arc<Config>,
+    config: RssModuleConfig,
 }
 
 impl RssModule {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: RssModuleConfig) -> Self {
         Self { config }
     }
 }
@@ -207,11 +206,11 @@ pub trait RssBackend: Send + Sync {
 
 /// Real backend: config-file reads/writes for follow/list/unfollow; reqwest + feed-rs for digest/fetch.
 pub struct RealRssBackend {
-    config: Arc<Config>,
+    config: RssModuleConfig,
 }
 
 impl RealRssBackend {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: RssModuleConfig) -> Self {
         Self { config }
     }
 }
@@ -356,7 +355,7 @@ impl RssBackend for RealRssBackend {
     }
 
     fn list(&self) -> Result<Vec<RssFeed>> {
-        Ok(self.config.rss.feeds.clone())
+        Ok(self.config.feeds.clone())
     }
 
     async fn unfollow(&self, name: &str) -> Result<RssUnfollowReceipt> {
@@ -374,7 +373,7 @@ impl RssBackend for RealRssBackend {
     }
 
     async fn digest(&self, opts: &RssDigestOptions) -> Result<Vec<RssEntryRow>> {
-        let feeds = filter_feeds(&self.config.rss.feeds, opts)?;
+        let feeds = filter_feeds(&self.config.feeds, opts)?;
         if feeds.is_empty() {
             return Err(AgentError::InvalidArgument(
                 "no feeds to fetch (add one with `everyday rss follow --name N --url URL`)".into(),
@@ -401,8 +400,7 @@ impl RssBackend for RealRssBackend {
                             .map(|e| EntryForCache::from_entry(&r.name, e))
                             .collect();
                         // Find the matching RssFeed for url metadata.
-                        if let Some(feed) = self.config.rss.feeds.iter().find(|x| x.name == r.name)
-                        {
+                        if let Some(feed) = self.config.feeds.iter().find(|x| x.name == r.name) {
                             let _ = rss_items::upsert_items(pool, feed, &entries).await;
                         }
                     }
@@ -427,7 +425,6 @@ impl RssBackend for RealRssBackend {
     async fn fetch(&self, name: &str, limit: usize) -> Result<Vec<RssEntryRow>> {
         let feed = self
             .config
-            .rss
             .feeds
             .iter()
             .find(|f| f.name == name)

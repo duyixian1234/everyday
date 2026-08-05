@@ -31,7 +31,7 @@ use std::io::{IsTerminal, Read};
 use async_trait::async_trait;
 use serde_json::{Map, Value, json};
 
-use crate::config::NoteAccount;
+use crate::config::{NoteAccount, NoteModuleConfig};
 use crate::error::{AgentError, Result};
 use crate::modules::Executor;
 use crate::modules::note::backend::{
@@ -41,11 +41,11 @@ use crate::modules::note::backend::{
 use crate::output::Output;
 
 pub struct NoteModule {
-    config: std::sync::Arc<crate::config::Config>,
+    config: NoteModuleConfig,
 }
 
 impl NoteModule {
-    pub fn new(config: std::sync::Arc<crate::config::Config>) -> Self {
+    pub fn new(config: NoteModuleConfig) -> Self {
         Self { config }
     }
 }
@@ -114,11 +114,11 @@ impl Executor for NoteModule {
         let (flags, multi, positional) = parse_args(args);
         let account = self
             .config
-            .note_account(flags.get("account").map(|s| s.as_str()))?;
+            .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
         // DI seam: the module never names `NotionClient`, never branches on provider,
         // never touches the keyring — all of that lives in `for_account`.
-        let backend = for_account(&self.config, account)?;
+        let backend = for_account(account)?;
         dispatch(
             backend.as_ref(),
             account,

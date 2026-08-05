@@ -18,7 +18,7 @@ use tokio_rustls::TlsConnector;
 use tokio_rustls::client::TlsStream;
 use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
-use crate::config::{Config, MailAccount};
+use crate::config::{Config, MailAccount, MailModuleConfig};
 use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::modules::{email_cache, email_pool};
@@ -27,11 +27,11 @@ use crate::search::{Hit, SearchQuery, Searchable};
 use sqlx::sqlite::SqlitePool;
 
 pub struct EmailModule {
-    config: Arc<Config>,
+    config: MailModuleConfig,
 }
 
 impl EmailModule {
-    pub fn new(config: Arc<Config>) -> Self {
+    pub fn new(config: MailModuleConfig) -> Self {
         Self { config }
     }
 }
@@ -108,13 +108,13 @@ impl Executor for EmailModule {
         let (flags, positional) = parse_simple_args(args);
         let account = self
             .config
-            .mail_account(flags.get("account").map(|s| s.as_str()))?;
+            .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
         // DI seam (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)):
         // credential lookup + backend construction happen here; `dispatch` only
         // parses CLI args and calls service methods. Tests inject a
         // `MockMailBackend` and drive `dispatch` directly — no IMAP/SMTP.
-        let backend = for_account(&self.config, account)?;
+        let backend = for_account(account)?;
         dispatch(backend.as_ref(), action, &flags, &positional).await
     }
 }
@@ -197,8 +197,12 @@ pub struct ImapMailBackend {
 }
 
 /// Build the mail backend for an account (credential read happens here, once).
-pub fn for_account(config: &Config, account: &MailAccount) -> Result<Box<dyn MailBackend>> {
-    let password = crate::modules::auth::get_credential(config, "mail", &account.name)?;
+///
+/// Takes only the resolved `MailAccount` (P2b: the module holds its config
+/// subset, not the full `Config`); the keyring user is the account's username.
+pub fn for_account(account: &MailAccount) -> Result<Box<dyn MailBackend>> {
+    let password =
+        crate::modules::auth::get_credential_with_user("mail", &account.name, &account.username)?;
     Ok(Box::new(ImapMailBackend {
         account: account.clone(),
         password,
