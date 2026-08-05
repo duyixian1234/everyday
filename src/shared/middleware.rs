@@ -19,10 +19,6 @@ use crate::output::Output;
 /// Hooks run in order for `before`; `after` runs (in reverse order) after a
 /// dispatch returns, and `on_error` runs only when the dispatch failed.
 pub trait Middleware: Send + Sync {
-    /// Middleware name (used in tests / diagnostics).
-    #[allow(dead_code)] // surfaced via `run_with_middleware` diagnostics in v0.12 (P5 metrics)
-    fn name(&self) -> &'static str;
-
     /// Called once before the module action executes.
     fn before(&self, _module: &str, _action: &str) {}
 
@@ -34,63 +30,79 @@ pub trait Middleware: Send + Sync {
 }
 
 /// Default middleware: logs every dispatch to stderr (never stdout, which is
-/// reserved for command output; JSON mode gets a structured warning line).
+/// reserved for command output; JSON mode gets a structured `_log` line).
 ///
 /// Enabled by default in `main.rs`; disable by removing it from the stack.
 pub struct LoggingMiddleware;
 
 impl Middleware for LoggingMiddleware {
-    fn name(&self) -> &'static str {
-        "logging"
-    }
-
     fn before(&self, module: &str, action: &str) {
-        let rid = crate::shared::request_context::request_id().unwrap_or_else(|| "-".to_string());
-        if crate::util::json_mode::is_json() {
-            eprintln!(
-                "{{\"_log\":\"start\",\"request_id\":\"{rid}\",\"module\":\"{module}\",\"action\":\"{action}\"}}"
-            );
-        } else {
-            eprintln!("[{rid}] {module} {action} start");
-        }
+        let rid = request_id_or_dash();
+        let ev = serde_json::json!({
+            "_log": "start",
+            "request_id": rid,
+            "module": module,
+            "action": action,
+        });
+        log_line(&ev, &format!("[{rid}] {module} {action} start"));
     }
 
     fn after(&self, module: &str, action: &str, result: &Result<Output>, elapsed: Duration) {
-        let rid = crate::shared::request_context::request_id().unwrap_or_else(|| "-".to_string());
         let ms = elapsed.as_millis();
+        let rid = request_id_or_dash();
         match result {
             Ok(_) => {
-                if crate::util::json_mode::is_json() {
-                    eprintln!(
-                        "{{\"_log\":\"ok\",\"request_id\":\"{rid}\",\"module\":\"{module}\",\"action\":\"{action}\",\"elapsed_ms\":{ms}}}"
-                    );
-                } else {
-                    eprintln!("[{rid}] {module} {action} ok in {ms}ms");
-                }
+                let ev = serde_json::json!({
+                    "_log": "ok",
+                    "request_id": rid,
+                    "module": module,
+                    "action": action,
+                    "elapsed_ms": ms,
+                });
+                log_line(&ev, &format!("[{rid}] {module} {action} ok in {ms}ms"));
             }
             Err(_) => {
-                if crate::util::json_mode::is_json() {
-                    eprintln!(
-                        "{{\"_log\":\"error\",\"request_id\":\"{rid}\",\"module\":\"{module}\",\"action\":\"{action}\",\"elapsed_ms\":{ms}}}"
-                    );
-                } else {
-                    eprintln!("[{rid}] {module} {action} error in {ms}ms");
-                }
+                let ev = serde_json::json!({
+                    "_log": "error",
+                    "request_id": rid,
+                    "module": module,
+                    "action": action,
+                    "elapsed_ms": ms,
+                });
+                log_line(&ev, &format!("[{rid}] {module} {action} error in {ms}ms"));
             }
         }
     }
 
     fn on_error(&self, module: &str, action: &str, error: &AgentError) {
-        let rid = crate::shared::request_context::request_id().unwrap_or_else(|| "-".to_string());
-        if crate::util::json_mode::is_json() {
-            eprintln!(
-                "{{\"_log\":\"error_detail\",\"request_id\":\"{rid}\",\"module\":\"{module}\",\"action\":\"{action}\",\"message\":\"{}\"}}",
-                error.message().replace('"', "'")
-            );
-        } else {
-            eprintln!("[{rid}] {module} {action} error: {}", error.message());
-        }
+        let rid = request_id_or_dash();
+        let ev = serde_json::json!({
+            "_log": "error_detail",
+            "request_id": rid,
+            "module": module,
+            "action": action,
+            "message": error.message(),
+        });
+        log_line(
+            &ev,
+            &format!("[{rid}] {module} {action} error: {}", error.message()),
+        );
     }
+}
+
+/// Emit a middleware log line: structured JSON in `--json` mode, plain text
+/// otherwise. `text` is the human-readable form (used only in text mode).
+fn log_line(event: &serde_json::Value, text: &str) {
+    if crate::util::json_mode::is_json() {
+        eprintln!("{event}");
+    } else {
+        eprintln!("{text}");
+    }
+}
+
+/// Current request id, or `-` when no context is installed.
+fn request_id_or_dash() -> String {
+    crate::shared::request_context::request_id().unwrap_or_else(|| "-".to_string())
 }
 
 /// Convenience: run a dispatch through a middleware chain.
@@ -156,9 +168,6 @@ mod tests {
     }
 
     impl Middleware for RecordingMiddleware {
-        fn name(&self) -> &'static str {
-            "recording"
-        }
         fn before(&self, module: &str, action: &str) {
             self.log
                 .lock()

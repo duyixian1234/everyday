@@ -96,11 +96,12 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
     for (name, e) in registry.initialize_all() {
         match mode {
             RenderMode::Json => {
-                eprintln!(
-                    "{{\"_warning\":\"initialize_failed\",\"module\":\"{}\",\"message\":\"{}\"}}",
-                    name,
-                    e.message().replace('"', "'")
-                );
+                let warn = serde_json::json!({
+                    "_warning": "initialize_failed",
+                    "module": name,
+                    "message": e.message(),
+                });
+                eprintln!("{warn}");
             }
             RenderMode::Text => {
                 eprintln!("warning: {name} initialize failed: {}", e.message());
@@ -113,6 +114,7 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
     if module_name == "health" {
         let out = run_health(&registry, mode).await;
         registry.shutdown_all();
+        crate::shared::request_context::clear_request_context();
         return out;
     }
 
@@ -120,6 +122,7 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         Ok(m) => m,
         Err(e) => {
             registry.shutdown_all();
+            crate::shared::request_context::clear_request_context();
             return (1, render_error(&e, mode));
         }
     };
@@ -198,9 +201,9 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
 }
 
 /// `everyday health` (P3, [F012](../docs/adr/F012-architecture-deepening-phase.md)):
-/// run every module's health_check and render one row per module. A degraded
-/// module renders a status row but does not fail the command; only an internal
-/// dispatch error does.
+/// run every module's health_check and render one row per module. All rows
+/// render regardless of state; the exit code is 0 when every module is healthy
+/// and 1 when any module is degraded (so scripts can gate on it).
 async fn run_health(registry: &ModuleRegistry, mode: RenderMode) -> (i32, String) {
     let rows = registry.health_check_all().await;
     let any_unhealthy = rows.iter().any(|(_, s)| !s.healthy);

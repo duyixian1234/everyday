@@ -182,6 +182,15 @@ impl Executor for RssModule {
         let backend = RealRssBackend::new(self.config.clone());
         dispatch(&backend, action, &flags).await
     }
+
+    /// P3 health: the feeds config is loadable; no network probe.
+    async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
+        use crate::modules::HealthStatus;
+        match crate::modules::rss::load_config_value() {
+            Ok(_) => Ok(HealthStatus::healthy()),
+            Err(e) => Ok(HealthStatus::degraded(format!("config: {}", e.message()))),
+        }
+    }
 }
 
 /// RSS service trait: domain methods, no `Output` in sight (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).

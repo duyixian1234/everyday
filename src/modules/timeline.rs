@@ -238,17 +238,7 @@ impl Executor for TimelineModule {
 
     /// P3 health: timeline.db must open (the event log is DB-backed).
     async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
-        use crate::modules::HealthStatus;
-        match store::open().await {
-            Ok(pool) => {
-                pool.close().await;
-                Ok(HealthStatus::healthy())
-            }
-            Err(e) => Ok(HealthStatus::degraded(format!(
-                "timeline db: {}",
-                e.message()
-            ))),
-        }
+        crate::modules::db_health("timeline", store::open).await
     }
 }
 

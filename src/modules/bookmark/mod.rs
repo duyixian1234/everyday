@@ -101,6 +101,31 @@ impl Executor for BookmarkModule {
         let backend = for_account(account)?;
         dispatch(&*backend, action, &flags).await
     }
+
+    /// P3 health: for a notion account, the keyring token must exist; local
+    /// accounts need no credential. No Notion network probe (health = local).
+    async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
+        use crate::modules::HealthStatus;
+        match self.config.resolve_account(None) {
+            Ok(account) => {
+                let token_ok = crate::modules::auth::get_credential_with_user(
+                    "bookmark",
+                    &account.name,
+                    crate::shared::keyring_user::KEYRING_USER,
+                )
+                .is_ok();
+                if crate::modules::local::is_local_provider(&account.provider) || token_ok {
+                    Ok(HealthStatus::healthy())
+                } else {
+                    Ok(HealthStatus::degraded(format!(
+                        "account '{}': no notion token in keyring (run `everyday auth login --module bookmark --account {}`)",
+                        account.name, account.name
+                    )))
+                }
+            }
+            Err(_) => Ok(HealthStatus::healthy()), // no account → nothing to check
+        }
+    }
 }
 
 /// Provider-agnostic action dispatch. Shared by `execute` (real backend) and the

@@ -99,6 +99,28 @@ impl HealthStatus {
     }
 }
 
+/// Shared helper for DB-backed modules' `health_check`: open the pool, then
+/// report `healthy` (or `degraded("<label> db: <error>")` on failure).
+///
+/// Used by memory / timeline (and any future DB-backed module); the probe is
+/// local-only by design ([F012 P3](../../docs/adr/F012-architecture-deepening-phase.md)).
+pub(crate) async fn db_health<F, Fut>(label: &str, open: F) -> Result<HealthStatus>
+where
+    F: FnOnce() -> Fut,
+    Fut: std::future::Future<Output = Result<sqlx::SqlitePool>>,
+{
+    match open().await {
+        Ok(pool) => {
+            pool.close().await;
+            Ok(HealthStatus::healthy())
+        }
+        Err(e) => Ok(HealthStatus::degraded(format!(
+            "{label} db: {}",
+            e.message()
+        ))),
+    }
+}
+
 /// clap subcommanding: each module declares its argument structure as data,
 /// and `cli.rs` converts it into a `clap::Command` tree. Single source of
 /// truth, avoiding duplicated parsing scattered inside `execute`. See
@@ -404,5 +426,86 @@ mod tests {
         let m: Box<dyn Executor> = Box::new(DummyModule);
         let out = m.execute("anything", &[]).await.unwrap();
         assert_eq!(out.render(crate::output::RenderMode::Text), "ok");
+    }
+
+    // ---- P3: health_check_all ordering + degraded propagation ----
+
+    struct HealthModule {
+        status: HealthStatus,
+    }
+    #[async_trait]
+    impl Executor for HealthModule {
+        fn description(&self) -> &'static str {
+            "health-test"
+        }
+        fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
+            crate::modules::ModuleArgSpec {
+                name: "health-test",
+                description: "health-test",
+                actions: &[],
+            }
+        }
+        async fn execute(&self, _a: &str, _args: &[String]) -> Result<Output> {
+            Ok(Output::text("ok"))
+        }
+        async fn health_check(&self) -> Result<HealthStatus> {
+            Ok(self.status.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn health_check_all_orders_config_first_memory_last() {
+        let mut modules: HashMap<&'static str, Box<dyn Executor>> = HashMap::new();
+        modules.insert(
+            "zebra",
+            Box::new(HealthModule {
+                status: HealthStatus::healthy(),
+            }),
+        );
+        modules.insert(
+            "config",
+            Box::new(HealthModule {
+                status: HealthStatus::healthy(),
+            }),
+        );
+        modules.insert(
+            "memory",
+            Box::new(HealthModule {
+                status: HealthStatus::healthy(),
+            }),
+        );
+        modules.insert(
+            "alpha",
+            Box::new(HealthModule {
+                status: HealthStatus::healthy(),
+            }),
+        );
+        let registry = ModuleRegistry { modules };
+        let rows = registry.health_check_all().await;
+        assert_eq!(rows[0].0, "config"); // config first
+        assert_eq!(rows.last().unwrap().0, "memory"); // memory last
+        assert!(rows.iter().all(|(_, s)| s.healthy));
+    }
+
+    #[tokio::test]
+    async fn health_check_all_propagates_degraded() {
+        let mut modules: HashMap<&'static str, Box<dyn Executor>> = HashMap::new();
+        modules.insert(
+            "broken",
+            Box::new(HealthModule {
+                status: HealthStatus::degraded("db: closed"),
+            }),
+        );
+        modules.insert(
+            "fine",
+            Box::new(HealthModule {
+                status: HealthStatus::healthy(),
+            }),
+        );
+        let registry = ModuleRegistry { modules };
+        let rows = registry.health_check_all().await;
+        let broken = rows.iter().find(|(n, _)| *n == "broken").unwrap();
+        assert!(!broken.1.healthy);
+        assert_eq!(broken.1.detail, "db: closed");
     }
 }

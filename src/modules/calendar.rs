@@ -334,6 +334,31 @@ impl Executor for CalendarModule {
         let backend = for_account(account)?;
         dispatch(backend.as_ref(), action, &flags).await
     }
+
+    /// P3 health: default account's keyring credential present (no CalDAV
+    /// network probe — `everyday health` must stay local & fast).
+    async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
+        use crate::modules::HealthStatus;
+        match self.config.resolve_account(None) {
+            Ok(account) => {
+                if crate::modules::auth::get_credential_with_user(
+                    "cal",
+                    &account.name,
+                    &account.username,
+                )
+                .is_ok()
+                {
+                    Ok(HealthStatus::healthy())
+                } else {
+                    Ok(HealthStatus::degraded(format!(
+                        "account '{}': no keyring credential (run `everyday auth login --module cal --account {}`)",
+                        account.name, account.name
+                    )))
+                }
+            }
+            Err(_) => Ok(HealthStatus::healthy()), // no account configured → nothing to check
+        }
+    }
 }
 
 // ============ CalDAV client construction ============
