@@ -5,7 +5,7 @@
 **启动时间：** 2026-07-08
 **当前状态：** v0.10.0 已发布（Phase 15：memory 模块落地，append-only 三元组 + 当前态视图 + graph + Searchable）。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
-（子任务清单、完成小结、中途修复明细）——见 [governance.md](./governance.md) §4.1。
+（子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
 
 ---

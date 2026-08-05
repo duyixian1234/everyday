@@ -42,54 +42,45 @@ full build trace.
 
 ## `just check-links`
 
-This recipe validates every markdown link in the repo resolves to an existing
-file or anchor. It is **the gate that catches ADR / `.rules` / cross-doc link
+This recipe validates every local Markdown link in the repository resolves to
+an existing file. It is **the gate that catches ADR / `.rules` / cross-doc link
 rot** before it reaches CI.
 
 ### What it checks
 
-For every `.md` file in the repo (excluding `target/`, `.git/`, `.workbuddy/`):
+For every `.md` file in the repo (excluding `target/`, `.git/`, `.workbuddy/`,
+and `node_modules/`) and every Rust source file under `src/`:
 
-1. Every `[label](path)` link (both inline and reference-style) where `path` is
-   relative — verify the file exists at the resolved path.
-2. Every `<id>.md` style anchor in a `README.md` index — verify the target
-   file exists.
-3. Every cross-doc index entry under an "ADR index" or "Index" section — sample
-   a few entries against the directory layout.
-4. Inline anchors (`#heading-slug`) are best-effort: only flagged when the
-   heading text is unambiguously missing (regex match).
+1. Every inline `[label](path)` link where `path` is relative — verify the file
+   exists at the resolved path.
+2. Rust links are read only from `///` and `//!` doc comments.
+3. Fenced Markdown blocks and inline code spans are ignored.
+4. ADR index targets are cross-checked against `docs/adr/`.
 
-It does **not** read every document line-by-line. It uses `grep` + `sed` to
-extract link patterns, then `test -e` for each.
+The checker uses only the Python standard library, and scans source files in
+multiple processes. It does not validate fragment/heading anchors.
 
 ### Source
 
-The recipe lives in [Justfile](../Justfile). It dispatches to one of two
-scripts:
+The recipe lives in [Justfile](../Justfile) and dispatches to:
 
-- [scripts/check-doc-links.sh](../scripts/check-doc-links.sh) — bash (Unix /
-  Git-Bash on Windows).
-- [scripts/check-doc-links.ps1](../scripts/check-doc-links.ps1) — PowerShell
-  (Windows native).
+- [scripts/check_doc_links.py](../scripts/check_doc_links.py) — a standalone
+   Python script run by `uv` on every supported platform.
 
-Both produce identical output. Either may be invoked directly:
+It may be invoked directly; use `--jobs` to control the process count, `--root`
+to select a repository, and repeat `--exclude` for extra directory names:
 
-```sh
-bash scripts/check-doc-links.sh
-```
-
-```powershell
-pwsh -File scripts/check-doc-links.ps1
+```bash
+uv run scripts/check_doc_links.py --jobs 4
 ```
 
 ### Failure modes
 
 | Output | Meaning |
 | --- | --- |
-| `[OK] No broken links.` | Pass |
-| `[FAIL] <file>:<line> broken link -> '<path>'` | Path does not resolve |
-| `[FAIL] ADR id '<id>' not in docs/adr/` | ADR referenced but no file with that id exists |
-| `[FAIL] .rules/ file '<name>' missing` | A file promised by index is missing |
+| `[OK] no broken links among … files.` | Pass |
+| `[FAIL] <file>: broken link -> <path> (resolved: <path>)` | Path does not resolve |
+| `[FAIL] --jobs must be at least 1` | Invalid process-count argument |
 | Exit code 0 on pass, 1 on any FAIL |
 
 ## Adding a new recipe

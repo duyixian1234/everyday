@@ -91,9 +91,8 @@ Examples that belong in an ADR: "calendar uses window-refresh, not append",
 5. Replace the prose in [progress.md](../progress.md) /
    [task_plan.md](../task_plan.md) with `[id](docs/adr/<id>-...).md` links. If both
    files mention the same decision, leave only the canonical reference in one and
-   point to it from the other. Per [governance.md](../governance.md) §4, neither
-   file may keep sub-task lists, post-mortem paragraphs, or other execution traces
-   — only phase summaries and ADR links.
+   point to it from the other. Neither file may keep sub-task lists, post-mortem
+   paragraphs, or other execution traces — only phase summaries and ADR links.
 6. Re-run `just check-links` to confirm.
 
 **Caveat — release-time only:** if the task is itself the **release commit**,

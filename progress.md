@@ -3,13 +3,12 @@
 > 当前状态 + **ADR 时间序索引** + 发版流水。决策性叙述见
 > [docs/adr/](./docs/adr/README.md)；按 ADR 编号前缀查找见
 > `docs/adr/README.md` 的索引节。
-> 本文件的维护规则见 [governance.md](./governance.md) §4.2 与
-> [`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Finishing a task"。
+> 本文件的维护规则见 [`.rules/01-workflow.md`](./.rules/01-workflow.md)
+> §"Finishing a task"。
 
 ## 当前状态
 
-每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件（见
-[governance.md](./governance.md) §4）。
+每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
 - **v0.10.0 已发布** — Memory 模块落地：append-only `(subject, predicate, object)` 三元组 + 当前态视图 + 前向 graph + Searchable（[K001–K004](./docs/adr/K001-memory-module.md)）。
 - **v0.9.0 已发布** — 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存（[S007](./docs/adr/S007-mail-search-local-cache.md)）。
@@ -76,5 +75,5 @@
 | **v0.2.0** | `v0.2.0` | todo Notion + 共享 notion-client | [T001](./docs/adr/T001-notion-todo-module.md), [F004](./docs/adr/F004-shared-notion-client.md) |
 | **v0.1.0** | `v0.1.0` | 初始发布：mail / cal / rss / note + CI | [F001](./docs/adr/F001-cli-shape.md), [F002](./docs/adr/F002-multi-account-keyring.md), [M001](./docs/adr/M001-imap-stack.md), [C001](./docs/adr/C001-caldav-stack.md) |
 
-发版流程步骤见 [governance.md](./governance.md) §17 与
-[`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Release (runbook summary)"。
+发版流程步骤见 [`.rules/01-workflow.md`](./.rules/01-workflow.md)
+§"Release (runbook summary)"。

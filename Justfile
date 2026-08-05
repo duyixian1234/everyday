@@ -30,10 +30,10 @@ test:
 build:
     cargo build -q
 
-# Validate cross-document links (agents.md / .rules/ / docs/adr/)
-# Requires bash + grep/awk; on Windows use Git Bash or WSL.
+# Validate cross-document links (agents.md / .rules/ / docs/adr/).
+# Requires uv and uses one process per CPU by default.
 check-links:
-    bash scripts/check-doc-links.sh
+    uv run scripts/check_doc_links.py
 
 # Full CI pipeline: check → check-links → test → build
 ci: check check-links test build

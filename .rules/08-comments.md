@@ -89,7 +89,7 @@ on the source file's depth:
 | `src/modules/<file>.rs` (2 levels) | `[id](../../docs/adr/<id>-...md)` |
 | `src/modules/timeline/<file>.rs` (3 levels) | `[id](../../../docs/adr/<id>-...md)` |
 
-`scripts/check-doc-links.sh` validates every link in `.md` and `.rs` files. A
+`scripts/check_doc_links.py` validates every link in `.md` and `.rs` files. A
 wrong depth produces a broken link that fails `just check-links` — never guess.
 
 ## How to add a new ADR link
@@ -127,8 +127,8 @@ cargo fmt --check
 just ci              # check + check-links + test + build
 ```
 
-`just check-links` may hang on Windows in the safe-delete cleanup step (path
-mangling); if it does, fall back to steps 1 and 2 above.
+Use `uv run scripts/check_doc_links.py --jobs 1` to troubleshoot a local
+single-process failure; the default `just check-links` runs in parallel.
 
 ## Commit discipline
 
