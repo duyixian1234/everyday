@@ -12,35 +12,97 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{AgentError, Result};
 
-/// Macro: expands the 5 `X_account()` template methods
-/// (mail/calendar/note/todo/bookmark).
+/// Single source of truth for account resolution (P2a, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
 ///
-/// Each method does three things:
-/// 1. pick `override_name` > default > error
-/// 2. find by name within the module's accounts
-/// 3. not found → AccountNotFound
+/// Every account-bearing module config (`MailConfig`, `CalendarConfig`,
+/// `NoteConfig`, `TodoConfig`, `BookmarkConfig`) implements this. Resolution
+/// order is always: `--account` override > `[default_account]` > error.
 ///
-/// The 5 methods used to be ~75 lines of copy-paste; the macro
-/// collapses that to 5 call sites.
-/// See [R007](../../docs/adr/R007-config-account-macro.md).
-macro_rules! impl_account_lookup {
-    ($name:ident, $module:literal, $field:ident, $account:ty) => {
-        #[doc = concat!("解析 ", $module, " 账户：优先 `override_name`，其次默认，最后报错。")]
-        pub fn $name(&self, override_name: Option<&str>) -> Result<&$account> {
-            let want = override_name.or(self.default_account.$field.as_deref());
-            let name = want.ok_or_else(|| {
-                AgentError::AccountNotFound(format!(
-                    "no {} account specified and no default set in [default_account]",
-                    $module
-                ))
-            })?;
-            self.$field
-                .accounts
-                .iter()
-                .find(|a| a.name == name)
-                .ok_or_else(|| AgentError::AccountNotFound(format!("{} account '{name}'", $module)))
-        }
-    };
+/// The `default_name` is passed in by the caller because the `[default_account]`
+/// section lives on the top-level `Config`, not on the per-module sections.
+/// The default implementation in [`AccountProvider::resolve_account`] is the
+/// one shared resolution algorithm — previously each module duplicated it via
+/// the `impl_account_lookup!` macro ([R007](../../docs/adr/R007-config-account-macro.md)).
+pub trait AccountProvider {
+    /// The module's account type.
+    type Account: NamedAccount;
+
+    /// Module key used in error messages (e.g. `"mail"`).
+    fn module_name(&self) -> &'static str;
+
+    /// The module's account list.
+    fn account_list(&self) -> &[Self::Account];
+
+    /// Resolve `override_name` > `default_name` > error, returning the account.
+    fn resolve_account<'a>(
+        &'a self,
+        override_name: Option<&str>,
+        default_name: Option<&'a str>,
+    ) -> Result<&'a Self::Account> {
+        let want = override_name.or(default_name);
+        let name = want.ok_or_else(|| {
+            AgentError::AccountNotFound(format!(
+                "no {} account specified and no default set in [default_account]",
+                self.module_name()
+            ))
+        })?;
+        self.account_list()
+            .iter()
+            .find(|a| a.name() == name)
+            .ok_or_else(|| {
+                AgentError::AccountNotFound(format!("{} account '{name}'", self.module_name()))
+            })
+    }
+}
+
+impl AccountProvider for MailConfig {
+    type Account = MailAccount;
+    fn module_name(&self) -> &'static str {
+        "mail"
+    }
+    fn account_list(&self) -> &[MailAccount] {
+        &self.accounts
+    }
+}
+
+impl AccountProvider for CalendarConfig {
+    type Account = CalendarAccount;
+    fn module_name(&self) -> &'static str {
+        "calendar"
+    }
+    fn account_list(&self) -> &[CalendarAccount] {
+        &self.accounts
+    }
+}
+
+impl AccountProvider for NoteConfig {
+    type Account = NoteAccount;
+    fn module_name(&self) -> &'static str {
+        "note"
+    }
+    fn account_list(&self) -> &[NoteAccount] {
+        &self.accounts
+    }
+}
+
+impl AccountProvider for TodoConfig {
+    type Account = TodoAccount;
+    fn module_name(&self) -> &'static str {
+        "todo"
+    }
+    fn account_list(&self) -> &[TodoAccount] {
+        &self.accounts
+    }
+}
+
+impl AccountProvider for BookmarkConfig {
+    type Account = BookmarkAccount;
+    fn module_name(&self) -> &'static str {
+        "bookmark"
+    }
+    fn account_list(&self) -> &[BookmarkAccount] {
+        &self.accounts
+    }
 }
 
 /// Top-level configuration.
@@ -381,16 +443,61 @@ impl Config {
     }
 
     // ---- Account lookup ----
+    //
+    // Backward-compat accessors. All five delegate to the unified
+    // `AccountProvider` implementation (single resolution algorithm).
+    // See [F012](../../docs/adr/F012-architecture-deepening-phase.md) P2a.
 
-    // The five `X_account()` methods used to copy-paste this ~15-line
-    // template. Factored into a macro: expands at compile time,
-    // zero runtime cost.
-    // See [R007](../../docs/adr/R007-config-account-macro.md).
-    impl_account_lookup!(mail_account, "mail", mail, MailAccount);
-    impl_account_lookup!(calendar_account, "calendar", calendar, CalendarAccount);
-    impl_account_lookup!(note_account, "note", note, NoteAccount);
-    impl_account_lookup!(todo_account, "todo", todo, TodoAccount);
-    impl_account_lookup!(bookmark_account, "bookmark", bookmark, BookmarkAccount);
+    /// Resolve the mail account: `override_name` > default > error.
+    pub fn mail_account(&self, override_name: Option<&str>) -> Result<&MailAccount> {
+        self.mail
+            .resolve_account(override_name, self.default_account.mail.as_deref())
+    }
+
+    /// Resolve the calendar account: `override_name` > default > error.
+    pub fn calendar_account(&self, override_name: Option<&str>) -> Result<&CalendarAccount> {
+        self.calendar
+            .resolve_account(override_name, self.default_account.calendar.as_deref())
+    }
+
+    /// Resolve the note account: `override_name` > default > error.
+    pub fn note_account(&self, override_name: Option<&str>) -> Result<&NoteAccount> {
+        self.note
+            .resolve_account(override_name, self.default_account.note.as_deref())
+    }
+
+    /// Resolve the todo account: `override_name` > default > error.
+    pub fn todo_account(&self, override_name: Option<&str>) -> Result<&TodoAccount> {
+        self.todo
+            .resolve_account(override_name, self.default_account.todo.as_deref())
+    }
+
+    /// Resolve the bookmark account: `override_name` > default > error.
+    pub fn bookmark_account(&self, override_name: Option<&str>) -> Result<&BookmarkAccount> {
+        self.bookmark
+            .resolve_account(override_name, self.default_account.bookmark.as_deref())
+    }
+
+    /// Resolve the effective account **name** for a module by key
+    /// (`mail` / `cal` / `note` / `todo` / `bookmark`): `override_name` >
+    /// default > error. String-level entry point for code that only needs the
+    /// name (e.g. timeline / ops-log accounting).
+    pub fn resolve_account_name(
+        &self,
+        module: &str,
+        override_name: Option<&str>,
+    ) -> Result<String> {
+        match module {
+            "mail" => Ok(self.mail_account(override_name)?.name.clone()),
+            "calendar" | "cal" => Ok(self.calendar_account(override_name)?.name.clone()),
+            "note" => Ok(self.note_account(override_name)?.name.clone()),
+            "todo" => Ok(self.todo_account(override_name)?.name.clone()),
+            "bookmark" => Ok(self.bookmark_account(override_name)?.name.clone()),
+            other => Err(AgentError::InvalidArgument(format!(
+                "unknown account module '{other}'"
+            ))),
+        }
+    }
 
     /// keyring service-name convention: `everyday/<module>/<account>`.
     /// See [F002](../../docs/adr/F002-multi-account-keyring.md).
@@ -789,6 +896,116 @@ mail = "ghost"
         let err = Config::load_from(&tmp).unwrap_err();
         assert_eq!(err.type_name(), "ConfigError");
         let _ = std::fs::remove_file(&tmp);
+    }
+
+    // ---- P2a: AccountProvider trait (F012) ----
+
+    #[test]
+    fn account_provider_resolves_default() {
+        let cfg: Config = toml::from_str(SAMPLE).unwrap();
+        let acc = cfg
+            .mail
+            .resolve_account(None, cfg.default_account.mail.as_deref())
+            .unwrap();
+        assert_eq!(acc.name, "work");
+    }
+
+    #[test]
+    fn account_provider_resolves_override_over_default() {
+        let cfg: Config = toml::from_str(SAMPLE).unwrap();
+        let acc = cfg
+            .mail
+            .resolve_account(Some("personal"), cfg.default_account.mail.as_deref())
+            .unwrap();
+        assert_eq!(acc.name, "personal");
+    }
+
+    #[test]
+    fn account_provider_errors_when_missing() {
+        let cfg: Config = toml::from_str(SAMPLE).unwrap();
+        let err = cfg
+            .mail
+            .resolve_account(Some("nope"), cfg.default_account.mail.as_deref())
+            .unwrap_err();
+        assert_eq!(err.type_name(), "AccountNotFound");
+    }
+
+    #[test]
+    fn account_provider_errors_no_default() {
+        let cfg = Config::default();
+        let err = cfg.mail.resolve_account(None, None).unwrap_err();
+        assert_eq!(err.type_name(), "AccountNotFound");
+    }
+
+    #[test]
+    fn account_provider_works_for_all_modules() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+calendar = "personal"
+note = "n1"
+todo = "t1"
+bookmark = "b1"
+
+[[calendar.accounts]]
+name = "personal"
+caldav_url = "u"
+username = "u"
+
+[[note.accounts]]
+name = "n1"
+
+[[todo.accounts]]
+name = "t1"
+
+[[bookmark.accounts]]
+name = "b1"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            cfg.calendar
+                .resolve_account(None, cfg.default_account.calendar.as_deref())
+                .unwrap()
+                .name,
+            "personal"
+        );
+        assert_eq!(
+            cfg.note
+                .resolve_account(None, cfg.default_account.note.as_deref())
+                .unwrap()
+                .name,
+            "n1"
+        );
+        assert_eq!(
+            cfg.todo
+                .resolve_account(None, cfg.default_account.todo.as_deref())
+                .unwrap()
+                .name,
+            "t1"
+        );
+        assert_eq!(
+            cfg.bookmark
+                .resolve_account(None, cfg.default_account.bookmark.as_deref())
+                .unwrap()
+                .name,
+            "b1"
+        );
+    }
+
+    #[test]
+    fn resolve_account_name_returns_string() {
+        let cfg: Config = toml::from_str(SAMPLE).unwrap();
+        assert_eq!(cfg.resolve_account_name("mail", None).unwrap(), "work");
+        // "cal" alias resolves the calendar module.
+        assert_eq!(cfg.resolve_account_name("cal", None).unwrap(), "personal");
+    }
+
+    #[test]
+    fn resolve_account_name_unknown_module_errors() {
+        let cfg = Config::default();
+        let err = cfg.resolve_account_name("bogus", None).unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
     }
 
     #[test]

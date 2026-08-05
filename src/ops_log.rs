@@ -133,24 +133,21 @@ pub async fn maybe_log_op(
 }
 
 /// Resolve the account name: override wins, else the config default.
+///
+/// Delegates to the unified [`Config::resolve_account_name`] (F012 P2a) so
+/// account resolution has a single source of truth. Semantics preserved:
+/// when no account is configured (neither override nor default), logging is
+/// skipped (`Ok(None)`) rather than failing.
 fn resolve_account_name(
     module: &str,
     override_name: Option<&str>,
     config: &Config,
 ) -> Result<Option<String>> {
-    let name = match module {
-        "todo" => override_name
-            .map(|s| s.to_string())
-            .or_else(|| config.default_account.todo.clone()),
-        "note" => override_name
-            .map(|s| s.to_string())
-            .or_else(|| config.default_account.note.clone()),
-        "bookmark" => override_name
-            .map(|s| s.to_string())
-            .or_else(|| config.default_account.bookmark.clone()),
-        _ => return Ok(None),
-    };
-    Ok(name)
+    match config.resolve_account_name(module, override_name) {
+        Ok(name) => Ok(Some(name)),
+        Err(e) if e.type_name() == "AccountNotFound" => Ok(None),
+        Err(e) => Err(e),
+    }
 }
 
 /// Check whether a (module, account)'s provider is notion.
