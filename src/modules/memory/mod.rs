@@ -123,7 +123,12 @@ impl Executor for MemoryModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         let backend = backend::for_default();
         dispatch(&*backend, action, args).await
     }

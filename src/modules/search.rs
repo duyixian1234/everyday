@@ -177,7 +177,12 @@ impl Executor for SearchModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         // search has only one action; the default positional arg carries
         // the query string.
         let backend = for_config(&self.config);

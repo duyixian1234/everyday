@@ -38,7 +38,8 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [F008](F008-rss-module.md) | RSS module — feed-rs based subscription aggregator | Accepted | 2026-07-09 |
 | [F009](F009-performance-budget.md) | Performance budget — cold start < 100 ms, network timeouts, large-output streaming | Accepted | 2026-07-12 |
 | [F010](F010-testing-requirements.md) | Testing requirements — mandatory coverage, mocks, CI behaviour, bug-fix discipline | Accepted | 2026-07-12 |
-| [F012](F012-architecture-deepening-phase.md) | Architecture deepening phase — P2c/P2a/P6 implemented (Phase 1); P1/P2b (Phase 2), P3–P5 (Phase 3) planned | Accepted | 2026-08-05 |
+| [F012](F012-architecture-deepening-phase.md) | Architecture deepening phase — Phases 1–3 all implemented (P2c/P2a/P6, P1/P2b, P3/P4/P5) | Accepted | 2026-08-05 |
+| [F013](F013-request-context-explicit-parameter.md) | Explicit-parameter `RequestContext` through `Executor::execute` + middleware (v0.12 breaking, supersedes F012 P4 thread-local form) | Accepted | 2026-08-05 |
 
 ## Mail (M-series)
 

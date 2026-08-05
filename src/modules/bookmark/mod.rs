@@ -90,7 +90,12 @@ impl Executor for BookmarkModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         let (flags, _positional) = parse_simple_args(args);
         let account = self
             .config

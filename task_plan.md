@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.11.0-rc 已发布；F012 Phase 1（P6/P2c/P2a）、Phase 2（P1+P2b）、Phase 3（P3 lifecycle / P4 request context / P5 middleware）全部完成，ADR 三阶段落地。
+**当前状态：** v0.11.0-rc 已发布；F012 三阶段（Phase 1–3）全部完成，v0.12 P4 显式参数化 RequestContext（[F013](./docs/adr/F013-request-context-explicit-parameter.md)）已实现。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
@@ -77,6 +77,9 @@
 - **P3**：`Executor` 加 `initialize()`/`health_check()`/`shutdown()` 默认实现 + `HealthStatus`；`ModuleRegistry::{initialize_all, health_check_all, shutdown_all}`；根级 `everyday health` 命令（text/JSON 双输出，exit 0/1）；mail/memory/timeline override health_check（仅本地 DB 探测，无网络）；main.rs 在 dispatch 前后接线 initialize/shutdown。
 - **P4**：`shared::request_context` — `RequestContext { request_id, deadline, caller }` 非破坏性 thread-local 传播（v0.12 才改显式参数 breaking）；`generate_request_id()` = `cli-<nanos>-<pid>`；main.rs 每命令设置 + 完成后清除。
 - **P5**：`shared::middleware` — `Middleware` trait（before/after/on_error）+ `run_with_middleware`；默认 `LoggingMiddleware`（stderr 输出 request_id/module/action/elapsed，JSON 模式输出结构化 `_log` 行）；main.rs dispatch 走 middleware 链，模块零侵入。
+
+### Phase 19: v0.12 — P4 显式参数化 RequestContext（breaking）[complete]
+按 ADR [F013](./docs/adr/F013-request-context-explicit-parameter.md) 落地 F012 P4 的 v0.12 breaking 半程：`RequestContext` 改为显式参数贯穿 `Executor::execute` 与 middleware 栈，thread-local 传播整体移除。**破坏性**：自定义 `Executor` 实现者需加 `ctx: &RequestContext` 参数；迁移指南见 F013 §Migration guide。
 
 ---
 

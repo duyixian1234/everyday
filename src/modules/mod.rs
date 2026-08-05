@@ -17,6 +17,7 @@ use std::sync::Arc;
 use crate::config::Config;
 use crate::error::{AgentError, Result};
 use crate::output::Output;
+use crate::shared::request_context::RequestContext;
 
 /// Module executor trait.
 ///
@@ -41,7 +42,10 @@ pub trait Executor: Send + Sync {
     ///
     /// - `action`: the action name (e.g. `list`, `send`, `status`)
     /// - `args`: the remaining command-line arguments (parsed by the module)
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output>;
+    /// - `ctx`: the per-request context (request id / deadline / caller), passed
+    ///   explicitly since v0.12 — see
+    ///   [F013](../../docs/adr/F013-request-context-explicit-parameter.md)
+    async fn execute(&self, action: &str, args: &[String], ctx: &RequestContext) -> Result<Output>;
 
     // ---- Lifecycle hooks (P3, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
     //
@@ -416,7 +420,12 @@ mod tests {
                 actions: &[],
             }
         }
-        async fn execute(&self, _a: &str, _args: &[String]) -> Result<Output> {
+        async fn execute(
+            &self,
+            _a: &str,
+            _args: &[String],
+            _ctx: &RequestContext,
+        ) -> Result<Output> {
             Ok(Output::text("ok"))
         }
     }
@@ -424,7 +433,8 @@ mod tests {
     #[tokio::test]
     async fn trait_object_dispatch_works() {
         let m: Box<dyn Executor> = Box::new(DummyModule);
-        let out = m.execute("anything", &[]).await.unwrap();
+        let ctx = RequestContext::cli("test-req".into());
+        let out = m.execute("anything", &[], &ctx).await.unwrap();
         assert_eq!(out.render(crate::output::RenderMode::Text), "ok");
     }
 
@@ -445,7 +455,12 @@ mod tests {
                 actions: &[],
             }
         }
-        async fn execute(&self, _a: &str, _args: &[String]) -> Result<Output> {
+        async fn execute(
+            &self,
+            _a: &str,
+            _args: &[String],
+            _ctx: &RequestContext,
+        ) -> Result<Output> {
             Ok(Output::text("ok"))
         }
         async fn health_check(&self) -> Result<HealthStatus> {

@@ -59,12 +59,12 @@ async fn main() {
 }
 
 async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
-    // Request context (P4): one request_id per invocation, propagated via
-    // thread-local so modules/middleware read it without signature changes.
-    crate::shared::request_context::set_request_context(
-        crate::shared::request_context::RequestContext::cli(
-            crate::shared::request_context::generate_request_id(),
-        ),
+    // Request context (P4, [F012](../docs/adr/F012-architecture-deepening-phase.md)):
+    // one context per invocation, passed explicitly through the middleware
+    // stack into each module's `execute` (explicit-parameter form, v0.12 —
+    // see [F013](../docs/adr/F013-request-context-explicit-parameter.md)).
+    let ctx = crate::shared::request_context::RequestContext::cli(
+        crate::shared::request_context::generate_request_id(),
     );
 
     // Resolve module / action. clap guarantees the module subcommand exists
@@ -114,7 +114,6 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
     if module_name == "health" {
         let out = run_health(&registry, mode).await;
         registry.shutdown_all();
-        crate::shared::request_context::clear_request_context();
         return out;
     }
 
@@ -122,7 +121,6 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         Ok(m) => m,
         Err(e) => {
             registry.shutdown_all();
-            crate::shared::request_context::clear_request_context();
             return (1, render_error(&e, mode));
         }
     };
@@ -154,6 +152,7 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         vec![Box::new(crate::shared::middleware::LoggingMiddleware)];
     let result = crate::shared::middleware::run_with_middleware(
         &middleware,
+        &ctx,
         module_name,
         module,
         action_name,
@@ -192,10 +191,6 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
 
     // Lifecycle (P3): graceful shutdown after the action completes.
     registry.shutdown_all();
-
-    // Request context (P4): clear after dispatch so the thread-local never
-    // leaks into the next invocation.
-    crate::shared::request_context::clear_request_context();
 
     finalize(result, mode)
 }

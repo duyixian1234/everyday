@@ -174,7 +174,12 @@ impl Executor for RssModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         let (flags, _positional) = parse_simple_args(args);
         // DI seam (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)):
         // the backend owns config-file reads/writes + network; `dispatch` only maps

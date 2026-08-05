@@ -110,7 +110,12 @@ impl Executor for NoteModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         let (flags, multi, positional) = parse_args(args);
         let account = self
             .config

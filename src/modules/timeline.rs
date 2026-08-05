@@ -222,7 +222,12 @@ impl Executor for TimelineModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         let backend = for_config(&self.config);
         dispatch(&*backend, action, args).await
     }

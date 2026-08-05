@@ -744,7 +744,7 @@ pub trait Executor: Send + Sync {
     fn name(&self) -> &'static str;
     fn description(&self) -> &'static str;
     fn actions(&self) -> Vec<ActionDoc>;
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output>;
+    async fn execute(&self, action: &str, args: &[String], ctx: &RequestContext) -> Result<Output>;
 }
 ```
 

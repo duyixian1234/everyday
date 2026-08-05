@@ -316,7 +316,12 @@ impl Executor for CalendarModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         // Recognize an unknown action early (pitfall 10: avoid surfacing AuthError instead
         // of UnknownAction when the password is empty).
         if !matches!(action, "calendars" | "list" | "add" | "delete") {

@@ -61,7 +61,12 @@ impl Executor for ConfigModule {
         }
     }
 
-    async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+    async fn execute(
+        &self,
+        action: &str,
+        args: &[String],
+        _ctx: &crate::shared::request_context::RequestContext,
+    ) -> Result<Output> {
         // config needs RenderMode to choose the `list` output format (TOML text / JSON).
         // Like other modules, it reads the mode via the thread-local set by main.rs at startup [R001](../../docs/adr/R001-thread-local-json-mode.md).
         let mode = if crate::util::json_mode::is_json() {
