@@ -68,7 +68,7 @@
 
 ### Phase 17: 架构深化 Phase 2 — P1 CLI/business 分离 + P2b config 子集 [complete]
 按 ADR [F012](./docs/adr/F012-architecture-deepening-phase.md) 落地第二阶段（未发版，待并入 v0.11.0-rc）：
-- **P1**：`cli_action!`/`flag!` 宏压缩全 11 模块 ArgSpec（净 -321 行，mail `module_arg_spec` 129→61）；mail/cal/rss 建 service-layer trait（`MailBackend`/`CalBackend`/`RssBackend` + domain 类型 + `for_account` DI 工厂 + `dispatch()` 唯一 Output 触点 + Mock backend 直测）；note/todo/bookmark 沿用 R016 `*Backend`；timeline/search/auth/config/memory 仅宏化 ArgSpec（已渲染分离 + 直测，未建独立 ModuleService trait，留待 Phase 3 接线）。
+- **P1**：`cli_action!`/`flag!` 宏压缩全 11 模块 ArgSpec（净 -321 行，mail `module_arg_spec` 129→61）；mail/cal/rss 建 service-layer trait（`MailBackend`/`CalBackend`/`RssBackend` + domain 类型 + `for_account` DI 工厂 + `dispatch()` 唯一 Output 触点 + Mock backend 直测）；note/todo/bookmark 沿用 R016 `*Backend`；timeline/search/auth/config/memory 仅宏化 ArgSpec（已渲染分离 + 直测，未建独立 ModuleService trait，留待 Phase 3 接线）。**Phase 3 接线完成（commit `fe1ab51`）**：memory/search/timeline/auth 补 `MemoryBackend`/`SearchBackend`/`TimelineBackend`/`AuthBackend` trait + `for_config` 工厂 + Mock 直测，execute 一律收敛为 `dispatch()` 唯一 Output 触点；config 保留 Executor 直实现（纯文件 IO、无 domain 层，service trait 属 Speculative Generality，理由记录于 F012）。
 - **P2b**：业务模块注入 config 子集（`MailModuleConfig` 等，`impl_module_config!` 宏），`ModuleRegistry::build` 经 `Config::X_module_config()` 切片；`for_account()` 弃 Config 参数，凭据走 `auth::get_credential_with_user()`；timeline/search/auth 保留 `Arc<Config>`（跨模块编排器）。
 - Phase 3（P3 lifecycle / P4 request context / P5 middleware）按 F012 时间线后续启动。
 
