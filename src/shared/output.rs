@@ -60,15 +60,29 @@ impl TypedValue {
     }
 
     /// JSON value preserving the native type.
+    ///
+    /// Integral values are serialized as JSON integers (not `12345.0`):
+    /// serde_json serializes `f64` with a trailing `.0`, which would leak into
+    /// the output and disagree with the text-mode rendering. `uid`-style u32
+    /// values (and anything within i64's exact range) stay clean integers.
     pub fn to_json(&self) -> Value {
         match self {
             Self::Text(s) => Value::String(s.clone()),
-            Self::Number(n) => json!(n),
+            Self::Number(n) => {
+                if n.is_finite() && n.fract() == 0.0 && n.abs() < I64_EXACT_MAX {
+                    json!(*n as i64)
+                } else {
+                    json!(n)
+                }
+            }
             Self::Boolean(b) => Value::Bool(*b),
             Self::Null => Value::Null,
         }
     }
 }
+
+/// Largest `f64` magnitude exactly representable as `i64` (2^53).
+const I64_EXACT_MAX: f64 = 9_007_199_254_740_992.0;
 
 /// Module execution result.
 ///
@@ -208,27 +222,25 @@ fn compact_json(v: &Value) -> String {
 }
 
 fn records_to_json(headers: &[String], rows: &[Vec<String>]) -> String {
-    let arr: Vec<Value> = rows
-        .iter()
-        .map(|row| {
-            let mut obj = serde_json::Map::new();
-            for (h, v) in headers.iter().zip(row.iter()) {
-                obj.insert(h.clone(), Value::String(v.clone()));
-            }
-            Value::Object(obj)
-        })
-        .collect();
-    compact_json(&Value::Array(arr))
+    rows_to_json(headers, rows, |v| Value::String(v.clone()))
 }
 
 /// Typed rows → array of JSON objects, preserving each cell's native type.
 fn typed_records_to_json(headers: &[String], rows: &[Vec<TypedValue>]) -> String {
+    rows_to_json(headers, rows, TypedValue::to_json)
+}
+
+/// Rows → array of JSON objects (headers as keys, cells mapped by `cell`).
+fn rows_to_json<'a, T, F>(headers: &[String], rows: &'a [Vec<T>], cell: F) -> String
+where
+    F: Fn(&'a T) -> Value,
+{
     let arr: Vec<Value> = rows
         .iter()
         .map(|row| {
             let mut obj = serde_json::Map::new();
             for (h, v) in headers.iter().zip(row.iter()) {
-                obj.insert(h.clone(), v.to_json());
+                obj.insert(h.clone(), cell(v));
             }
             Value::Object(obj)
         })
@@ -344,7 +356,7 @@ mod tests {
         );
         let s = out.render(RenderMode::Json);
         let v: Value = serde_json::from_str(&s).unwrap();
-        assert_eq!(v[0]["uid"], json!(42.0));
+        assert_eq!(v[0]["uid"], json!(42)); // integral number serializes as integer
         assert_eq!(v[0]["seen"], json!(true));
         assert_eq!(v[0]["folder"], json!("INBOX"));
         assert!(v[0]["note"].is_null());
@@ -373,7 +385,11 @@ mod tests {
         assert_eq!(TypedValue::Null.as_display(), "");
         assert_eq!(TypedValue::Null.to_json(), Value::Null);
         assert_eq!(TypedValue::Number(1.5).to_json(), json!(1.5));
+        assert_eq!(TypedValue::Number(42.0).to_json(), json!(42)); // no ".0" leak
+        assert_eq!(TypedValue::Number(-7.0).to_json(), json!(-7));
         assert_eq!(TypedValue::Boolean(true).to_json(), json!(true));
+        // f64 beyond i64's exact range keeps floating-point serialization.
+        assert_eq!(TypedValue::Number(1e300).to_json(), json!(1e300));
     }
 
     #[test]

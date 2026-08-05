@@ -569,54 +569,60 @@ fn valid_notion_id(id: &str) -> bool {
     compact.len() == 32 && compact.chars().all(|c| c.is_ascii_hexdigit())
 }
 
-fn validate_note_account(a: &NoteAccount) -> Result<()> {
-    require_nonempty("note", &a.name, "name")?;
-    if !matches!(a.provider.as_str(), "local" | "sqlite" | "notion") {
+/// Provider whitelist shared by note / todo / bookmark accounts.
+fn validate_provider_whitelist(module: &str, account: &str, provider: &str) -> Result<()> {
+    if !matches!(provider, "local" | "sqlite" | "notion") {
         return Err(AgentError::Config(format!(
-            "note account '{}': unknown provider '{}' (expected local|sqlite|notion)",
-            a.name, a.provider
+            "{module} account '{account}': unknown provider '{provider}' (expected local|sqlite|notion)"
         )));
     }
-    if a.provider == "notion" {
-        for (field, id) in [
-            ("default_database_id", &a.default_database_id),
-            ("default_page_id", &a.default_page_id),
-        ] {
-            if let Some(id) = id
-                && !valid_notion_id(id)
-            {
-                return Err(AgentError::Config(format!(
-                    "note account '{}': {field} '{}' is not a valid Notion ID (expected 32 hex chars)",
-                    a.name, id
-                )));
-            }
+    Ok(())
+}
+
+/// Notion-ID format check for a list of `(field, value)` pairs; only applied
+/// when the account's provider is notion.
+fn validate_notion_ids(module: &str, account: &str, ids: &[(&str, &Option<String>)]) -> Result<()> {
+    for (field, id) in ids {
+        if let Some(id) = id
+            && !valid_notion_id(id)
+        {
+            return Err(AgentError::Config(format!(
+                "{module} account '{account}': {field} '{}' is not a valid Notion ID (expected 32 hex chars)",
+                id
+            )));
         }
+    }
+    Ok(())
+}
+
+fn validate_note_account(a: &NoteAccount) -> Result<()> {
+    require_nonempty("note", &a.name, "name")?;
+    validate_provider_whitelist("note", &a.name, &a.provider)?;
+    if a.provider == "notion" {
+        validate_notion_ids(
+            "note",
+            &a.name,
+            &[
+                ("default_database_id", &a.default_database_id),
+                ("default_page_id", &a.default_page_id),
+            ],
+        )?;
     }
     Ok(())
 }
 
 fn validate_notion_local_account(module: &str, a: &NotionLocalAccount) -> Result<()> {
     require_nonempty(module, &a.name, "name")?;
-    if !matches!(a.provider.as_str(), "local" | "sqlite" | "notion") {
-        return Err(AgentError::Config(format!(
-            "{module} account '{}': unknown provider '{}' (expected local|sqlite|notion)",
-            a.name, a.provider
-        )));
-    }
+    validate_provider_whitelist(module, &a.name, &a.provider)?;
     if a.provider == "notion" {
-        for (field, id) in [
-            ("parent_page_id", &a.parent_page_id),
-            ("default_database_id", &a.default_database_id),
-        ] {
-            if let Some(id) = id
-                && !valid_notion_id(id)
-            {
-                return Err(AgentError::Config(format!(
-                    "{module} account '{}': {field} '{}' is not a valid Notion ID (expected 32 hex chars)",
-                    a.name, id
-                )));
-            }
-        }
+        validate_notion_ids(
+            module,
+            &a.name,
+            &[
+                ("parent_page_id", &a.parent_page_id),
+                ("default_database_id", &a.default_database_id),
+            ],
+        )?;
     }
     Ok(())
 }

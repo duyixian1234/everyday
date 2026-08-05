@@ -64,12 +64,7 @@
 按 ADR [K001](./docs/adr/K001-memory-module.md)–[K004](./docs/adr/K004-memory-single-instance.md) 设计 + 实现。`src/modules/memory/{mod,store,actions,search}.rs`；append-only `(subject, predicate, object)` 三元组 + confidence/source 元数据 + soft delete；独立 `~/.config/everyday/memory.db`；v1 命令集 `add / get / relation / list / delete / graph / history`（7 个）；参与 `everyday search`（当前态 GLOB 适配器，K003）；graph 前向 BFS 深度 1..=5（K002）；无 account 列、无 `auth` 模块触及（K004）。**v0.10.0 已发布**。
 
 ### Phase 16: 架构深化 Phase 1 — Quick Wins（P2c / P2a / P6）[complete]
-按 ADR [F012](./docs/adr/F012-architecture-deepening-phase.md) 落地第一阶段三项低风险改进（未发版，待并入 v0.11.0-rc）：
-- **P2c Config 加载时校验**：`Config::validate()` 在 `load_from()` 内执行——`[default_account]` 悬空引用、必填字段（host/username/feed url）、provider 白名单（local|sqlite|notion）、Notion page/database ID 格式（32 hex，允许连字符）。空配置仍合法。
-- **P2a AccountProvider trait**：`AccountProvider`（关联类型 `Account: NamedAccount`）+ 统一 `resolve_account`（override > default > error）默认实现，mail/cal/note/todo/bookmark 五模块 config 实现；`Config::resolve_account_name(module, override)` 字符串入口；ops_log 委托之（消除自身重复解析）；`X_account()` 方法保留委托（backward compat）；删除 `impl_account_lookup!` 宏（[R007](./docs/adr/R007-config-account-macro.md) 标记 Superseded）。
-- **P6 TypedValue 保类型输出**：`TypedValue`（Text/Number/Boolean/Null）+ `Output::TypedRecords` 变体；Text 模式渲染对齐表格，JSON 模式保留原生类型；`mail list` uid/unread 数字/布尔（新增 unread 列）、`memory list`/`history` confidence 数字 + 缺失字段 null；旧 `Records` 变体保留（backward compat）。
-
-Phase 2（P1 CLI/business 分离 + P2b config 子集注入，v0.11.0）与 Phase 3（P3 lifecycle / P4 request context / P5 middleware，v0.12.0）按 F012 时间线后续启动。
+按 ADR [F012](./docs/adr/F012-architecture-deepening-phase.md) 落地第一阶段三项低风险改进（未发版，待并入 v0.11.0-rc）：P2c `Config::validate()` 加载时语义校验；P2a `AccountProvider` trait 统一账户解析（替代 R007 宏，旧 `X_account()` 委托保留）；P6 `TypedValue` + `Output::TypedRecords` 保类型输出（mail list uid/unread、memory list/history）。Phase 2（P1 CLI/business 分离 + P2b config 子集）与 Phase 3（P3–P5）按 F012 时间线后续启动。
 
 ---
 

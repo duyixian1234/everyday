@@ -282,8 +282,10 @@ fn render_query(q: &actions::QueryResult, header: &str, json_mode: bool) -> Outp
             "id".to_string(),
             "created_at".to_string(),
         ];
-        // Typed cells: confidence stays numeric in JSON mode (F012 P6); absent
-        // source renders as null. Text-mode table display is unchanged.
+        // Typed cells (F012 P6): text-mode table rendering. The JSON branch
+        // above already emits native types via fact_to_json (confidence as a
+        // number, absent source as null), so this path only changes the
+        // text-mode table; cell display is unchanged.
         let rows: Vec<Vec<TypedValue>> = q
             .facts
             .iter()
@@ -321,7 +323,8 @@ fn render_history(q: &actions::QueryResult, json_mode: bool) -> Output {
             "created_at".to_string(),
             "deleted_at".to_string(),
         ];
-        // Typed cells: confidence numeric, absent source/deleted_at render as null (F012 P6).
+        // Typed cells (F012 P6): text-mode table rendering; the JSON branch
+        // above keeps native types already. Cell display is unchanged.
         let rows: Vec<Vec<TypedValue>> = q
             .facts
             .iter()

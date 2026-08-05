@@ -107,7 +107,7 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [R004](R004-dst-boundary-dates.md) | DST-boundary date parsing — use `.earliest()` / `.latest()`, never `.unwrap()` | Accepted | 2026-07-11 |
 | [R005](R005-parse-simple-args.md) | `parse_simple_args` — single-dash tokens are values, double-dash tokens are flags | Accepted | 2026-07-11 |
 | [R006](R006-ops-log-surfacing.md) | Surface ops-log write failures to the user | Accepted | 2026-07-11 |
-| [R007](R007-config-account-macro.md) | Macro for `Config::X_account()` lookups (module-scope, not inside `impl`) | Accepted | 2026-07-11 |
+| [R007](R007-config-account-macro.md) | Macro for `Config::X_account()` lookups (module-scope, not inside `impl`) | Superseded | 2026-07-11 |
 | [R008](R008-sql-glob-not-like.md) | Use SQL `GLOB`, not `LIKE`, for token-boundary flag matching | Accepted | 2026-07-11 |
 | [R009](R009-notion-common-local-module.md) | Common `local` module for shared Notion abstractions (login_flow, parse_tags, set_module_database_id) | Accepted | 2026-07-11 |
 | [R010](R010-notion-local-account.md) | `NotionLocalAccount` merge + type alias (TodoAccount / BookmarkAccount) | Accepted | 2026-07-11 |

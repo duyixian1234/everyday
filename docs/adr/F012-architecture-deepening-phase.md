@@ -308,6 +308,7 @@ Execute a three-phase architecture deepening initiative to deepen module interfa
 - F003: Module scope — improves by reducing coupling
 - R012: Config executor trait — improves by config subsets
 - R013–R015: Auth module — maintains; works with new config structure
+- R007: `impl_account_lookup!` macro — superseded by the `AccountProvider` trait (P2a)
 
 **Reinforces**:
 - S001–S006: Search architecture (good deep-module pattern to follow)
