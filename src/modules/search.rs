@@ -106,31 +106,22 @@ impl Executor for SearchModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ArgSpec, ModuleArgSpec, Positional};
         static QUERY_ARGS: &[ArgSpec] = &[
-            ArgSpec {
-                name: "module",
-                help: "模块过滤：note,todo,bookmark,rss,cal,mail,memory（逗号分隔）",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "since",
-                help: "相对起点：YYYY-MM-DD 或 30m/2h/1d/7d",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "limit",
-                help: "全局条数上限（默认 20）",
-                kind: ArgKind::Value,
-            },
+            flag!(
+                "module",
+                "模块过滤：note,todo,bookmark,rss,cal,mail,memory（逗号分隔）"
+            ),
+            flag!("since", "相对起点：YYYY-MM-DD 或 30m/2h/1d/7d"),
+            flag!("limit", "全局条数上限（默认 20）"),
         ];
-        static ACTIONS: &[ActionArgSpec] = &[ActionArgSpec {
-            name: "query",
-            description: "跨模块统一搜索",
-            usage: "everyday search \"<query>\" [--module a,b,c] [--since 7d] [--limit N]",
-            args: QUERY_ARGS,
-            positional: Positional::OptionalSingle,
-        }];
+        static ACTIONS: &[ActionArgSpec] = &[cli_action!(
+            "query",
+            "跨模块统一搜索",
+            "everyday search \"<query>\" [--module a,b,c] [--since 7d] [--limit N]",
+            QUERY_ARGS,
+            Positional::OptionalSingle
+        )];
         ModuleArgSpec {
             name: "search",
             description: self.description(),

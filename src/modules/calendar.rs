@@ -60,92 +60,44 @@ impl Executor for CalendarModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "calendars",
-                description: "列出日历集",
-                usage: "everyday cal calendars [--account NAME]",
-                args: &[],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出日历事件",
-                usage: "everyday cal list [--today|--date YYYY-MM-DD|--all] [--limit N] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "today",
-                        help: "仅今日",
-                        kind: ArgKind::Bool,
-                    },
-                    ArgSpec {
-                        name: "date",
-                        help: "指定日期 YYYY-MM-DD",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "all",
-                        help: "返回全部（默认今天及未来）",
-                        kind: ArgKind::Bool,
-                    },
-                    ArgSpec {
-                        name: "limit",
-                        help: "条数上限",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "add",
-                description: "新增事件",
-                usage: "everyday cal add --title T --start ISO --end ISO [--location L] [--description D] [--calendar HREF] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "title",
-                        help: "标题",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "start",
-                        help: "开始时间（RFC3339 或 YYYY-MM-DDTHH:MM:SS）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "end",
-                        help: "结束时间",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "location",
-                        help: "地点",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "description",
-                        help: "描述",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "calendar",
-                        help: "目标日历 href 或显示名",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "delete",
-                description: "删除事件",
-                usage: "everyday cal delete --id HREF [--account NAME]",
-                args: &[ArgSpec {
-                    name: "id",
-                    help: "事件 href",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
+            cli_action!(
+                "calendars",
+                "列出日历集",
+                "everyday cal calendars [--account NAME]",
+                &[]
+            ),
+            cli_action!(
+                "list",
+                "列出日历事件",
+                "everyday cal list [--today|--date YYYY-MM-DD|--all] [--limit N] [--account NAME]",
+                &[
+                    flag!("today", "仅今日", Bool),
+                    flag!("date", "指定日期 YYYY-MM-DD"),
+                    flag!("all", "返回全部（默认今天及未来）", Bool),
+                    flag!("limit", "条数上限"),
+                ]
+            ),
+            cli_action!(
+                "add",
+                "新增事件",
+                "everyday cal add --title T --start ISO --end ISO [--location L] [--description D] [--calendar HREF] [--account NAME]",
+                &[
+                    flag!("title", "标题"),
+                    flag!("start", "开始时间（RFC3339 或 YYYY-MM-DDTHH:MM:SS）"),
+                    flag!("end", "结束时间"),
+                    flag!("location", "地点"),
+                    flag!("description", "描述"),
+                    flag!("calendar", "目标日历 href 或显示名"),
+                ]
+            ),
+            cli_action!(
+                "delete",
+                "删除事件",
+                "everyday cal delete --id HREF [--account NAME]",
+                &[flag!("id", "事件 href")]
+            ),
         ];
         ModuleArgSpec {
             name: "cal",

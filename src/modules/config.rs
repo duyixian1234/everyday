@@ -36,41 +36,23 @@ impl Executor for ConfigModule {
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "path",
-                description: "显示配置文件路径",
-                usage: "everyday config path",
-                args: &[],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出当前配置（脱敏）",
-                usage: "everyday config list",
-                args: &[],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "get",
-                description: "读取某个配置项",
-                usage: "everyday config get <dotted.path>",
-                args: &[],
-                positional: Positional::Exactly(1),
-            },
-            ActionArgSpec {
-                name: "set",
-                description: "设置某个配置项",
-                usage: "everyday config set <dotted.path> <value>",
-                args: &[],
-                positional: Positional::Exactly(2),
-            },
-            ActionArgSpec {
-                name: "init",
-                description: "生成默认配置文件",
-                usage: "everyday config init",
-                args: &[],
-                positional: Positional::None,
-            },
+            cli_action!("path", "显示配置文件路径", "everyday config path", &[]),
+            cli_action!("list", "列出当前配置（脱敏）", "everyday config list", &[]),
+            cli_action!(
+                "get",
+                "读取某个配置项",
+                "everyday config get <dotted.path>",
+                &[],
+                Positional::Exactly(1)
+            ),
+            cli_action!(
+                "set",
+                "设置某个配置项",
+                "everyday config set <dotted.path> <value>",
+                &[],
+                Positional::Exactly(2)
+            ),
+            cli_action!("init", "生成默认配置文件", "everyday config init", &[]),
         ];
         ModuleArgSpec {
             name: "config",

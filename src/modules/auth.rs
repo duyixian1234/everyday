@@ -368,69 +368,37 @@ impl Executor for AuthModule {
     }
 
     fn module_arg_spec(&self) -> ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "login",
-                description: "保存凭据到系统 keyring（默认只存；--verify 显式验证）",
-                usage: "everyday auth login --module <mod> [--account NAME] [--password PWD | --token TOK] [--verify]",
-                args: &[
-                    ArgSpec {
-                        name: "module",
-                        help: "目标模块（mail/cal/note/todo/bookmark）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "password",
-                        help: "密码（mail/cal，非交互）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "token",
-                        help: "Notion 集成令牌（note/todo/bookmark）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "verify",
-                        help: "存后显式验证凭据",
-                        kind: ArgKind::Bool,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "logout",
-                description: "从 keyring 删除凭据",
-                usage: "everyday auth logout --module <mod> [--account NAME]",
-                args: &[ArgSpec {
-                    name: "module",
-                    help: "目标模块",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "verify",
-                description: "读取已存凭据并验证（不重新输入）",
-                usage: "everyday auth verify --module <mod> [--account NAME]",
-                args: &[ArgSpec {
-                    name: "module",
-                    help: "目标模块",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "枚举账户并探测 keyring 状态（stored/missing/not_required）",
-                usage: "everyday auth list [--module <mod>]",
-                args: &[ArgSpec {
-                    name: "module",
-                    help: "目标模块（省略则全部）",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
+            cli_action!(
+                "login",
+                "保存凭据到系统 keyring（默认只存；--verify 显式验证）",
+                "everyday auth login --module <mod> [--account NAME] [--password PWD | --token TOK] [--verify]",
+                &[
+                    flag!("module", "目标模块（mail/cal/note/todo/bookmark）"),
+                    flag!("password", "密码（mail/cal，非交互）"),
+                    flag!("token", "Notion 集成令牌（note/todo/bookmark）"),
+                    flag!("verify", "存后显式验证凭据", Bool),
+                ]
+            ),
+            cli_action!(
+                "logout",
+                "从 keyring 删除凭据",
+                "everyday auth logout --module <mod> [--account NAME]",
+                &[flag!("module", "目标模块")]
+            ),
+            cli_action!(
+                "verify",
+                "读取已存凭据并验证（不重新输入）",
+                "everyday auth verify --module <mod> [--account NAME]",
+                &[flag!("module", "目标模块")]
+            ),
+            cli_action!(
+                "list",
+                "枚举账户并探测 keyring 状态（stored/missing/not_required）",
+                "everyday auth list [--module <mod>]",
+                &[flag!("module", "目标模块（省略则全部）")]
+            ),
         ];
         ModuleArgSpec {
             name: "auth",

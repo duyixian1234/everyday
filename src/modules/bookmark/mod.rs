@@ -57,65 +57,31 @@ impl Executor for BookmarkModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "init-db",
-                description: "初始化书签数据库（local 建表 / Notion 建库）",
-                usage: "everyday bookmark init-db [--parent PAGE_ID] [--account NAME]",
-                args: &[ArgSpec {
-                    name: "parent",
-                    help: "父页面 ID（默认账户父页）",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "add",
-                description: "新增书签",
-                usage: "everyday bookmark add --url U --title T [--tags a,b] [--db ID] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "url",
-                        help: "书签 URL",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "title",
-                        help: "标题",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "tags",
-                        help: "标签，逗号分隔（如 rust,cli）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "db",
-                        help: "数据库 ID",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出书签",
-                usage: "everyday bookmark list [--tag TAG] [--db ID] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "tag",
-                        help: "按标签精确过滤",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "db",
-                        help: "数据库 ID",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
+            cli_action!(
+                "init-db",
+                "初始化书签数据库（local 建表 / Notion 建库）",
+                "everyday bookmark init-db [--parent PAGE_ID] [--account NAME]",
+                &[flag!("parent", "父页面 ID（默认账户父页）")]
+            ),
+            cli_action!(
+                "add",
+                "新增书签",
+                "everyday bookmark add --url U --title T [--tags a,b] [--db ID] [--account NAME]",
+                &[
+                    flag!("url", "书签 URL"),
+                    flag!("title", "标题"),
+                    flag!("tags", "标签，逗号分隔（如 rust,cli）"),
+                    flag!("db", "数据库 ID"),
+                ]
+            ),
+            cli_action!(
+                "list",
+                "列出书签",
+                "everyday bookmark list [--tag TAG] [--db ID] [--account NAME]",
+                &[flag!("tag", "按标签精确过滤"), flag!("db", "数据库 ID"),]
+            ),
         ];
         ModuleArgSpec {
             name: "bookmark",

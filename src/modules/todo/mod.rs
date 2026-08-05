@@ -64,86 +64,55 @@ impl Executor for TodoModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "init-db",
-                description: "初始化待办数据库（local 建表 / Notion 建库）",
-                usage: "everyday todo init-db [--parent PAGE_ID] [--account NAME]",
-                args: &[ArgSpec {
-                    name: "parent",
-                    help: "父页面 ID（默认账户父页）",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出待办",
-                usage: "everyday todo list [--db ID] [--all] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "db",
-                        help: "数据库 ID",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "all",
-                        help: "列出全部（默认仅未完成）",
-                        kind: ArgKind::Bool,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "add",
-                description: "新增待办",
-                usage: "everyday todo add --title T [--due DATE] [--priority P] [--db ID] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "title",
-                        help: "标题",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "due",
-                        help: "截止日期（如 2026-07-15）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "priority",
-                        help: "优先级（如 P0/P1/P2）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "db",
-                        help: "数据库 ID",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "start",
-                description: "标记进行中",
-                usage: "everyday todo start <page_id> [--account NAME]",
-                args: &[],
-                positional: Positional::Exactly(1),
-            },
-            ActionArgSpec {
-                name: "complete",
-                description: "标记完成",
-                usage: "everyday todo complete <page_id> [--account NAME]",
-                args: &[],
-                positional: Positional::Exactly(1),
-            },
-            ActionArgSpec {
-                name: "delete",
-                description: "删除待办",
-                usage: "everyday todo delete <page_id> [--account NAME]",
-                args: &[],
-                positional: Positional::Exactly(1),
-            },
+            cli_action!(
+                "init-db",
+                "初始化待办数据库（local 建表 / Notion 建库）",
+                "everyday todo init-db [--parent PAGE_ID] [--account NAME]",
+                &[flag!("parent", "父页面 ID（默认账户父页）")]
+            ),
+            cli_action!(
+                "list",
+                "列出待办",
+                "everyday todo list [--db ID] [--all] [--account NAME]",
+                &[
+                    flag!("db", "数据库 ID"),
+                    flag!("all", "列出全部（默认仅未完成）", Bool),
+                ]
+            ),
+            cli_action!(
+                "add",
+                "新增待办",
+                "everyday todo add --title T [--due DATE] [--priority P] [--db ID] [--account NAME]",
+                &[
+                    flag!("title", "标题"),
+                    flag!("due", "截止日期（如 2026-07-15）"),
+                    flag!("priority", "优先级（如 P0/P1/P2）"),
+                    flag!("db", "数据库 ID"),
+                ]
+            ),
+            cli_action!(
+                "start",
+                "标记进行中",
+                "everyday todo start <page_id> [--account NAME]",
+                &[],
+                Positional::Exactly(1)
+            ),
+            cli_action!(
+                "complete",
+                "标记完成",
+                "everyday todo complete <page_id> [--account NAME]",
+                &[],
+                Positional::Exactly(1)
+            ),
+            cli_action!(
+                "delete",
+                "删除待办",
+                "everyday todo delete <page_id> [--account NAME]",
+                &[],
+                Positional::Exactly(1)
+            ),
         ];
         ModuleArgSpec {
             name: "todo",

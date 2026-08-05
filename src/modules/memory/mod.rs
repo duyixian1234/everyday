@@ -56,84 +56,63 @@ impl Executor for MemoryModule {
     }
 
     fn module_arg_spec(&self) -> ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, Positional};
 
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "add",
-                description: "新增一条三元组（同一 S/P/O 重复 add 会追加新版本）",
-                usage: "everyday memory add <SUBJECT> <PREDICATE> <OBJECT> [--confidence N] [--source LABEL]",
-                args: &[
-                    ArgSpec {
-                        name: "confidence",
-                        help: "置信度 [0.0, 1.0]（默认 1.0）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "source",
-                        help: "来源标签（自由文本）",
-                        kind: ArgKind::Value,
-                    },
+            cli_action!(
+                "add",
+                "新增一条三元组（同一 S/P/O 重复 add 会追加新版本）",
+                "everyday memory add <SUBJECT> <PREDICATE> <OBJECT> [--confidence N] [--source LABEL]",
+                &[
+                    flag!("confidence", "置信度 [0.0, 1.0]（默认 1.0）"),
+                    flag!("source", "来源标签（自由文本）"),
                 ],
-                positional: Positional::Exactly(3),
-            },
-            ActionArgSpec {
-                name: "get",
-                description: "查询 subject 当前态全部三元组",
-                usage: "everyday memory get <SUBJECT>",
-                args: &[],
-                positional: Positional::Exactly(1),
-            },
-            ActionArgSpec {
-                name: "relation",
-                description: "查询 (subject, predicate) 当前态全部对象",
-                usage: "everyday memory relation <SUBJECT> <PREDICATE>",
-                args: &[],
-                positional: Positional::Exactly(2),
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出当前态全部三元组",
-                usage: "everyday memory list [--limit N]",
-                args: &[ArgSpec {
-                    name: "limit",
-                    help: "条数上限（默认 100）",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "delete",
-                description: "软删除 (subject, predicate, object) 当前态行",
-                usage: "everyday memory delete <SUBJECT> <PREDICATE> <OBJECT>",
-                args: &[],
-                positional: Positional::Exactly(3),
-            },
-            ActionArgSpec {
-                name: "graph",
-                description: "前向 BFS：从 subject 出发的多跳图（深度默认 2，最大 5）",
-                usage: "everyday memory graph <SUBJECT> [--depth N] [--include-deleted]",
-                args: &[
-                    ArgSpec {
-                        name: "depth",
-                        help: "递归深度（1..=5，默认 2）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "include-deleted",
-                        help: "包含软删除的边（默认隐藏）",
-                        kind: ArgKind::Bool,
-                    },
+                Positional::Exactly(3)
+            ),
+            cli_action!(
+                "get",
+                "查询 subject 当前态全部三元组",
+                "everyday memory get <SUBJECT>",
+                &[],
+                Positional::Exactly(1)
+            ),
+            cli_action!(
+                "relation",
+                "查询 (subject, predicate) 当前态全部对象",
+                "everyday memory relation <SUBJECT> <PREDICATE>",
+                &[],
+                Positional::Exactly(2)
+            ),
+            cli_action!(
+                "list",
+                "列出当前态全部三元组",
+                "everyday memory list [--limit N]",
+                &[flag!("limit", "条数上限（默认 100）")]
+            ),
+            cli_action!(
+                "delete",
+                "软删除 (subject, predicate, object) 当前态行",
+                "everyday memory delete <SUBJECT> <PREDICATE> <OBJECT>",
+                &[],
+                Positional::Exactly(3)
+            ),
+            cli_action!(
+                "graph",
+                "前向 BFS：从 subject 出发的多跳图（深度默认 2，最大 5）",
+                "everyday memory graph <SUBJECT> [--depth N] [--include-deleted]",
+                &[
+                    flag!("depth", "递归深度（1..=5，默认 2）"),
+                    flag!("include-deleted", "包含软删除的边（默认隐藏）", Bool),
                 ],
-                positional: Positional::Exactly(1),
-            },
-            ActionArgSpec {
-                name: "history",
-                description: "查看三元组全部版本（含已删除）",
-                usage: "everyday memory history <SUBJECT> <PREDICATE> <OBJECT>",
-                args: &[],
-                positional: Positional::Exactly(3),
-            },
+                Positional::Exactly(1)
+            ),
+            cli_action!(
+                "history",
+                "查看三元组全部版本（含已删除）",
+                "everyday memory history <SUBJECT> <PREDICATE> <OBJECT>",
+                &[],
+                Positional::Exactly(3)
+            ),
         ];
 
         ModuleArgSpec {

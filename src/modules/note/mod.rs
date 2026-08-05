@@ -57,96 +57,51 @@ impl Executor for NoteModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "search",
-                description: "搜索页面",
-                usage: "everyday note search --query Q [--limit N] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "query",
-                        help: "搜索关键词",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "limit",
-                        help: "条数上限",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "create",
-                description: "新建页面",
-                usage: "everyday note create --title T [--db ID] [--prop K:V ...] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "title",
-                        help: "页面标题",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "db",
-                        help: "数据库 ID（默认账户默认库）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "prop",
-                        help: "属性 K:V（可重复）",
-                        kind: ArgKind::Multi,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "read",
-                description: "读取页面内容（默认账户默认页）",
-                usage: "everyday note read [<page_id>] [--account NAME]",
-                args: &[],
-                positional: Positional::OptionalSingle,
-            },
-            ActionArgSpec {
-                name: "append",
-                description: "追加内容到页面（默认账户默认页，或从 stdin 读取）",
-                usage: "everyday note append [<page_id>] --text TEXT [--account NAME]",
-                args: &[ArgSpec {
-                    name: "text",
-                    help: "追加文本（缺省从 stdin 读取）",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::OptionalSingle,
-            },
-            ActionArgSpec {
-                name: "update",
-                description: "更新页面属性",
-                usage: "everyday note update <page_id> --prop K:V ... [--account NAME]",
-                args: &[ArgSpec {
-                    name: "prop",
-                    help: "属性 K:V（至少一个，可重复）",
-                    kind: ArgKind::Multi,
-                }],
-                positional: Positional::OptionalSingle,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出数据库中的页面",
-                usage: "everyday note list [--db ID] [--limit N] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "db",
-                        help: "数据库 ID",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "limit",
-                        help: "条数上限",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
+            cli_action!(
+                "search",
+                "搜索页面",
+                "everyday note search --query Q [--limit N] [--account NAME]",
+                &[flag!("query", "搜索关键词"), flag!("limit", "条数上限"),]
+            ),
+            cli_action!(
+                "create",
+                "新建页面",
+                "everyday note create --title T [--db ID] [--prop K:V ...] [--account NAME]",
+                &[
+                    flag!("title", "页面标题"),
+                    flag!("db", "数据库 ID（默认账户默认库）"),
+                    flag!("prop", "属性 K:V（可重复）", Multi),
+                ]
+            ),
+            cli_action!(
+                "read",
+                "读取页面内容（默认账户默认页）",
+                "everyday note read [<page_id>] [--account NAME]",
+                &[],
+                Positional::OptionalSingle
+            ),
+            cli_action!(
+                "append",
+                "追加内容到页面（默认账户默认页，或从 stdin 读取）",
+                "everyday note append [<page_id>] --text TEXT [--account NAME]",
+                &[flag!("text", "追加文本（缺省从 stdin 读取）")],
+                Positional::OptionalSingle
+            ),
+            cli_action!(
+                "update",
+                "更新页面属性",
+                "everyday note update <page_id> --prop K:V ... [--account NAME]",
+                &[flag!("prop", "属性 K:V（至少一个，可重复）", Multi)],
+                Positional::OptionalSingle
+            ),
+            cli_action!(
+                "list",
+                "列出数据库中的页面",
+                "everyday note list [--db ID] [--limit N] [--account NAME]",
+                &[flag!("db", "数据库 ID"), flag!("limit", "条数上限"),]
+            ),
         ];
         ModuleArgSpec {
             name: "note",

@@ -110,90 +110,41 @@ impl Executor for RssModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "follow",
-                description: "关注一个 RSS/Atom feed",
-                usage: "everyday rss follow --name N --url URL [--category C]",
-                args: &[
-                    ArgSpec {
-                        name: "name",
-                        help: "feed 名称",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "url",
-                        help: "feed URL（http/https）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "category",
-                        help: "分类",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出已关注的 feed",
-                usage: "everyday rss list",
-                args: &[],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "unfollow",
-                description: "取消关注",
-                usage: "everyday rss unfollow --name N",
-                args: &[ArgSpec {
-                    name: "name",
-                    help: "feed 名称",
-                    kind: ArgKind::Value,
-                }],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "digest",
-                description: "生成今日早报摘要",
-                usage: "everyday rss digest [--limit N] [--name FEED] [--category C]",
-                args: &[
-                    ArgSpec {
-                        name: "limit",
-                        help: "条数上限",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "name",
-                        help: "按 feed 名过滤",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "category",
-                        help: "按分类过滤",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "fetch",
-                description: "抓取并展示某个 feed 的文章",
-                usage: "everyday rss fetch --name N [--limit N]",
-                args: &[
-                    ArgSpec {
-                        name: "name",
-                        help: "feed 名称",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "limit",
-                        help: "条数上限",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
+            cli_action!(
+                "follow",
+                "关注一个 RSS/Atom feed",
+                "everyday rss follow --name N --url URL [--category C]",
+                &[
+                    flag!("name", "feed 名称"),
+                    flag!("url", "feed URL（http/https）"),
+                    flag!("category", "分类"),
+                ]
+            ),
+            cli_action!("list", "列出已关注的 feed", "everyday rss list", &[]),
+            cli_action!(
+                "unfollow",
+                "取消关注",
+                "everyday rss unfollow --name N",
+                &[flag!("name", "feed 名称")]
+            ),
+            cli_action!(
+                "digest",
+                "生成今日早报摘要",
+                "everyday rss digest [--limit N] [--name FEED] [--category C]",
+                &[
+                    flag!("limit", "条数上限"),
+                    flag!("name", "按 feed 名过滤"),
+                    flag!("category", "按分类过滤"),
+                ]
+            ),
+            cli_action!(
+                "fetch",
+                "抓取并展示某个 feed 的文章",
+                "everyday rss fetch --name N [--limit N]",
+                &[flag!("name", "feed 名称"), flag!("limit", "条数上限"),]
+            ),
         ];
         ModuleArgSpec {
             name: "rss",

@@ -166,88 +166,54 @@ impl Executor for TimelineModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ArgSpec, ModuleArgSpec};
         // Query-style actions share the same flag set (no --account: it is a global flag injected by main).
         static QUERY_ARGS: &[ArgSpec] = &[
-            ArgSpec {
-                name: "from",
-                help: "起始日期 YYYY-MM-DD",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "to",
-                help: "结束日期 YYYY-MM-DD",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "since",
-                help: "相对起点：YYYY-MM-DD 或 30m/2h/1d/7d",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "source",
-                help: "来源过滤：mail,cal,rss,todo,note,bookmark（逗号分隔）",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "limit",
-                help: "条数上限（默认 100）",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "sync",
-                help: "查询前先同步一次",
-                kind: ArgKind::Bool,
-            },
+            flag!("from", "起始日期 YYYY-MM-DD"),
+            flag!("to", "结束日期 YYYY-MM-DD"),
+            flag!("since", "相对起点：YYYY-MM-DD 或 30m/2h/1d/7d"),
+            flag!(
+                "source",
+                "来源过滤：mail,cal,rss,todo,note,bookmark（逗号分隔）"
+            ),
+            flag!("limit", "条数上限（默认 100）"),
+            flag!("sync", "查询前先同步一次", Bool),
         ];
         static SYNC_ARGS: &[ArgSpec] = &[
-            ArgSpec {
-                name: "source",
-                help: "来源过滤（逗号分隔）",
-                kind: ArgKind::Value,
-            },
-            ArgSpec {
-                name: "since",
-                help: "仅同步该日期之后的事件 YYYY-MM-DD",
-                kind: ArgKind::Value,
-            },
+            flag!("source", "来源过滤（逗号分隔）"),
+            flag!("since", "仅同步该日期之后的事件 YYYY-MM-DD"),
         ];
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "today",
-                description: "今天的事件",
-                usage: "everyday timeline today [--source S] [--account A] [--limit N] [--sync]",
-                args: QUERY_ARGS,
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "yesterday",
-                description: "昨天的事件",
-                usage: "everyday timeline yesterday [--source S] [--account A] [--limit N] [--sync]",
-                args: QUERY_ARGS,
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "week",
-                description: "本周（周一-周日）的事件",
-                usage: "everyday timeline week [--source S] [--account A] [--limit N] [--sync]",
-                args: QUERY_ARGS,
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "month",
-                description: "本月的事件",
-                usage: "everyday timeline month [--source S] [--account A] [--limit N] [--sync]",
-                args: QUERY_ARGS,
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "sync",
-                description: "同步各来源事件到 timeline",
-                usage: "everyday timeline sync [--source mail,cal] [--since 2026-01-01]",
-                args: SYNC_ARGS,
-                positional: Positional::None,
-            },
+            cli_action!(
+                "today",
+                "今天的事件",
+                "everyday timeline today [--source S] [--account A] [--limit N] [--sync]",
+                QUERY_ARGS
+            ),
+            cli_action!(
+                "yesterday",
+                "昨天的事件",
+                "everyday timeline yesterday [--source S] [--account A] [--limit N] [--sync]",
+                QUERY_ARGS
+            ),
+            cli_action!(
+                "week",
+                "本周（周一-周日）的事件",
+                "everyday timeline week [--source S] [--account A] [--limit N] [--sync]",
+                QUERY_ARGS
+            ),
+            cli_action!(
+                "month",
+                "本月的事件",
+                "everyday timeline month [--source S] [--account A] [--limit N] [--sync]",
+                QUERY_ARGS
+            ),
+            cli_action!(
+                "sync",
+                "同步各来源事件到 timeline",
+                "everyday timeline sync [--source mail,cal] [--since 2026-01-01]",
+                SYNC_ARGS
+            ),
         ];
         ModuleArgSpec {
             name: "timeline",
