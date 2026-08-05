@@ -53,6 +53,213 @@ impl CalendarModule {
     }
 }
 
+// ============ service layer (P1, F012) ============
+
+/// Domain type: a calendar collection (what `cal calendars` returns).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalCalendar {
+    pub href: String,
+    pub name: Option<String>,
+    pub colour: Option<String>,
+}
+
+/// Domain type: a calendar event (what `cal list` returns).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalEvent {
+    pub href: String,
+    pub start: String,
+    pub end: String,
+    pub summary: String,
+    pub location: String,
+}
+
+/// Date-filter options for `list`, parsed from CLI flags by `dispatch`.
+#[derive(Debug, Clone, Default)]
+pub struct CalListOptions {
+    pub limit: usize,
+    pub exact_date: Option<chrono::NaiveDate>,
+    pub min_date: Option<chrono::NaiveDate>,
+}
+
+/// New-event request (`cal add`).
+#[derive(Debug, Clone)]
+pub struct CalAddRequest {
+    pub title: String,
+    pub start: String,
+    pub end: String,
+    pub location: Option<String>,
+    pub description: Option<String>,
+    pub calendar: Option<String>,
+}
+
+/// Receipt for an added event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalAddReceipt {
+    pub href: String,
+    pub etag: String,
+}
+
+/// Receipt for a deleted event.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CalDeleteReceipt {
+    pub href: String,
+}
+
+/// Calendar service trait: domain methods, no `Output` in sight (P1,
+/// [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// `CalDavBackend` talks to CalDAV; `MockCalBackend` (tests) returns fixed
+/// data. `dispatch` is the only place that maps CLI args → service calls →
+/// `Output`.
+#[async_trait]
+pub trait CalBackend: Send + Sync {
+    /// All calendar collections for this account.
+    async fn calendars(&self) -> Result<Vec<CalCalendar>>;
+    /// List events, applying the date filter + sort + limit.
+    async fn list(&self, opts: &CalListOptions) -> Result<Vec<CalEvent>>;
+    /// Add a single event.
+    async fn add(&self, req: &CalAddRequest) -> Result<CalAddReceipt>;
+    /// Delete an event by href.
+    async fn delete(&self, href: &str) -> Result<CalDeleteReceipt>;
+}
+
+/// Real CalDAV backend. Holds the resolved account + credential + ignored
+/// calendars so the service methods don't re-resolve them per call.
+pub struct CalDavBackend {
+    account: CalendarAccount,
+    password: String,
+    ignored: Vec<String>,
+}
+
+/// Build the calendar backend for an account (credential read happens here, once).
+pub fn for_account(config: &Config, account: &CalendarAccount) -> Result<Box<dyn CalBackend>> {
+    let password = crate::modules::auth::get_credential(config, "cal", &account.name)?;
+    Ok(Box::new(CalDavBackend {
+        account: account.clone(),
+        password,
+        ignored: account.ignore_calendars.clone(),
+    }))
+}
+
+/// CLI dispatch: parse flags → call the backend service method → render to `Output`.
+///
+/// This is the only function in the calendar module that touches `Output` for
+/// actions; service methods themselves are output-free and directly testable.
+async fn dispatch(
+    backend: &dyn CalBackend,
+    action: &str,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
+    match action {
+        "calendars" => {
+            let calendars = backend.calendars().await?;
+            Ok(render_calendars(calendars))
+        }
+        "list" => {
+            let opts = parse_list_options(flags)?;
+            let events = backend.list(&opts).await?;
+            Ok(render_list(events))
+        }
+        "add" => {
+            let req = parse_add_request(flags)?;
+            let receipt = backend.add(&req).await?;
+            Ok(Output::text(format!(
+                "event added: {} (etag: {})",
+                receipt.href, receipt.etag
+            )))
+        }
+        "delete" => {
+            let href = flags.get("id").ok_or_else(|| {
+                AgentError::InvalidArgument(
+                    "--id <href> is required (get href from `cal list`)".into(),
+                )
+            })?;
+            let receipt = backend.delete(href).await?;
+            Ok(Output::text(format!("deleted: {}", receipt.href)))
+        }
+        other => Err(AgentError::UnknownAction(format!("cal {other}"))),
+    }
+}
+
+/// Parse `cal list` flags into `CalListOptions`.
+fn parse_list_options(flags: &HashMap<String, String>) -> Result<CalListOptions> {
+    let limit: usize = flags
+        .get("limit")
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(50);
+    // Default: today and future; --all: everything; --today: today only; --date YYYY-MM-DD: that day.
+    let today = chrono::Local::now().date_naive();
+    let (exact_date, min_date) = if flags.contains_key("all") {
+        (None, None)
+    } else if flags.contains_key("today") {
+        (Some(today), None)
+    } else if let Some(d) = flags.get("date") {
+        (Some(parse_date(d)?), None)
+    } else {
+        (None, Some(today)) // default: today and the future
+    };
+    Ok(CalListOptions {
+        limit,
+        exact_date,
+        min_date,
+    })
+}
+
+/// Parse `cal add` flags into `CalAddRequest` (datetime strings validated later
+/// by the backend when converting to VEVENT).
+fn parse_add_request(flags: &HashMap<String, String>) -> Result<CalAddRequest> {
+    let title = flags
+        .get("title")
+        .ok_or_else(|| AgentError::InvalidArgument("--title <text> is required".into()))?;
+    let start = flags.get("start").ok_or_else(|| {
+        AgentError::InvalidArgument("--start <ISO> is required (e.g. 2026-07-09T14:00:00Z)".into())
+    })?;
+    let end = flags
+        .get("end")
+        .ok_or_else(|| AgentError::InvalidArgument("--end <ISO> is required".into()))?;
+    Ok(CalAddRequest {
+        title: title.clone(),
+        start: start.clone(),
+        end: end.clone(),
+        location: flags.get("location").cloned(),
+        description: flags.get("description").cloned(),
+        calendar: flags.get("calendar").cloned(),
+    })
+}
+
+/// Render `cal calendars` rows: 路径 / 名称 / 颜色.
+fn render_calendars(calendars: Vec<CalCalendar>) -> Output {
+    let rows = calendars
+        .into_iter()
+        .map(|c| {
+            vec![
+                percent_decode(&c.href),
+                c.name.unwrap_or_else(|| "未命名".into()),
+                c.colour.unwrap_or_default(),
+            ]
+        })
+        .collect();
+    Output::records(vec!["路径".into(), "名称".into(), "颜色".into()], rows)
+}
+
+/// Render `cal list` rows: 路径 / 开始 / 结束 / 主题 / 地点.
+fn render_list(events: Vec<CalEvent>) -> Output {
+    let rows = events
+        .into_iter()
+        .map(|e| vec![e.href, e.start, e.end, e.summary, e.location])
+        .collect();
+    Output::records(
+        vec![
+            "路径".into(),
+            "开始".into(),
+            "结束".into(),
+            "主题".into(),
+            "地点".into(),
+        ],
+        rows,
+    )
+}
+
 #[async_trait]
 impl Executor for CalendarModule {
     fn description(&self) -> &'static str {
@@ -107,30 +314,22 @@ impl Executor for CalendarModule {
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
+        // Recognize an unknown action early (pitfall 10: avoid surfacing AuthError instead
+        // of UnknownAction when the password is empty).
+        if !matches!(action, "calendars" | "list" | "add" | "delete") {
+            return Err(AgentError::UnknownAction(format!("cal {action}")));
+        }
         let (flags, _) = parse_simple_args(args);
         let account = self
             .config
             .calendar_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // Recognize an unknown action early (pitfall 10: avoid surfacing AuthError instead
-        // of UnknownAction when the password is empty).
-        // The ignored-calendar list belongs to the account ([[calendar.accounts]]'s
-        // ignore_calendars).
-        let ignored = &account.ignore_calendars;
-        match action {
-            "calendars" | "list" | "add" | "delete" => {
-                let password =
-                    crate::modules::auth::get_credential(&self.config, "cal", &account.name)?;
-                match action {
-                    "calendars" => cal_calendars(account, &password, ignored).await,
-                    "list" => cal_list(account, &password, &flags, ignored).await,
-                    "add" => cal_add(account, &password, &flags, ignored).await,
-                    "delete" => cal_delete(account, &password, &flags).await,
-                    _ => unreachable!(),
-                }
-            }
-            other => Err(AgentError::UnknownAction(format!("cal {other}"))),
-        }
+        // DI seam (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)):
+        // credential lookup + backend construction happen here; `dispatch` only
+        // parses CLI args and calls service methods. Tests inject a
+        // `MockCalBackend` and drive `dispatch` directly — no CalDAV.
+        let backend = for_account(&self.config, account)?;
+        dispatch(backend.as_ref(), action, &flags).await
     }
 }
 
@@ -209,6 +408,16 @@ struct CalendarInfo {
     href: String,
     name: Option<String>,
     colour: Option<String>,
+}
+
+impl From<CalendarInfo> for CalCalendar {
+    fn from(c: CalendarInfo) -> Self {
+        Self {
+            href: c.href,
+            name: c.name,
+            colour: c.colour,
+        }
+    }
 }
 
 /// Discover and return all calendar collections (filtering out calendars whose
@@ -298,208 +507,140 @@ async fn list_all_calendars(caldav: &CalDav, ignored: &[String]) -> Result<Vec<C
     Ok(out)
 }
 
-// ============ Action implementations ============
+// ============ CalDAV backend implementation (P1) ============
 
-/// `cal calendars`: list all of the user's calendar collections (decoded href + unnamed placeholder).
-async fn cal_calendars(
-    account: &CalendarAccount,
-    password: &str,
-    ignored: &[String],
-) -> Result<Output> {
-    let caldav = build_client(account, password).await?;
-    let calendars = list_all_calendars(&caldav, ignored).await?;
-    let rows = calendars
-        .into_iter()
-        .map(|c| {
-            vec![
-                percent_decode(&c.href),
-                c.name.unwrap_or_else(|| "未命名".into()),
-                c.colour.unwrap_or_default(),
-            ]
-        })
-        .collect();
-    Ok(Output::records(
-        vec!["路径".into(), "名称".into(), "颜色".into()],
-        rows,
-    ))
-}
+#[async_trait]
+impl CalBackend for CalDavBackend {
+    /// `cal calendars`: list all of the user's calendar collections.
+    async fn calendars(&self) -> Result<Vec<CalCalendar>> {
+        let caldav = build_client(&self.account, &self.password).await?;
+        let calendars = list_all_calendars(&caldav, &self.ignored).await?;
+        Ok(calendars.into_iter().map(CalCalendar::from).collect())
+    }
 
-/// `cal list`: list events. By default returns events from all calendars; `--today`
-/// limits to today, `--date YYYY-MM-DD` limits to a given date.
-///
-/// Strategy: use `GetCalendarResources` (calendar-query REPORT) to pull every calendar's
-/// events in full (with calendar-data), parse VEVENTs locally with icalendar, then filter
-/// by optional date. This is more reliable than a server-side time-range REPORT (domestic
-/// servers vary in time-range quality and may return empty). See
-/// [C002](../../docs/adr/C002-full-pull-local-filter.md).
-async fn cal_list(
-    account: &CalendarAccount,
-    password: &str,
-    flags: &HashMap<String, String>,
-    ignored: &[String],
-) -> Result<Output> {
-    let caldav = build_client(account, password).await?;
-    let calendars = list_all_calendars(&caldav, ignored).await?;
-    let limit: usize = flags
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(50);
-    // Default: today and future; --all: everything; --today: today only; --date YYYY-MM-DD: that day.
-    let today = chrono::Local::now().date_naive();
-    let (exact_date, min_date): (Option<chrono::NaiveDate>, Option<chrono::NaiveDate>) =
-        if flags.contains_key("all") {
-            (None, None)
-        } else if flags.contains_key("today") {
-            (Some(today), None)
-        } else if let Some(d) = flags.get("date") {
-            (Some(parse_date(d)?), None)
-        } else {
-            (None, Some(today)) // default: today and the future
-        };
+    /// `cal list`: list events. By default returns events from all calendars; `--today`
+    /// limits to today, `--date YYYY-MM-DD` limits to a given date.
+    ///
+    /// Strategy: use `GetCalendarResources` (calendar-query REPORT) to pull every calendar's
+    /// events in full (with calendar-data), parse VEVENTs locally with icalendar, then filter
+    /// by optional date. This is more reliable than a server-side time-range REPORT (domestic
+    /// servers vary in time-range quality and may return empty). See
+    /// [C002](../../docs/adr/C002-full-pull-local-filter.md).
+    async fn list(&self, opts: &CalListOptions) -> Result<Vec<CalEvent>> {
+        let caldav = build_client(&self.account, &self.password).await?;
+        let calendars = list_all_calendars(&caldav, &self.ignored).await?;
+        let (exact_date, min_date) = (opts.exact_date, opts.min_date);
 
-    let mut events: Vec<EventRow> = Vec::new();
-    for cal in &calendars {
-        let resp = match caldav.request(GetCalendarResources::new(&cal.href)).await {
-            Ok(r) => r,
-            Err(_) => continue, // a single calendar's fetch failure is non-fatal
-        };
-        for res in resp.resources {
-            let content = match res.content {
-                Ok(c) => c,
-                Err(_) => continue,
+        let mut events: Vec<EventRow> = Vec::new();
+        for cal in &calendars {
+            let resp = match caldav.request(GetCalendarResources::new(&cal.href)).await {
+                Ok(r) => r,
+                Err(_) => continue, // a single calendar's fetch failure is non-fatal
             };
-            // Parse iCalendar, extract VEVENTs, and apply date filtering.
-            if let Ok(parsed) = content.data.parse::<Calendar>() {
-                for event in parsed.events() {
-                    if let Some(row) = build_event_row(&res.href, event) {
-                        let d = row.sort_key.date();
-                        let keep =
-                            exact_date.is_none_or(|e| d == e) && min_date.is_none_or(|m| d >= m);
-                        if keep {
-                            events.push(row);
+            for res in resp.resources {
+                let content = match res.content {
+                    Ok(c) => c,
+                    Err(_) => continue,
+                };
+                // Parse iCalendar, extract VEVENTs, and apply date filtering.
+                if let Ok(parsed) = content.data.parse::<Calendar>() {
+                    for event in parsed.events() {
+                        if let Some(row) = build_event_row(&res.href, event) {
+                            let d = row.sort_key.date();
+                            let keep = exact_date.is_none_or(|e| d == e)
+                                && min_date.is_none_or(|m| d >= m);
+                            if keep {
+                                events.push(row);
+                            }
                         }
                     }
                 }
             }
         }
+
+        // Sort: future events first (ascending start time, nearest future first), past events
+        // after (descending, nearest past first). This keeps a flood of past events (e.g. contact
+        // birthdays) from filling the limit and hiding upcoming events.
+        let now = chrono::Local::now().naive_local();
+        events.sort_by(|a, b| {
+            let (af, bf) = (a.sort_key >= now, b.sort_key >= now);
+            match (af, bf) {
+                (true, true) => a.sort_key.cmp(&b.sort_key),
+                (false, false) => b.sort_key.cmp(&a.sort_key),
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+            }
+        });
+        events.truncate(opts.limit);
+        Ok(events.into_iter().map(CalEvent::from).collect())
     }
 
-    // Sort: future events first (ascending start time, nearest future first), past events
-    // after (descending, nearest past first). This keeps a flood of past events (e.g. contact
-    // birthdays) from filling the limit and hiding upcoming events.
-    let now = chrono::Local::now().naive_local();
-    events.sort_by(|a, b| {
-        let (af, bf) = (a.sort_key >= now, b.sort_key >= now);
-        match (af, bf) {
-            (true, true) => a.sort_key.cmp(&b.sort_key),
-            (false, false) => b.sort_key.cmp(&a.sort_key),
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
+    /// `cal add`: add an event. Build a VEVENT with icalendar and PUT it to the target calendar.
+    async fn add(&self, req: &CalAddRequest) -> Result<CalAddReceipt> {
+        let start_dt = parse_datetime(&req.start)?;
+        let end_dt = parse_datetime(&req.end)?;
+
+        // Build the VEVENT. Event's builder methods return &mut Self, so we create it owned,
+        // chain, then call .done() at the end.
+        let mut event = Event::new();
+        event.summary(&req.title).starts(start_dt).ends(end_dt);
+        if let Some(loc) = &req.location {
+            event.location(loc);
         }
-    });
-    events.truncate(limit);
+        if let Some(desc) = &req.description {
+            event.description(desc);
+        }
+        let event = event.done();
 
-    let rows = events
-        .into_iter()
-        .map(|e| vec![e.href, e.start, e.end, e.summary, e.location])
-        .collect();
-    Ok(Output::records(
-        vec![
-            "路径".into(),
-            "开始".into(),
-            "结束".into(),
-            "主题".into(),
-            "地点".into(),
-        ],
-        rows,
-    ))
-}
+        let calendar = Calendar::new().push(event).done();
+        // icalendar's fmt_write emits CRLF via write_crlf!, but normalization guarantees the
+        // whole body is CRLF (required by CalDAV).
+        let ics = normalize_crlf(&calendar.to_string());
 
-/// `cal add`: add an event. Build a VEVENT with icalendar and PUT it to the target calendar.
-async fn cal_add(
-    account: &CalendarAccount,
-    password: &str,
-    flags: &HashMap<String, String>,
-    ignored: &[String],
-) -> Result<Output> {
-    let title = flags
-        .get("title")
-        .ok_or_else(|| AgentError::InvalidArgument("--title <text> is required".into()))?;
-    let start = flags.get("start").ok_or_else(|| {
-        AgentError::InvalidArgument("--start <ISO> is required (e.g. 2026-07-09T14:00:00Z)".into())
-    })?;
-    let end = flags
-        .get("end")
-        .ok_or_else(|| AgentError::InvalidArgument("--end <ISO> is required".into()))?;
+        let caldav = build_client(&self.account, &self.password).await?;
+        let calendars = list_all_calendars(&caldav, &self.ignored).await?;
 
-    let start_dt = parse_datetime(start)?;
-    let end_dt = parse_datetime(end)?;
+        // Pick the target calendar: --calendar HREF or name match, default to the first.
+        let target = if let Some(h) = &req.calendar {
+            calendars
+                .into_iter()
+                .find(|c| c.href == *h || c.name.as_deref() == Some(h.as_str()))
+                .ok_or_else(|| AgentError::InvalidArgument(format!("calendar '{h}' not found")))?
+        } else {
+            calendars.into_iter().next().ok_or_else(|| {
+                AgentError::Other("no calendar collection found for this account".into())
+            })?
+        };
 
-    // Build the VEVENT. Event's builder methods return &mut Self, so we create it owned,
-    // chain, then call .done() at the end.
-    let mut event = Event::new();
-    event.summary(title).starts(start_dt).ends(end_dt);
-    if let Some(loc) = flags.get("location") {
-        event.location(loc);
+        // Build the new href: <calendar_href>/<timestamp>.ics. UID is auto-generated by icalendar.
+        let new_href = format!(
+            "{}{}.ics",
+            ensure_trailing_slash(&target.href),
+            event_filename()
+        );
+
+        let resp = caldav
+            .request(PutResource::new(&new_href).create(ics, "text/calendar; charset=utf-8"))
+            .await
+            .map_err(|e| AgentError::Network(format!("put event: {e}")))?;
+
+        Ok(CalAddReceipt {
+            href: new_href,
+            etag: resp.etag.unwrap_or_else(|| "n/a".into()),
+        })
     }
-    if let Some(desc) = flags.get("description") {
-        event.description(desc);
+
+    /// `cal delete`: delete an event by href (force delete, unconditional).
+    async fn delete(&self, href: &str) -> Result<CalDeleteReceipt> {
+        let caldav = build_client(&self.account, &self.password).await?;
+        caldav
+            .request(Delete::new(href).force())
+            .await
+            .map_err(|e| AgentError::Network(format!("delete event: {e}")))?;
+        Ok(CalDeleteReceipt {
+            href: href.to_string(),
+        })
     }
-    let event = event.done();
-
-    let calendar = Calendar::new().push(event).done();
-    // icalendar's fmt_write emits CRLF via write_crlf!, but normalization guarantees the
-    // whole body is CRLF (required by CalDAV).
-    let ics = normalize_crlf(&calendar.to_string());
-
-    let caldav = build_client(account, password).await?;
-    let calendars = list_all_calendars(&caldav, ignored).await?;
-
-    // Pick the target calendar: --calendar HREF or name match, default to the first.
-    let target = if let Some(h) = flags.get("calendar") {
-        calendars
-            .into_iter()
-            .find(|c| c.href == *h || c.name.as_deref() == Some(h.as_str()))
-            .ok_or_else(|| AgentError::InvalidArgument(format!("calendar '{h}' not found")))?
-    } else {
-        calendars.into_iter().next().ok_or_else(|| {
-            AgentError::Other("no calendar collection found for this account".into())
-        })?
-    };
-
-    // Build the new href: <calendar_href>/<timestamp>.ics. UID is auto-generated by icalendar.
-    let new_href = format!(
-        "{}{}.ics",
-        ensure_trailing_slash(&target.href),
-        event_filename()
-    );
-
-    let resp = caldav
-        .request(PutResource::new(&new_href).create(ics, "text/calendar; charset=utf-8"))
-        .await
-        .map_err(|e| AgentError::Network(format!("put event: {e}")))?;
-
-    Ok(Output::text(format!(
-        "event added: {new_href} (etag: {})",
-        resp.etag.unwrap_or_else(|| "n/a".into())
-    )))
-}
-
-/// `cal delete`: delete an event by href (force delete, unconditional).
-async fn cal_delete(
-    account: &CalendarAccount,
-    password: &str,
-    flags: &HashMap<String, String>,
-) -> Result<Output> {
-    let href = flags.get("id").ok_or_else(|| {
-        AgentError::InvalidArgument("--id <href> is required (get href from `cal list`)".into())
-    })?;
-    let caldav = build_client(account, password).await?;
-    caldav
-        .request(Delete::new(href).force())
-        .await
-        .map_err(|e| AgentError::Network(format!("delete event: {e}")))?;
-    Ok(Output::text(format!("deleted: {href}")))
 }
 
 // ============ Helper functions ============
@@ -512,6 +653,18 @@ struct EventRow {
     summary: String,
     location: String,
     sort_key: chrono::NaiveDateTime,
+}
+
+impl From<EventRow> for CalEvent {
+    fn from(r: EventRow) -> Self {
+        Self {
+            href: r.href,
+            start: r.start,
+            end: r.end,
+            summary: r.summary,
+            location: r.location,
+        }
+    }
 }
 
 /// Build a display row from a parsed VEVENT (no date filtering; filtering is done by
@@ -886,6 +1039,123 @@ impl Searchable for CalSearchProvider {
 mod tests {
     use super::*;
     use chrono::{TimeZone, Utc};
+
+    // ---- P1 service layer (F012) ----
+
+    /// In-memory backend driving `dispatch` without CalDAV.
+    #[derive(Default)]
+    struct MockCalBackend {
+        calendars: Vec<CalCalendar>,
+        events: Vec<CalEvent>,
+    }
+
+    #[async_trait]
+    impl CalBackend for MockCalBackend {
+        async fn calendars(&self) -> Result<Vec<CalCalendar>> {
+            Ok(self.calendars.clone())
+        }
+        async fn list(&self, _opts: &CalListOptions) -> Result<Vec<CalEvent>> {
+            Ok(self.events.clone())
+        }
+        async fn add(&self, req: &CalAddRequest) -> Result<CalAddReceipt> {
+            Ok(CalAddReceipt {
+                href: format!("/cal/{}.ics", req.title),
+                etag: "abc".into(),
+            })
+        }
+        async fn delete(&self, href: &str) -> Result<CalDeleteReceipt> {
+            Ok(CalDeleteReceipt {
+                href: href.to_string(),
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_calendars_uses_mock_backend() {
+        let mock = MockCalBackend {
+            calendars: vec![CalCalendar {
+                href: "/user/cal/".into(),
+                name: Some("工作".into()),
+                colour: Some("#ff0000".into()),
+            }],
+            ..Default::default()
+        };
+        let out = dispatch(&mock, "calendars", &HashMap::new()).await.unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["路径", "名称", "颜色"]);
+                assert_eq!(rows, vec![vec!["/user/cal/", "工作", "#ff0000"]]);
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_list_parses_date_filter_and_renders() {
+        let mock = MockCalBackend {
+            events: vec![CalEvent {
+                href: "/cal/e1.ics".into(),
+                start: "2026-08-05 10:00".into(),
+                end: "2026-08-05 11:00".into(),
+                summary: "晨会".into(),
+                location: "A 座".into(),
+            }],
+            ..Default::default()
+        };
+        let mut flags = HashMap::new();
+        flags.insert("date".into(), "2026-08-05".into());
+        let out = dispatch(&mock, "list", &flags).await.unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["路径", "开始", "结束", "主题", "地点"]);
+                assert_eq!(
+                    rows,
+                    vec![vec![
+                        "/cal/e1.ics",
+                        "2026-08-05 10:00",
+                        "2026-08-05 11:00",
+                        "晨会",
+                        "A 座"
+                    ]]
+                );
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_add_requires_title_start_end() {
+        let mock = MockCalBackend::default();
+        // Missing --title -> InvalidArgument before the backend is called.
+        let err = dispatch(&mock, "add", &HashMap::new()).await.unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+        // Complete request renders the receipt.
+        let mut flags = HashMap::new();
+        flags.insert("title".into(), "meeting".into());
+        flags.insert("start".into(), "2026-08-05T10:00:00Z".into());
+        flags.insert("end".into(), "2026-08-05T11:00:00Z".into());
+        let out = dispatch(&mock, "add", &flags).await.unwrap();
+        assert_eq!(
+            out.render(crate::output::RenderMode::Text),
+            "event added: /cal/meeting.ics (etag: abc)"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_delete_requires_id() {
+        let mock = MockCalBackend::default();
+        let err = dispatch(&mock, "delete", &HashMap::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+        let mut flags = HashMap::new();
+        flags.insert("id".into(), "/cal/e1.ics".into());
+        let out = dispatch(&mock, "delete", &flags).await.unwrap();
+        assert_eq!(
+            out.render(crate::output::RenderMode::Text),
+            "deleted: /cal/e1.ics"
+        );
+    }
 
     #[test]
     fn parse_date_valid() {

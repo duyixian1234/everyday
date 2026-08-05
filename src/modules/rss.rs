@@ -27,14 +27,36 @@ use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
 
 /// Display row for a single aggregated entry, plus its sort key.
-struct EntryRow {
-    feed: String,
-    title: String,
-    published: String,
-    author: String,
-    link: String,
+#[derive(Debug, Clone)]
+pub struct RssEntryRow {
+    pub feed: String,
+    pub title: String,
+    pub published: String,
+    pub author: String,
+    pub link: String,
     /// Publish time used for sorting (entries without a time sort last).
-    sort_key: Option<DateTime<Utc>>,
+    pub sort_key: Option<DateTime<Utc>>,
+}
+
+/// Options for `digest`, parsed from CLI flags by `dispatch`.
+#[derive(Debug, Clone, Default)]
+pub struct RssDigestOptions {
+    pub limit: usize,
+    pub name: Option<String>,
+    pub category: Option<String>,
+}
+
+/// Receipt for a followed feed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RssFollowReceipt {
+    pub name: String,
+    pub url: String,
+}
+
+/// Receipt for an unfollowed feed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RssUnfollowReceipt {
+    pub name: String,
 }
 
 /// Result of one fetch: `feed` on success, `error` on failure.
@@ -155,14 +177,286 @@ impl Executor for RssModule {
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
         let (flags, _positional) = parse_simple_args(args);
-        match action {
-            "follow" => rss_follow(&flags).await,
-            "list" => rss_list(&self.config),
-            "unfollow" => rss_unfollow(&flags).await,
-            "digest" => rss_digest(&self.config, &flags).await,
-            "fetch" => rss_fetch(&self.config, &flags).await,
-            other => Err(AgentError::UnknownAction(format!("rss {other}"))),
+        // DI seam (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)):
+        // the backend owns config-file reads/writes + network; `dispatch` only maps
+        // CLI args → service calls → Output. Tests inject a `MockRssBackend`.
+        let backend = RealRssBackend::new(self.config.clone());
+        dispatch(&backend, action, &flags).await
+    }
+}
+
+/// RSS service trait: domain methods, no `Output` in sight (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+#[async_trait]
+pub trait RssBackend: Send + Sync {
+    /// Follow a feed (writes to the config file).
+    async fn follow(
+        &self,
+        name: &str,
+        url: &str,
+        category: Option<&str>,
+    ) -> Result<RssFollowReceipt>;
+    /// List all subscribed feeds.
+    fn list(&self) -> Result<Vec<RssFeed>>;
+    /// Unfollow a feed (removes from the config file).
+    async fn unfollow(&self, name: &str) -> Result<RssUnfollowReceipt>;
+    /// Fetch all matching feeds concurrently and aggregate entries (best-effort).
+    async fn digest(&self, opts: &RssDigestOptions) -> Result<Vec<RssEntryRow>>;
+    /// Fetch a single feed's entries.
+    async fn fetch(&self, name: &str, limit: usize) -> Result<Vec<RssEntryRow>>;
+}
+
+/// Real backend: config-file reads/writes for follow/list/unfollow; reqwest + feed-rs for digest/fetch.
+pub struct RealRssBackend {
+    config: Arc<Config>,
+}
+
+impl RealRssBackend {
+    pub fn new(config: Arc<Config>) -> Self {
+        Self { config }
+    }
+}
+
+/// CLI dispatch: parse flags → call the backend service method → render to `Output`.
+/// The only place in the rss module that touches `Output` for actions.
+async fn dispatch(
+    backend: &dyn RssBackend,
+    action: &str,
+    flags: &HashMap<String, String>,
+) -> Result<Output> {
+    match action {
+        "follow" => {
+            let name = flags.get("name").ok_or_else(|| {
+                AgentError::InvalidArgument("follow requires --name <name>".into())
+            })?;
+            let url = flags
+                .get("url")
+                .ok_or_else(|| AgentError::InvalidArgument("follow requires --url <url>".into()))?;
+            let receipt = backend
+                .follow(name, url, flags.get("category").map(|s| s.as_str()))
+                .await?;
+            Ok(Output::text(format!(
+                "followed feed '{}' ({})",
+                receipt.name, receipt.url
+            )))
         }
+        "list" => {
+            let feeds = backend.list()?;
+            Ok(render_list(feeds))
+        }
+        "unfollow" => {
+            let name = flags.get("name").ok_or_else(|| {
+                AgentError::InvalidArgument("unfollow requires --name <name>".into())
+            })?;
+            let receipt = backend.unfollow(name).await?;
+            Ok(Output::text(format!("unfollowed feed '{}'", receipt.name)))
+        }
+        "digest" => {
+            let opts = RssDigestOptions {
+                limit: flags
+                    .get("limit")
+                    .and_then(|s| s.parse::<usize>().ok())
+                    .unwrap_or(30),
+                name: flags.get("name").cloned(),
+                category: flags.get("category").cloned(),
+            };
+            let rows = backend.digest(&opts).await?;
+            Ok(render_digest(rows))
+        }
+        "fetch" => {
+            let name = flags.get("name").ok_or_else(|| {
+                AgentError::InvalidArgument("fetch requires --name <name>".into())
+            })?;
+            let limit = flags
+                .get("limit")
+                .and_then(|s| s.parse::<usize>().ok())
+                .unwrap_or(20);
+            let rows = backend.fetch(name, limit).await?;
+            Ok(render_fetch(rows))
+        }
+        other => Err(AgentError::UnknownAction(format!("rss {other}"))),
+    }
+}
+
+/// `rss list` rows: name / URL / category.
+fn render_list(feeds: Vec<RssFeed>) -> Output {
+    let rows = feeds
+        .into_iter()
+        .map(|f| {
+            vec![
+                f.name.clone(),
+                f.url.clone(),
+                f.category.clone().unwrap_or_default(),
+            ]
+        })
+        .collect();
+    Output::records(vec!["name".into(), "url".into(), "category".into()], rows)
+}
+
+/// `rss digest` rows: feed / title / published / author / link.
+fn render_digest(rows: Vec<RssEntryRow>) -> Output {
+    let out_rows = rows
+        .into_iter()
+        .map(|r| vec![r.feed, r.title, r.published, r.author, r.link])
+        .collect();
+    Output::records(
+        vec![
+            "feed".into(),
+            "title".into(),
+            "published".into(),
+            "author".into(),
+            "link".into(),
+        ],
+        out_rows,
+    )
+}
+
+/// `rss fetch` rows: title / published / author / link.
+fn render_fetch(rows: Vec<RssEntryRow>) -> Output {
+    let out_rows = rows
+        .into_iter()
+        .map(|r| vec![r.title, r.published, r.author, r.link])
+        .collect();
+    Output::records(
+        vec![
+            "title".into(),
+            "published".into(),
+            "author".into(),
+            "link".into(),
+        ],
+        out_rows,
+    )
+}
+
+#[async_trait]
+impl RssBackend for RealRssBackend {
+    async fn follow(
+        &self,
+        name: &str,
+        url: &str,
+        category: Option<&str>,
+    ) -> Result<RssFollowReceipt> {
+        if !(url.starts_with("http://") || url.starts_with("https://")) {
+            return Err(AgentError::InvalidArgument(format!(
+                "invalid feed url (must start with http:// or https://): {url}"
+            )));
+        }
+        let feed = RssFeed {
+            name: name.to_string(),
+            url: url.to_string(),
+            category: category.map(|s| s.to_string()),
+        };
+
+        let mut root = load_config_value()?;
+        append_feed(&mut root, &feed)?;
+        save_config_value(&root)?;
+        Ok(RssFollowReceipt {
+            name: feed.name,
+            url: feed.url,
+        })
+    }
+
+    fn list(&self) -> Result<Vec<RssFeed>> {
+        Ok(self.config.rss.feeds.clone())
+    }
+
+    async fn unfollow(&self, name: &str) -> Result<RssUnfollowReceipt> {
+        let mut root = load_config_value()?;
+        let removed = remove_feed(&mut root, name)?;
+        if !removed {
+            return Err(AgentError::InvalidArgument(format!(
+                "feed '{name}' not found"
+            )));
+        }
+        save_config_value(&root)?;
+        Ok(RssUnfollowReceipt {
+            name: name.to_string(),
+        })
+    }
+
+    async fn digest(&self, opts: &RssDigestOptions) -> Result<Vec<RssEntryRow>> {
+        let feeds = filter_feeds(&self.config.rss.feeds, opts)?;
+        if feeds.is_empty() {
+            return Err(AgentError::InvalidArgument(
+                "no feeds to fetch (add one with `everyday rss follow --name N --url URL`)".into(),
+            ));
+        }
+
+        let client = build_client()?;
+        let tasks: Vec<_> = feeds.iter().map(|f| fetch_one(&client, f)).collect();
+        let results = join_all(tasks).await;
+
+        let mut rows: Vec<RssEntryRow> = Vec::new();
+        let mut errors: Vec<String> = Vec::new();
+        // Phase 11: cache writes piggy-back on the same fetch. Best-effort: a
+        // cache failure must not block the user's digest output [S005].
+        let cache_pool = rss_items::open().await.ok();
+        for r in results {
+            match r.feed {
+                Some(f) => {
+                    // Project entries into the cache-friendly shape and write.
+                    if let Some(pool) = &cache_pool {
+                        let entries: Vec<EntryForCache> = f
+                            .entries
+                            .iter()
+                            .map(|e| EntryForCache::from_entry(&r.name, e))
+                            .collect();
+                        // Find the matching RssFeed for url metadata.
+                        if let Some(feed) = self.config.rss.feeds.iter().find(|x| x.name == r.name)
+                        {
+                            let _ = rss_items::upsert_items(pool, feed, &entries).await;
+                        }
+                    }
+                    for e in &f.entries {
+                        rows.push(build_entry_row(&r.name, e));
+                    }
+                }
+                None => errors.push(format!("{}: {}", r.name, r.error.unwrap_or_default())),
+            }
+        }
+
+        // All failed -> error; partially failed -> still output the successful part (best-effort).
+        if rows.is_empty() && !errors.is_empty() {
+            return Err(AgentError::Network(errors.join("; ")));
+        }
+
+        rows.sort_by(|a, b| cmp_opt_dt_desc(&a.sort_key, &b.sort_key));
+        rows.truncate(opts.limit);
+        Ok(rows)
+    }
+
+    async fn fetch(&self, name: &str, limit: usize) -> Result<Vec<RssEntryRow>> {
+        let feed = self
+            .config
+            .rss
+            .feeds
+            .iter()
+            .find(|f| f.name == name)
+            .ok_or_else(|| AgentError::InvalidArgument(format!("feed '{name}' not found")))?;
+
+        let client = build_client()?;
+        let res = fetch_one(&client, feed).await;
+        let f = res.feed.ok_or_else(|| {
+            AgentError::Network(res.error.unwrap_or_else(|| "fetch failed".into()))
+        })?;
+
+        // Phase 11: also write to the local cache (best-effort).
+        if let Ok(pool) = rss_items::open().await {
+            let entries: Vec<EntryForCache> = f
+                .entries
+                .iter()
+                .map(|e| EntryForCache::from_entry(&feed.name, e))
+                .collect();
+            let _ = rss_items::upsert_items(&pool, feed, &entries).await;
+        }
+
+        let mut rows: Vec<RssEntryRow> = f
+            .entries
+            .iter()
+            .map(|e| build_entry_row(&feed.name, e))
+            .collect();
+        rows.sort_by(|a, b| cmp_opt_dt_desc(&a.sort_key, &b.sort_key));
+        rows.truncate(limit);
+        Ok(rows)
     }
 }
 
@@ -251,13 +545,13 @@ fn remove_feed(root: &mut toml::Value, name: &str) -> Result<bool> {
 /// Filter feeds: `--name` and `--category` match exactly (case-sensitive).
 ///
 /// If `--name` is given but no feed matches, return `InvalidArgument` (not found).
-fn filter_feeds(feeds: &[RssFeed], flags: &HashMap<String, String>) -> Result<Vec<RssFeed>> {
-    let name = flags.get("name");
-    let category = flags.get("category");
+fn filter_feeds(feeds: &[RssFeed], opts: &RssDigestOptions) -> Result<Vec<RssFeed>> {
+    let name = opts.name.as_deref();
+    let category = opts.category.as_deref();
     let mut out = Vec::new();
     for f in feeds {
         if let Some(n) = name
-            && &f.name != n
+            && f.name != n
         {
             continue;
         }
@@ -275,197 +569,6 @@ fn filter_feeds(feeds: &[RssFeed], flags: &HashMap<String, String>) -> Result<Ve
         return Err(AgentError::InvalidArgument(format!("feed '{n}' not found")));
     }
     Ok(out)
-}
-
-// ============ Action implementations ============
-
-/// `rss follow --name N --url URL [--category C]`: write to the config file.
-async fn rss_follow(flags: &HashMap<String, String>) -> Result<Output> {
-    let name = flags
-        .get("name")
-        .ok_or_else(|| AgentError::InvalidArgument("follow requires --name <name>".into()))?;
-    let url = flags
-        .get("url")
-        .ok_or_else(|| AgentError::InvalidArgument("follow requires --url <url>".into()))?;
-    if !(url.starts_with("http://") || url.starts_with("https://")) {
-        return Err(AgentError::InvalidArgument(format!(
-            "invalid feed url (must start with http:// or https://): {url}"
-        )));
-    }
-    let category = flags.get("category").cloned();
-    let feed = RssFeed {
-        name: name.clone(),
-        url: url.clone(),
-        category,
-    };
-
-    let mut root = load_config_value()?;
-    append_feed(&mut root, &feed)?;
-    save_config_value(&root)?;
-    Ok(Output::text(format!(
-        "followed feed '{}' ({})",
-        feed.name, feed.url
-    )))
-}
-
-/// `rss list`: list all subscribed feeds (headers: name / URL / category).
-fn rss_list(config: &Config) -> Result<Output> {
-    let rows = config
-        .rss
-        .feeds
-        .iter()
-        .map(|f| {
-            vec![
-                f.name.clone(),
-                f.url.clone(),
-                f.category.clone().unwrap_or_default(),
-            ]
-        })
-        .collect();
-    Ok(Output::records(
-        vec!["name".into(), "url".into(), "category".into()],
-        rows,
-    ))
-}
-
-/// `rss unfollow --name N`: remove from the config file.
-async fn rss_unfollow(flags: &HashMap<String, String>) -> Result<Output> {
-    let name = flags
-        .get("name")
-        .ok_or_else(|| AgentError::InvalidArgument("unfollow requires --name <name>".into()))?;
-    let mut root = load_config_value()?;
-    let removed = remove_feed(&mut root, name)?;
-    if !removed {
-        return Err(AgentError::InvalidArgument(format!(
-            "feed '{name}' not found"
-        )));
-    }
-    save_config_value(&root)?;
-    Ok(Output::text(format!("unfollowed feed '{name}'")))
-}
-
-/// `rss digest [--limit N] [--name FEED] [--category C]`: concurrent fetch, aggregate, sort by time descending.
-async fn rss_digest(config: &Config, flags: &HashMap<String, String>) -> Result<Output> {
-    let feeds = filter_feeds(&config.rss.feeds, flags)?;
-    if feeds.is_empty() {
-        return Err(AgentError::InvalidArgument(
-            "no feeds to fetch (add one with `everyday rss follow --name N --url URL`)".into(),
-        ));
-    }
-
-    let client = build_client()?;
-    let tasks: Vec<_> = feeds.iter().map(|f| fetch_one(&client, f)).collect();
-    let results = join_all(tasks).await;
-
-    let mut rows: Vec<EntryRow> = Vec::new();
-    let mut errors: Vec<String> = Vec::new();
-    // Phase 11: cache writes piggy-back on the same fetch. Best-effort: a
-    // cache failure must not block the user's digest output [S005].
-    let cache_pool = rss_items::open().await.ok();
-    for r in results {
-        match r.feed {
-            Some(f) => {
-                // Project entries into the cache-friendly shape and write.
-                if let Some(pool) = &cache_pool {
-                    let entries: Vec<EntryForCache> = f
-                        .entries
-                        .iter()
-                        .map(|e| EntryForCache::from_entry(&r.name, e))
-                        .collect();
-                    // Find the matching RssFeed for url metadata.
-                    if let Some(feed) = config.rss.feeds.iter().find(|x| x.name == r.name) {
-                        let _ = rss_items::upsert_items(pool, feed, &entries).await;
-                    }
-                }
-                for e in &f.entries {
-                    rows.push(build_entry_row(&r.name, e));
-                }
-            }
-            None => errors.push(format!("{}: {}", r.name, r.error.unwrap_or_default())),
-        }
-    }
-
-    // All failed -> error; partially failed -> still output the successful part (best-effort).
-    if rows.is_empty() && !errors.is_empty() {
-        return Err(AgentError::Network(errors.join("; ")));
-    }
-
-    rows.sort_by(|a, b| cmp_opt_dt_desc(&a.sort_key, &b.sort_key));
-    let limit = flags
-        .get("limit")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(30);
-    rows.truncate(limit);
-
-    let out_rows = rows
-        .into_iter()
-        .map(|r| vec![r.feed, r.title, r.published, r.author, r.link])
-        .collect();
-    Ok(Output::records(
-        vec![
-            "feed".into(),
-            "title".into(),
-            "published".into(),
-            "author".into(),
-            "link".into(),
-        ],
-        out_rows,
-    ))
-}
-
-/// `rss fetch --name N [--limit N]`: fetch a single feed and list its entries.
-async fn rss_fetch(config: &Config, flags: &HashMap<String, String>) -> Result<Output> {
-    let name = flags
-        .get("name")
-        .ok_or_else(|| AgentError::InvalidArgument("fetch requires --name <name>".into()))?;
-    let feed = config
-        .rss
-        .feeds
-        .iter()
-        .find(|f| &f.name == name)
-        .ok_or_else(|| AgentError::InvalidArgument(format!("feed '{name}' not found")))?;
-
-    let client = build_client()?;
-    let res = fetch_one(&client, feed).await;
-    let f = res
-        .feed
-        .ok_or_else(|| AgentError::Network(res.error.unwrap_or_else(|| "fetch failed".into())))?;
-
-    // Phase 11: also write to the local cache (best-effort).
-    if let Ok(pool) = rss_items::open().await {
-        let entries: Vec<EntryForCache> = f
-            .entries
-            .iter()
-            .map(|e| EntryForCache::from_entry(&feed.name, e))
-            .collect();
-        let _ = rss_items::upsert_items(&pool, feed, &entries).await;
-    }
-
-    let mut rows: Vec<EntryRow> = f
-        .entries
-        .iter()
-        .map(|e| build_entry_row(&feed.name, e))
-        .collect();
-    rows.sort_by(|a, b| cmp_opt_dt_desc(&a.sort_key, &b.sort_key));
-    let limit = flags
-        .get("limit")
-        .and_then(|s| s.parse::<usize>().ok())
-        .unwrap_or(20);
-    rows.truncate(limit);
-
-    let out_rows = rows
-        .into_iter()
-        .map(|r| vec![r.title, r.published, r.author, r.link])
-        .collect();
-    Ok(Output::records(
-        vec![
-            "title".into(),
-            "published".into(),
-            "author".into(),
-            "link".into(),
-        ],
-        out_rows,
-    ))
 }
 
 // ============ Network fetch ============
@@ -524,7 +627,7 @@ async fn fetch_one(client: &reqwest::Client, feed: &RssFeed) -> FetchedFeed {
 // ============ Entry row construction ============
 
 /// Build a display row from a feed-rs Entry.
-fn build_entry_row(feed_name: &str, entry: &feed_rs::model::Entry) -> EntryRow {
+fn build_entry_row(feed_name: &str, entry: &feed_rs::model::Entry) -> RssEntryRow {
     let title = entry
         .title
         .as_ref()
@@ -540,7 +643,7 @@ fn build_entry_row(feed_name: &str, entry: &feed_rs::model::Entry) -> EntryRow {
     let published_str = published
         .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
         .unwrap_or_else(|| "—".into());
-    EntryRow {
+    RssEntryRow {
         feed: feed_name.to_string(),
         title,
         published: published_str,
@@ -671,6 +774,115 @@ mod tests {
     use super::*;
     use chrono::TimeZone;
 
+    // ---- P1 service layer (F012) ----
+
+    /// In-memory backend driving `dispatch` without config-file writes or network.
+    #[derive(Default)]
+    struct MockRssBackend {
+        feeds: Vec<RssFeed>,
+    }
+
+    #[async_trait]
+    impl RssBackend for MockRssBackend {
+        async fn follow(
+            &self,
+            name: &str,
+            url: &str,
+            _cat: Option<&str>,
+        ) -> Result<RssFollowReceipt> {
+            Ok(RssFollowReceipt {
+                name: name.into(),
+                url: url.into(),
+            })
+        }
+        fn list(&self) -> Result<Vec<RssFeed>> {
+            Ok(self.feeds.clone())
+        }
+        async fn unfollow(&self, name: &str) -> Result<RssUnfollowReceipt> {
+            Ok(RssUnfollowReceipt { name: name.into() })
+        }
+        async fn digest(&self, _opts: &RssDigestOptions) -> Result<Vec<RssEntryRow>> {
+            Ok(vec![RssEntryRow {
+                feed: "a".into(),
+                title: "t".into(),
+                published: "2026-08-05".into(),
+                author: "author".into(),
+                link: "https://x".into(),
+                sort_key: None,
+            }])
+        }
+        async fn fetch(&self, name: &str, _limit: usize) -> Result<Vec<RssEntryRow>> {
+            Err(AgentError::InvalidArgument(format!(
+                "feed '{name}' not found"
+            )))
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_list_uses_mock_backend_without_config_or_network() {
+        let mock = MockRssBackend {
+            feeds: vec![RssFeed {
+                name: "a".into(),
+                url: "u1".into(),
+                category: Some("tech".into()),
+            }],
+        };
+        let out = dispatch(&mock, "list", &HashMap::new()).await.unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["name", "url", "category"]);
+                assert_eq!(rows, vec![vec!["a", "u1", "tech"]]);
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_follow_validates_and_renders() {
+        let mock = MockRssBackend::default();
+        // Missing --name -> InvalidArgument before the backend is called.
+        let err = dispatch(&mock, "follow", &HashMap::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+        // Invalid url scheme is validated by RealRssBackend, not dispatch; the mock
+        // returns a receipt directly, so dispatch renders the confirmation text.
+        let mut flags = HashMap::new();
+        flags.insert("name".into(), "hn".into());
+        flags.insert("url".into(), "https://hnrss.org".into());
+        let out = dispatch(&mock, "follow", &flags).await.unwrap();
+        assert_eq!(
+            out.render(crate::output::RenderMode::Text),
+            "followed feed 'hn' (https://hnrss.org)"
+        );
+    }
+
+    #[tokio::test]
+    async fn dispatch_digest_renders_rows() {
+        let mock = MockRssBackend::default();
+        let out = dispatch(&mock, "digest", &HashMap::new()).await.unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(
+                    headers,
+                    vec!["feed", "title", "published", "author", "link"]
+                );
+                assert_eq!(
+                    rows,
+                    vec![vec!["a", "t", "2026-08-05", "author", "https://x"]]
+                );
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_fetch_requires_name() {
+        let mock = MockRssBackend::default();
+        let err = dispatch(&mock, "fetch", &HashMap::new()).await.unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+    }
+
     /// Minimal Atom sample used to parse into an Entry (author/link semantics are clearer than RSS2).
     const SAMPLE_RSS: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <feed xmlns="http://www.w3.org/2005/Atom">
@@ -752,14 +964,26 @@ mod tests {
             },
         ];
         // By category tech.
-        let f = filter_feeds(&feeds, &HashMap::from([("category".into(), "tech".into())])).unwrap();
+        let opts = RssDigestOptions {
+            category: Some("tech".into()),
+            ..Default::default()
+        };
+        let f = filter_feeds(&feeds, &opts).unwrap();
         assert_eq!(f.len(), 2);
         // Exact match by name.
-        let f = filter_feeds(&feeds, &HashMap::from([("name".into(), "b".into())])).unwrap();
+        let opts = RssDigestOptions {
+            name: Some("b".into()),
+            ..Default::default()
+        };
+        let f = filter_feeds(&feeds, &opts).unwrap();
         assert_eq!(f.len(), 1);
         assert_eq!(f[0].name, "b");
         // Name not found -> error.
-        assert!(filter_feeds(&feeds, &HashMap::from([("name".into(), "z".into())])).is_err());
+        let opts = RssDigestOptions {
+            name: Some("z".into()),
+            ..Default::default()
+        };
+        assert!(filter_feeds(&feeds, &opts).is_err());
     }
 
     #[test]
@@ -814,24 +1038,19 @@ mod tests {
 
     #[test]
     fn rss_list_renders_rows() {
-        let cfg = Config {
-            rss: crate::config::RssConfig {
-                feeds: vec![
-                    RssFeed {
-                        name: "a".into(),
-                        url: "u1".into(),
-                        category: None,
-                    },
-                    RssFeed {
-                        name: "b".into(),
-                        url: "u2".into(),
-                        category: Some("cat".into()),
-                    },
-                ],
+        let feeds = vec![
+            RssFeed {
+                name: "a".into(),
+                url: "u1".into(),
+                category: None,
             },
-            ..Default::default()
-        };
-        let out = rss_list(&cfg).unwrap();
+            RssFeed {
+                name: "b".into(),
+                url: "u2".into(),
+                category: Some("cat".into()),
+            },
+        ];
+        let out = render_list(feeds);
         if let Output::Records { headers, rows } = out {
             assert_eq!(headers, vec!["name", "url", "category"]);
             assert_eq!(rows.len(), 2);
