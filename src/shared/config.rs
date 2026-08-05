@@ -301,6 +301,7 @@ impl Config {
             return Ok(Self::default());
         }
         let cfg: Self = toml::from_str(&text)?;
+        cfg.validate()?;
         Ok(cfg)
     }
 
@@ -311,6 +312,72 @@ impl Config {
             return Ok(Self::default());
         }
         Self::load_from(&path)
+    }
+
+    /// Semantic validation at load time (P2c, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+    ///
+    /// Catches errors that would otherwise surface later as confusing runtime
+    /// failures, while the config is still fresh in the user's mind:
+    /// - `[default_account]` names that reference undefined accounts
+    /// - empty required fields (hosts, usernames, feed URLs)
+    /// - invalid `provider` values
+    /// - malformed Notion page/database IDs
+    ///
+    /// An empty or default config (no accounts) is valid — modules without
+    /// accounts (rss) or with local-only defaults (note/todo/bookmark) must
+    /// keep working with zero configuration.
+    pub fn validate(&self) -> Result<()> {
+        validate_default_account(
+            "mail",
+            self.default_account.mail.as_deref(),
+            &self.mail.accounts,
+        )?;
+        validate_default_account(
+            "calendar",
+            self.default_account.calendar.as_deref(),
+            &self.calendar.accounts,
+        )?;
+        validate_default_account(
+            "note",
+            self.default_account.note.as_deref(),
+            &self.note.accounts,
+        )?;
+        validate_default_account(
+            "todo",
+            self.default_account.todo.as_deref(),
+            &self.todo.accounts,
+        )?;
+        validate_default_account(
+            "bookmark",
+            self.default_account.bookmark.as_deref(),
+            &self.bookmark.accounts,
+        )?;
+
+        for a in &self.mail.accounts {
+            require_nonempty("mail", &a.name, "name")?;
+            require_nonempty("mail", &a.imap_host, "imap_host")?;
+            require_nonempty("mail", &a.smtp_host, "smtp_host")?;
+            require_nonempty("mail", &a.username, "username")?;
+        }
+        for a in &self.calendar.accounts {
+            require_nonempty("calendar", &a.name, "name")?;
+            require_nonempty("calendar", &a.caldav_url, "caldav_url")?;
+            require_nonempty("calendar", &a.username, "username")?;
+        }
+        for f in &self.rss.feeds {
+            require_nonempty("rss", &f.name, "name")?;
+            require_nonempty("rss", &f.url, "url")?;
+        }
+        for a in &self.note.accounts {
+            validate_note_account(a)?;
+        }
+        for a in &self.todo.accounts {
+            validate_notion_local_account("todo", a)?;
+        }
+        for a in &self.bookmark.accounts {
+            validate_notion_local_account("bookmark", a)?;
+        }
+        Ok(())
     }
 
     // ---- Account lookup ----
@@ -330,6 +397,121 @@ impl Config {
     pub fn keyring_service(module: &str, account: &str) -> String {
         format!("everyday/{module}/{account}")
     }
+}
+
+// ---- Shared account traits & validation helpers ----
+
+/// An account that has a name — the common denominator for account lookup and
+/// load-time validation across the five account-bearing modules.
+pub(crate) trait NamedAccount {
+    fn name(&self) -> &str;
+}
+
+impl NamedAccount for MailAccount {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+impl NamedAccount for CalendarAccount {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+impl NamedAccount for NoteAccount {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+/// Covers both `TodoAccount` and `BookmarkAccount` (type aliases of
+/// `NotionLocalAccount`).
+impl NamedAccount for NotionLocalAccount {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+
+/// `[default_account].X` must reference a defined account of that module.
+fn validate_default_account<T: NamedAccount>(
+    module: &str,
+    default_name: Option<&str>,
+    accounts: &[T],
+) -> Result<()> {
+    if let Some(name) = default_name
+        && !accounts.iter().any(|a| a.name() == name)
+    {
+        return Err(AgentError::Config(format!(
+            "[default_account].{module} = \"{name}\" but no {module} account with that name is defined"
+        )));
+    }
+    Ok(())
+}
+
+fn require_nonempty(module: &str, value: &str, field: &str) -> Result<()> {
+    if value.trim().is_empty() {
+        return Err(AgentError::Config(format!(
+            "{module} config: {field} must not be empty"
+        )));
+    }
+    Ok(())
+}
+
+/// Notion page/database IDs are 32 hex chars, optionally hyphenated
+/// (8-4-4-4-12 form). `local`/`sqlite` providers never require them.
+fn valid_notion_id(id: &str) -> bool {
+    let compact = id.replace('-', "");
+    compact.len() == 32 && compact.chars().all(|c| c.is_ascii_hexdigit())
+}
+
+fn validate_note_account(a: &NoteAccount) -> Result<()> {
+    require_nonempty("note", &a.name, "name")?;
+    if !matches!(a.provider.as_str(), "local" | "sqlite" | "notion") {
+        return Err(AgentError::Config(format!(
+            "note account '{}': unknown provider '{}' (expected local|sqlite|notion)",
+            a.name, a.provider
+        )));
+    }
+    if a.provider == "notion" {
+        for (field, id) in [
+            ("default_database_id", &a.default_database_id),
+            ("default_page_id", &a.default_page_id),
+        ] {
+            if let Some(id) = id
+                && !valid_notion_id(id)
+            {
+                return Err(AgentError::Config(format!(
+                    "note account '{}': {field} '{}' is not a valid Notion ID (expected 32 hex chars)",
+                    a.name, id
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_notion_local_account(module: &str, a: &NotionLocalAccount) -> Result<()> {
+    require_nonempty(module, &a.name, "name")?;
+    if !matches!(a.provider.as_str(), "local" | "sqlite" | "notion") {
+        return Err(AgentError::Config(format!(
+            "{module} account '{}': unknown provider '{}' (expected local|sqlite|notion)",
+            a.name, a.provider
+        )));
+    }
+    if a.provider == "notion" {
+        for (field, id) in [
+            ("parent_page_id", &a.parent_page_id),
+            ("default_database_id", &a.default_database_id),
+        ] {
+            if let Some(id) = id
+                && !valid_notion_id(id)
+            {
+                return Err(AgentError::Config(format!(
+                    "{module} account '{}': {field} '{}' is not a valid Notion ID (expected 32 hex chars)",
+                    a.name, id
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -443,6 +625,170 @@ url = "https://hnrss.org/frontpage"
             Config::keyring_service("mail", "work"),
             "everyday/mail/work"
         );
+    }
+
+    // ---- P2c: load-time semantic validation (F012) ----
+
+    #[test]
+    fn validate_ok_for_sample_config() {
+        let cfg: Config = toml::from_str(SAMPLE).unwrap();
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_empty_default_config_ok() {
+        Config::default().validate().unwrap();
+    }
+
+    #[test]
+    fn validate_default_account_must_exist() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+mail = "ghost"
+"#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.type_name(), "ConfigError");
+        assert!(
+            err.message().contains("[default_account].mail"),
+            "{}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn validate_mail_required_fields() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[mail.accounts]]
+name = "x"
+imap_host = ""
+smtp_host = "s"
+username = "u"
+"#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.type_name(), "ConfigError");
+        assert!(err.message().contains("imap_host"), "{}", err.message());
+    }
+
+    #[test]
+    fn validate_calendar_url_required() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[calendar.accounts]]
+name = "x"
+caldav_url = ""
+username = "u"
+"#,
+        )
+        .unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rss_feed_url_required() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[rss.feeds]]
+name = "x"
+url = ""
+"#,
+        )
+        .unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_provider_unknown() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[note.accounts]]
+name = "x"
+provider = "bogus"
+"#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(err.message().contains("provider"), "{}", err.message());
+    }
+
+    #[test]
+    fn validate_local_provider_allows_empty_ids() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[note.accounts]]
+name = "x"
+"#,
+        )
+        .unwrap();
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_notion_id_malformed() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[note.accounts]]
+name = "x"
+provider = "notion"
+default_database_id = "not-a-notion-id"
+"#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert!(
+            err.message().contains("default_database_id"),
+            "{}",
+            err.message()
+        );
+    }
+
+    #[test]
+    fn validate_notion_id_hyphenated_ok() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[note.accounts]]
+name = "x"
+provider = "notion"
+default_database_id = "01234567-89ab-cdef-0123-456789abcdef"
+"#,
+        )
+        .unwrap();
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn validate_todo_notion_id_malformed() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[todo.accounts]]
+name = "x"
+provider = "notion"
+parent_page_id = "short"
+"#,
+        )
+        .unwrap();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn load_from_invalid_config_errors() {
+        let tmp = std::env::temp_dir().join("everyday_invalid_test.toml");
+        std::fs::write(
+            &tmp,
+            r#"
+[default_account]
+mail = "ghost"
+"#,
+        )
+        .unwrap();
+        let err = Config::load_from(&tmp).unwrap_err();
+        assert_eq!(err.type_name(), "ConfigError");
+        let _ = std::fs::remove_file(&tmp);
     }
 
     #[test]
