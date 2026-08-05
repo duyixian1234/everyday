@@ -79,3 +79,21 @@ Agents 与协作者在改代码前，按以下顺序读：
 
 发版流程见
 [`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Release (runbook summary)"。
+
+## Agent skills
+
+### Issue tracker
+
+Issue 与 PRD 存于本仓库的 GitHub Issues，用 `gh` CLI 操作。
+见 `docs/agents/issue-tracker.md`。
+
+### Triage labels
+
+五个规范角色，默认标签词汇：`needs-triage` / `needs-info` /
+`ready-for-agent` / `ready-for-human` / `wontfix`。
+见 `docs/agents/triage-labels.md`。
+
+### Domain docs
+
+单上下文（single-context）——根目录一个 `CONTEXT.md` + `docs/adr/`。
+见 `docs/agents/domain.md`。
