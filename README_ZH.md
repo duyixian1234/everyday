@@ -423,11 +423,11 @@ everyday search query "rust" --module memory --json
 
 ```
 $ everyday mail list --unread --limit 3
-uid    folder  date                          from              subject
+uid    unread  folder  date                          from              subject
 -----------------------------------------------------------------------------
-12345  INBOX   Wed, 8 Jul 2026 08:29 +0000  sender@x.com      Hello
-12344  INBOX   Wed, 8 Jul 2026 07:15 +0000  boss@x.com        Weekly Report
-12343  Drafts  Wed, 8 Jul 2026 06:00 +0000  me@x.com          Draft
+12345  true    INBOX   Wed, 8 Jul 2026 08:29 +0000  sender@x.com      Hello
+12344  true    INBOX   Wed, 8 Jul 2026 07:15 +0000  boss@x.com        Weekly Report
+12343  false   Drafts  Wed, 8 Jul 2026 06:00 +0000  me@x.com          Draft
 ```
 
 ### JSON 模式（`--json`）
@@ -436,8 +436,12 @@ uid    folder  date                          from              subject
 
 ```bash
 $ everyday mail list --unread --limit 2 --json
-[{"uid":"12345","folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@x.com","subject":"Hello"},{"uid":"12344","folder":"INBOX","date":"Wed, 8 Jul 2026 07:15:00 +0000","from":"boss@x.com","subject":"Weekly Report"}]
+[{"uid":12345,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@x.com","subject":"Hello"},{"uid":12344,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 07:15:00 +0000","from":"boss@x.com","subject":"Weekly Report"}]
 ```
+
+> `mail list` 输出为**保类型记录**：`uid` 是 JSON 数字、`unread` 是 JSON 布尔
+> （此前一律字符串化）。见
+> [F012](docs/adr/F012-architecture-deepening-phase.md) P6。
 
 ### 错误输出
 

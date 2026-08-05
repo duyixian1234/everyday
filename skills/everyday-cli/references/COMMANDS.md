@@ -96,8 +96,11 @@ Credentials: config holds account metadata → credentials are stored via `every
 
 ### mail list / search — JSON output (array of objects)
 
+`mail list` rows are typed records (F012 P6): `uid` is a JSON number and
+`unread` a JSON boolean; `mail search` rows are plain strings.
+
 ```json
-[{"uid":"12345","folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@example.com","subject":"邮件主题"}]
+[{"uid":12345,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@example.com","subject":"邮件主题"}]
 ```
 
 ### mail read — JSON output (array of field/value pairs)

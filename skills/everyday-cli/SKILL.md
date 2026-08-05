@@ -60,7 +60,8 @@ After this, `mail` commands work without re-entering credentials.
 
 ```bash
 everyday mail list --unread --limit 10 --json
-# → [{"uid":"12345","folder":"INBOX","date":"...","from":"...","subject":"..."}]
+# → [{"uid":12345,"unread":true,"folder":"INBOX","date":"...","from":"...","subject":"..."}]
+# (uid is a JSON number, unread a JSON boolean — F012 P6 typed records)
 ```
 
 `mail list` reads from a local envelope cache (`~/.config/everyday/mail_cache.db`) — fast, no IMAP round-trip on warm cache. Auto-syncs if any target folder's `last_sync_at` is older than 15 minutes. Pass `--sync` to force an immediate sync (e.g. after returning from offline). `mail search` and `mail read` still go directly to IMAP.

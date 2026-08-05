@@ -422,11 +422,11 @@ Great for direct terminal viewing; tables align automatically:
 
 ```
 $ everyday mail list --unread --limit 3
-uid    folder  date                          from              subject
+uid    unread  folder  date                          from              subject
 -----------------------------------------------------------------------------
-12345  INBOX   Wed, 8 Jul 2026 08:29 +0000  sender@x.com      Hello
-12344  INBOX   Wed, 8 Jul 2026 07:15 +0000  boss@x.com        Weekly Report
-12343  Drafts  Wed, 8 Jul 2026 06:00 +0000  me@x.com          Draft
+12345  true    INBOX   Wed, 8 Jul 2026 08:29 +0000  sender@x.com      Hello
+12344  true    INBOX   Wed, 8 Jul 2026 07:15 +0000  boss@x.com        Weekly Report
+12343  false   Drafts  Wed, 8 Jul 2026 06:00 +0000  me@x.com          Draft
 ```
 
 ### JSON mode (`--json`)
@@ -435,8 +435,12 @@ Outputs clean JSON with no extra whitespace, ideal for programmatic parsing:
 
 ```bash
 $ everyday mail list --unread --limit 2 --json
-[{"uid":"12345","folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@x.com","subject":"Hello"},{"uid":"12344","folder":"INBOX","date":"Wed, 8 Jul 2026 07:15:00 +0000","from":"boss@x.com","subject":"Weekly Report"}]
+[{"uid":12345,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@x.com","subject":"Hello"},{"uid":12344,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 07:15:00 +0000","from":"boss@x.com","subject":"Weekly Report"}]
 ```
+
+> `mail list` rows are **typed records**: `uid` is a JSON number and `unread` a
+> JSON boolean (previously everything was stringified). See
+> [F012](docs/adr/F012-architecture-deepening-phase.md) P6.
 
 ### Error output
 
