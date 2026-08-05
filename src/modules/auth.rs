@@ -14,7 +14,6 @@
 //! The keyring service string `everyday/<module>/<account>` is frozen (F002);
 //! only the keyring *user* selection (account username vs `"token"`) is centralized here.
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -238,125 +237,86 @@ impl AuthModule {
     pub fn new(config: Arc<Config>) -> Self {
         Self { config }
     }
+}
 
-    async fn cmd_login(
-        &self,
-        module: &str,
-        account: &str,
-        flags: &HashMap<String, String>,
-    ) -> Result<Output> {
-        let strategy = resolve_strategy(&self.config, module, account)?;
-        let secret = match strategy {
-            AuthStrategy::None => {
-                return Err(AgentError::Auth(format!(
-                    "module '{module}' account '{account}' requires no credential (local/sqlite or rss); nothing to store"
-                )));
-            }
-            AuthStrategy::Password => {
-                if let Some(p) = flags.get("password") {
-                    p.clone()
-                } else {
-                    let username = username_for(&self.config, module, account)?;
-                    prompt_secret(&format!("Password for {username}: ")).await?
-                }
-            }
-            AuthStrategy::Token => {
-                if let Some(t) = flags.get("token") {
-                    t.clone()
-                } else {
-                    prompt_secret(&format!(
-                        "Paste Notion Integration Token (ntn_...) for {module} account '{account}': "
-                    ))
-                    .await?
-                }
-            }
-        };
-        if secret.trim().is_empty() {
-            return Err(AgentError::InvalidArgument(
-                "credential must not be empty".into(),
-            ));
-        }
-        store_credential(&self.config, module, account, secret.trim())?;
-        let mut msg = format!("credential stored for {module} account '{account}'");
-        if flags.get("verify").map(|v| v == "true").unwrap_or(false) {
-            self.verify(module, account).await?;
-            msg.push_str("; verified");
-        }
-        Ok(Output::text(msg))
-    }
+// ============ service layer (P1 wiring, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ============
 
-    async fn cmd_logout(&self, module: &str, account: &str) -> Result<Output> {
-        let strategy = resolve_strategy(&self.config, module, account)?;
-        if matches!(strategy, AuthStrategy::None) {
-            return Err(AgentError::Auth(format!(
-                "module '{module}' account '{account}' requires no credential; nothing to remove"
-            )));
-        }
-        delete_credential(&self.config, module, account)?;
-        Ok(Output::text(format!(
-            "credential removed for {module} account '{account}'"
-        )))
-    }
+/// Result of `login`: the confirmation message plus whether verification ran.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LoginReceipt {
+    /// Human-readable confirmation ("credential stored for mail account 'work'"; may
+    /// be suffixed "; verified" when `verify` was requested and succeeded).
+    pub message: String,
+    /// `true` when `--verify` was requested and the credential verified OK.
+    pub verified: bool,
+}
 
-    async fn cmd_verify(&self, module: &str, account: &str) -> Result<Output> {
-        let strategy = resolve_strategy(&self.config, module, account)?;
-        match strategy {
-            AuthStrategy::None => Ok(Output::text(format!(
-                "{module} account '{account}' requires no credential (not_required)"
-            ))),
-            _ => {
-                self.verify(module, account).await?;
-                Ok(Output::text(format!(
-                    "{module} account '{account}' verified"
-                )))
-            }
-        }
-    }
+/// Result of `verify`: whether the module requires a credential at all.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerifyOutcome {
+    /// Module/account needs no credential (local/sqlite provider, rss).
+    NotRequired,
+    /// Credential read + authenticated against the external service.
+    Verified,
+}
 
-    async fn cmd_list(&self, module: Option<&str>) -> Result<Output> {
-        let modules: Vec<&str> = match module {
-            Some(m) => vec![m],
-            None => vec!["mail", "cal", "note", "todo", "bookmark"],
-        };
-        let mut rows: Vec<Value> = Vec::new();
-        for m in &modules {
-            for acc_name in list_accounts(&self.config, m) {
-                let strategy = resolve_strategy(&self.config, m, &acc_name)?;
-                let status = match strategy {
-                    AuthStrategy::None => "not_required".to_string(),
-                    _ => match get_credential(&self.config, m, &acc_name) {
-                        Ok(_) => "stored".to_string(),
-                        Err(_) => "missing".to_string(),
-                    },
-                };
-                rows.push(json!({ "module": m, "account": acc_name, "status": status }));
-            }
-        }
-        if crate::util::json_mode::is_json() {
-            Ok(Output::Json(json!(rows)))
-        } else {
-            let tbl: Vec<Vec<String>> = rows
-                .iter()
-                .map(|r| {
-                    vec![
-                        r["module"].as_str().unwrap_or("").to_string(),
-                        r["account"].as_str().unwrap_or("").to_string(),
-                        r["status"].as_str().unwrap_or("").to_string(),
-                    ]
-                })
-                .collect();
-            Ok(Output::records(
-                vec!["module".into(), "account".into(), "status".into()],
-                tbl,
-            ))
-        }
+/// One row of `auth list`: module / account / keyring state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CredentialRow {
+    pub module: String,
+    pub account: String,
+    pub status: String,
+}
+
+/// Login request: explicit secret (from `--password`/`--token`) or `None` to
+/// prompt interactively on the TTY ([R015](../../docs/adr/R015-auth-credential-io.md)).
+#[derive(Debug, Clone)]
+pub struct AuthLoginRequest<'a> {
+    pub module: &'a str,
+    pub account: &'a str,
+    pub secret: Option<&'a str>,
+    pub verify: bool,
+}
+
+/// Auth service trait: domain methods, no `Output` in sight (P1).
+///
+/// `ConfigAuthBackend` talks to the keyring + external services;
+/// `testkit::MockAuthBackend` (tests) returns fixed data. `dispatch` is the
+/// only place that maps CLI args → service calls → `Output`.
+#[async_trait]
+pub trait AuthBackend: Send + Sync {
+    /// Resolve the account name for a module: explicit override or the
+    /// configured default account ([F002](../../docs/adr/F002-multi-account-keyring.md)).
+    /// Returns `InvalidArgument` when neither exists.
+    fn resolve_account(&self, module: &str, account: Option<&str>) -> Result<String>;
+    /// Store a credential (interactive prompt when `secret` is `None`).
+    async fn login(&self, req: &AuthLoginRequest<'_>) -> Result<LoginReceipt>;
+    /// Delete a stored credential; returns the confirmation message.
+    async fn logout(&self, module: &str, account: &str) -> Result<String>;
+    /// Verify a stored credential (no re-prompt).
+    async fn verify(&self, module: &str, account: &str) -> Result<VerifyOutcome>;
+    /// Enumerate configured accounts and probe keyring state.
+    async fn list(&self, module: Option<&str>) -> Result<Vec<CredentialRow>>;
+}
+
+/// Real backend: holds the full `Config` (auth is a cross-module
+/// orchestrator, [F012 P2b](../../docs/adr/F012-architecture-deepening-phase.md)).
+pub struct ConfigAuthBackend {
+    config: Arc<Config>,
+}
+
+impl ConfigAuthBackend {
+    fn new(config: Arc<Config>) -> Self {
+        Self { config }
     }
 
     /// Read the stored credential and authenticate against the external service.
     ///
     /// Reuses the modules' existing connection primitives (R013): `email::imap_connect`,
     /// `calendar::cal_verify`, `NotionClient`. The `None` strategy short-circuits.
-    async fn verify(&self, module: &str, account: &str) -> Result<()> {
+    /// Internal helper — distinct from the trait's `verify` (which reports
+    /// `VerifyOutcome`), so it is named `verify_credential`.
+    async fn verify_credential(&self, module: &str, account: &str) -> Result<()> {
         let secret = get_credential(&self.config, module, account)?;
         match module {
             "mail" => {
@@ -378,6 +338,207 @@ impl AuthModule {
             }
         }
         Ok(())
+    }
+}
+
+#[async_trait]
+impl AuthBackend for ConfigAuthBackend {
+    fn resolve_account(&self, module: &str, account: Option<&str>) -> Result<String> {
+        account
+            .map(|a| a.to_string())
+            .or_else(|| default_account_name(&self.config, module))
+            .ok_or_else(|| {
+                AgentError::InvalidArgument(format!(
+                    "requires --account <name> (or a default account for module '{module}')"
+                ))
+            })
+    }
+
+    async fn login(&self, req: &AuthLoginRequest<'_>) -> Result<LoginReceipt> {
+        let module = req.module;
+        let account = req.account;
+        let strategy = resolve_strategy(&self.config, module, account)?;
+        let secret = match strategy {
+            AuthStrategy::None => {
+                return Err(AgentError::Auth(format!(
+                    "module '{module}' account '{account}' requires no credential (local/sqlite or rss); nothing to store"
+                )));
+            }
+            AuthStrategy::Password => {
+                if let Some(p) = req.secret {
+                    p.to_string()
+                } else {
+                    let username = username_for(&self.config, module, account)?;
+                    prompt_secret(&format!("Password for {username}: ")).await?
+                }
+            }
+            AuthStrategy::Token => {
+                if let Some(t) = req.secret {
+                    t.to_string()
+                } else {
+                    prompt_secret(&format!(
+                        "Paste Notion Integration Token (ntn_...) for {module} account '{account}': "
+                    ))
+                    .await?
+                }
+            }
+        };
+        if secret.trim().is_empty() {
+            return Err(AgentError::InvalidArgument(
+                "credential must not be empty".into(),
+            ));
+        }
+        store_credential(&self.config, module, account, secret.trim())?;
+        let mut verified = false;
+        if req.verify {
+            self.verify_credential(module, account).await?;
+            verified = true;
+        }
+        let mut message = format!("credential stored for {module} account '{account}'");
+        if verified {
+            message.push_str("; verified");
+        }
+        Ok(LoginReceipt { message, verified })
+    }
+
+    async fn logout(&self, module: &str, account: &str) -> Result<String> {
+        let strategy = resolve_strategy(&self.config, module, account)?;
+        if matches!(strategy, AuthStrategy::None) {
+            return Err(AgentError::Auth(format!(
+                "module '{module}' account '{account}' requires no credential; nothing to remove"
+            )));
+        }
+        delete_credential(&self.config, module, account)?;
+        Ok(format!(
+            "credential removed for {module} account '{account}'"
+        ))
+    }
+
+    async fn verify(&self, module: &str, account: &str) -> Result<VerifyOutcome> {
+        let strategy = resolve_strategy(&self.config, module, account)?;
+        match strategy {
+            AuthStrategy::None => Ok(VerifyOutcome::NotRequired),
+            _ => {
+                self.verify_credential(module, account).await?;
+                Ok(VerifyOutcome::Verified)
+            }
+        }
+    }
+
+    async fn list(&self, module: Option<&str>) -> Result<Vec<CredentialRow>> {
+        let modules: Vec<&str> = match module {
+            Some(m) => vec![m],
+            None => vec!["mail", "cal", "note", "todo", "bookmark"],
+        };
+        let mut rows = Vec::new();
+        for m in &modules {
+            for acc_name in list_accounts(&self.config, m) {
+                let strategy = resolve_strategy(&self.config, m, &acc_name)?;
+                let status = match strategy {
+                    AuthStrategy::None => "not_required".to_string(),
+                    _ => match get_credential(&self.config, m, &acc_name) {
+                        Ok(_) => "stored".to_string(),
+                        Err(_) => "missing".to_string(),
+                    },
+                };
+                rows.push(CredentialRow {
+                    module: m.to_string(),
+                    account: acc_name,
+                    status,
+                });
+            }
+        }
+        Ok(rows)
+    }
+}
+
+/// Build the auth backend for the current config.
+pub fn for_config(config: &Arc<Config>) -> Box<dyn AuthBackend> {
+    Box::new(ConfigAuthBackend::new(config.clone()))
+}
+
+/// CLI dispatch: parse args → call the [`AuthBackend`] service method →
+/// render to `Output` (P1 wiring, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// This is the only function in the auth module that touches `Output` for
+/// actions; service methods are output-free and directly testable via
+/// [`testkit::MockAuthBackend`].
+async fn dispatch(backend: &dyn AuthBackend, action: &str, args: &[String]) -> Result<Output> {
+    let (flags, _positional) = parse_simple_args(args);
+    let module_opt = flags.get("module").cloned();
+    match action {
+        "list" => {
+            let rows = backend.list(module_opt.as_deref()).await?;
+            render_list(rows)
+        }
+        "login" | "logout" | "verify" => {
+            let module = module_opt.ok_or_else(|| {
+                AgentError::InvalidArgument(format!("auth {action} requires --module <module>"))
+            })?;
+            let account =
+                backend.resolve_account(&module, flags.get("account").map(String::as_str))?;
+            match action {
+                "login" => {
+                    let secret = flags
+                        .get("password")
+                        .or_else(|| flags.get("token"))
+                        .map(String::as_str);
+                    let verify = flags.get("verify").map(|v| v == "true").unwrap_or(false);
+                    let receipt = backend
+                        .login(&AuthLoginRequest {
+                            module: &module,
+                            account: &account,
+                            secret,
+                            verify,
+                        })
+                        .await?;
+                    Ok(Output::text(receipt.message))
+                }
+                "logout" => {
+                    let msg = backend.logout(&module, &account).await?;
+                    Ok(Output::text(msg))
+                }
+                "verify" => {
+                    let outcome = backend.verify(&module, &account).await?;
+                    match outcome {
+                        VerifyOutcome::NotRequired => Ok(Output::text(format!(
+                            "{module} account '{account}' requires no credential (not_required)"
+                        ))),
+                        VerifyOutcome::Verified => Ok(Output::text(format!(
+                            "{module} account '{account}' verified"
+                        ))),
+                    }
+                }
+                _ => unreachable!(),
+            }
+        }
+        other => Err(AgentError::UnknownAction(format!("auth {other}"))),
+    }
+}
+
+/// Render `auth list` rows to Json or a text table.
+fn render_list(rows: Vec<CredentialRow>) -> Result<Output> {
+    if crate::util::json_mode::is_json() {
+        let arr: Vec<Value> = rows
+            .iter()
+            .map(|r| {
+                json!({
+                    "module": r.module,
+                    "account": r.account,
+                    "status": r.status,
+                })
+            })
+            .collect();
+        Ok(Output::Json(json!(arr)))
+    } else {
+        let tbl: Vec<Vec<String>> = rows
+            .iter()
+            .map(|r| vec![r.module.clone(), r.account.clone(), r.status.clone()])
+            .collect();
+        Ok(Output::records(
+            vec!["module".into(), "account".into(), "status".into()],
+            tbl,
+        ))
     }
 }
 
@@ -428,32 +589,8 @@ impl Executor for AuthModule {
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
-        let (flags, _positional) = parse_simple_args(args);
-        let module_opt = flags.get("module").cloned();
-        match action {
-            "list" => self.cmd_list(module_opt.as_deref()).await,
-            "login" | "logout" | "verify" => {
-                let module = module_opt.ok_or_else(|| {
-                    AgentError::InvalidArgument(format!("auth {action} requires --module <module>"))
-                })?;
-                let account = flags
-                    .get("account")
-                    .cloned()
-                    .or_else(|| default_account_name(&self.config, &module))
-                    .ok_or_else(|| {
-                        AgentError::InvalidArgument(format!(
-                            "auth {action} requires --account <name> (or a default account for module '{module}')"
-                        ))
-                    })?;
-                match action {
-                    "login" => self.cmd_login(&module, &account, &flags).await,
-                    "logout" => self.cmd_logout(&module, &account).await,
-                    "verify" => self.cmd_verify(&module, &account).await,
-                    _ => unreachable!(),
-                }
-            }
-            other => Err(AgentError::UnknownAction(format!("auth {other}"))),
-        }
+        let backend = for_config(&self.config);
+        dispatch(&*backend, action, args).await
     }
 }
 
@@ -581,8 +718,156 @@ url = "https://hnrss.org/frontpage"
 
     #[tokio::test]
     async fn verify_none_strategy_short_circuits() {
-        let m = AuthModule::new(Arc::new(test_config()));
-        let out = m.cmd_verify("note", "local1").await.unwrap();
+        let backend = ConfigAuthBackend::new(Arc::new(test_config()));
+        let out = backend.verify("note", "local1").await.unwrap();
+        assert_eq!(out, VerifyOutcome::NotRequired);
+    }
+
+    #[tokio::test]
+    async fn list_reports_three_states() {
+        let backend = ConfigAuthBackend::new(Arc::new(test_config()));
+        let rows = backend.list(None).await.unwrap();
+        assert!(
+            rows.iter()
+                .any(|r| r.module == "note" && r.account == "local1" && r.status == "not_required")
+        );
+        // mail/m1 has no stored credential in this environment → "missing"
+        assert!(
+            rows.iter()
+                .any(|r| r.module == "mail" && r.account == "m1" && r.status == "missing")
+        );
+    }
+
+    #[tokio::test]
+    async fn logout_none_strategy_errors() {
+        let backend = ConfigAuthBackend::new(Arc::new(test_config()));
+        let err = backend.logout("note", "local1").await.unwrap_err();
+        assert_eq!(err.type_name(), "AuthError");
+    }
+
+    #[tokio::test]
+    async fn resolve_account_falls_back_to_default() {
+        let backend = ConfigAuthBackend::new(Arc::new(test_config()));
+        // test_config sets [default_account] note = "local1".
+        assert_eq!(backend.resolve_account("note", None).unwrap(), "local1");
+        // Explicit override wins.
+        assert_eq!(
+            backend.resolve_account("note", Some("remote1")).unwrap(),
+            "remote1"
+        );
+        // No default + no override → error.
+        assert!(backend.resolve_account("bookmark", None).is_err());
+    }
+
+    // ============ P1 dispatch tests (Mock backend) ============
+
+    /// Test-only in-memory backend for dispatch tests.
+    pub(crate) mod testkit {
+        use super::super::*;
+        use std::sync::Mutex;
+
+        /// `(module, account, secret, verify)` of the last `login` call.
+        type LoginCall = (String, String, Option<String>, bool);
+
+        #[derive(Default)]
+        pub struct MockAuthBackend {
+            /// Rows returned by `list`.
+            pub rows: Vec<CredentialRow>,
+            /// Outcome returned by `verify`.
+            pub verify_outcome: Option<VerifyOutcome>,
+            /// Last `login` request (module/account/secret/verify).
+            pub last_login: Mutex<Option<LoginCall>>,
+        }
+
+        #[async_trait]
+        impl AuthBackend for MockAuthBackend {
+            fn resolve_account(&self, _module: &str, account: Option<&str>) -> Result<String> {
+                account
+                    .map(|a| a.to_string())
+                    .ok_or_else(|| AgentError::InvalidArgument("missing account".into()))
+            }
+
+            async fn login(&self, req: &AuthLoginRequest<'_>) -> Result<LoginReceipt> {
+                *self.last_login.lock().unwrap() = Some((
+                    req.module.to_string(),
+                    req.account.to_string(),
+                    req.secret.map(|s| s.to_string()),
+                    req.verify,
+                ));
+                Ok(LoginReceipt {
+                    message: format!(
+                        "credential stored for {} account '{}'",
+                        req.module, req.account
+                    ),
+                    verified: req.verify,
+                })
+            }
+
+            async fn logout(&self, _module: &str, account: &str) -> Result<String> {
+                Ok(format!("credential removed for {account}"))
+            }
+
+            async fn verify(&self, _module: &str, _account: &str) -> Result<VerifyOutcome> {
+                Ok(self.verify_outcome.unwrap_or(VerifyOutcome::Verified))
+            }
+
+            async fn list(&self, _module: Option<&str>) -> Result<Vec<CredentialRow>> {
+                Ok(self.rows.clone())
+            }
+        }
+    }
+
+    use testkit::MockAuthBackend;
+
+    #[tokio::test]
+    async fn dispatch_login_forwards_secret_and_verify() {
+        let mock = MockAuthBackend::default();
+        let out = dispatch(
+            &mock,
+            "login",
+            &[
+                "--module".to_string(),
+                "mail".to_string(),
+                "--account".to_string(),
+                "m1".to_string(),
+                "--password".to_string(),
+                "hunter2".to_string(),
+                "--verify".to_string(),
+                "true".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        let (module, account, secret, verify) = mock.last_login.lock().unwrap().clone().unwrap();
+        assert_eq!(module, "mail");
+        assert_eq!(account, "m1");
+        assert_eq!(secret.as_deref(), Some("hunter2"));
+        assert!(verify);
+        if let Output::Text(s) = out {
+            assert!(s.contains("credential stored for mail account 'm1'"));
+        } else {
+            panic!("expected Text output");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_verify_not_required_renders_text() {
+        let mock = MockAuthBackend {
+            verify_outcome: Some(VerifyOutcome::NotRequired),
+            ..Default::default()
+        };
+        let out = dispatch(
+            &mock,
+            "verify",
+            &[
+                "--module".to_string(),
+                "note".to_string(),
+                "--account".to_string(),
+                "local1".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
         if let Output::Text(s) = out {
             assert!(s.contains("not_required"));
         } else {
@@ -591,28 +876,37 @@ url = "https://hnrss.org/frontpage"
     }
 
     #[tokio::test]
-    async fn list_reports_three_states() {
-        let m = AuthModule::new(Arc::new(test_config()));
-        let out = m.cmd_list(None).await.unwrap();
-        if let Output::Records { rows, .. } = out {
-            assert!(
-                rows.iter()
-                    .any(|r| r[0] == "note" && r[1] == "local1" && r[2] == "not_required")
-            );
-            // mail/m1 has no stored credential in this environment → "missing"
-            assert!(
-                rows.iter()
-                    .any(|r| r[0] == "mail" && r[1] == "m1" && r[2] == "missing")
-            );
+    async fn dispatch_list_renders_json_rows() {
+        let mock = MockAuthBackend {
+            rows: vec![CredentialRow {
+                module: "note".into(),
+                account: "local1".into(),
+                status: "not_required".into(),
+            }],
+            ..Default::default()
+        };
+        crate::util::json_mode::set_json_mode(true);
+        let out = dispatch(&mock, "list", &[]).await.unwrap();
+        crate::util::json_mode::set_json_mode(false);
+        if let Output::Json(v) = out {
+            assert_eq!(v[0]["module"], "note");
+            assert_eq!(v[0]["status"], "not_required");
         } else {
-            panic!("expected Records output");
+            panic!("expected Json output");
         }
     }
 
     #[tokio::test]
-    async fn logout_none_strategy_errors() {
-        let m = AuthModule::new(Arc::new(test_config()));
-        let err = m.cmd_logout("note", "local1").await.unwrap_err();
-        assert_eq!(err.type_name(), "AuthError");
+    async fn dispatch_login_requires_module() {
+        let mock = MockAuthBackend::default();
+        let err = dispatch(&mock, "login", &[]).await.unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_action_errors() {
+        let mock = MockAuthBackend::default();
+        let err = dispatch(&mock, "bogus", &[]).await.unwrap_err();
+        assert_eq!(err.type_name(), "UnknownAction");
     }
 }

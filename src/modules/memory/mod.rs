@@ -22,6 +22,7 @@
 //! tree for graph (text: indented markdown; JSON: nested object).
 
 pub mod actions;
+pub mod backend;
 pub mod search;
 pub mod store;
 
@@ -123,13 +124,35 @@ impl Executor for MemoryModule {
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
-        let (flags, positional) = parse_simple_args(args);
-        let json_mode = crate::util::json_mode::is_json();
+        let backend = backend::for_default();
+        dispatch(&*backend, action, args).await
+    }
 
-        match action {
-            "add" => {
-                let (s, p, o) = take_pos3(&positional, "memory add")?;
-                let result = actions::add(
+    /// P3 health: memory.db must open (the module is entirely DB-backed).
+    async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
+        crate::modules::db_health("memory", store::open).await
+    }
+}
+
+/// CLI dispatch: parse args → call the [`MemoryBackend`] service method →
+/// render to `Output` (P1 wiring, [F012](../../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// This is the only function in the memory module that touches `Output` for
+/// actions; service methods themselves are output-free and directly testable
+/// via [`backend::testkit::MockMemoryBackend`].
+async fn dispatch(
+    backend: &dyn backend::MemoryBackend,
+    action: &str,
+    args: &[String],
+) -> Result<Output> {
+    let (flags, positional) = parse_simple_args(args);
+    let json_mode = crate::util::json_mode::is_json();
+
+    match action {
+        "add" => {
+            let (s, p, o) = take_pos3(&positional, "memory add")?;
+            let result = backend
+                .add(
                     &s,
                     &p,
                     &o,
@@ -137,61 +160,55 @@ impl Executor for MemoryModule {
                     flags.get("source").map(|s| s.as_str()),
                 )
                 .await?;
-                Ok(render_fact(&result, "added", json_mode))
-            }
-            "get" => {
-                let subject = take_pos1(&positional, "memory get")?;
-                let result = actions::get(&subject).await?;
-                Ok(render_query(
-                    &result,
-                    &format!("memory get {subject}"),
-                    json_mode,
-                ))
-            }
-            "relation" => {
-                let (subject, predicate) = take_pos2(&positional, "memory relation")?;
-                let result = actions::relation(&subject, &predicate).await?;
-                Ok(render_query(
-                    &result,
-                    &format!("memory relation {subject} {predicate}"),
-                    json_mode,
-                ))
-            }
-            "list" => {
-                let limit: Option<usize> = flags
-                    .get("limit")
-                    .and_then(|s| s.parse().ok())
-                    .map(|n: usize| n.min(actions::LIST_DEFAULT_LIMIT));
-                let result = actions::list(limit).await?;
-                Ok(render_query(&result, "memory list", json_mode))
-            }
-            "delete" => {
-                let (s, p, o) = take_pos3(&positional, "memory delete")?;
-                let result = actions::delete(&s, &p, &o).await?;
-                Ok(render_delete(&result, json_mode))
-            }
-            "graph" => {
-                let subject = take_pos1(&positional, "memory graph")?;
-                let depth: Option<u8> = flags.get("depth").and_then(|s| s.parse().ok());
-                let include_deleted = flags
-                    .get("include-deleted")
-                    .map(|s| s == "true")
-                    .unwrap_or(false);
-                let tree = actions::graph(&subject, depth, include_deleted).await?;
-                Ok(render_graph(&tree, json_mode))
-            }
-            "history" => {
-                let (s, p, o) = take_pos3(&positional, "memory history")?;
-                let result = actions::history(&s, &p, &o).await?;
-                Ok(render_history(&result, json_mode))
-            }
-            other => Err(AgentError::UnknownAction(format!("memory {other}"))),
+            Ok(render_fact(&result, "added", json_mode))
         }
-    }
-
-    /// P3 health: memory.db must open (the module is entirely DB-backed).
-    async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
-        crate::modules::db_health("memory", store::open).await
+        "get" => {
+            let subject = take_pos1(&positional, "memory get")?;
+            let result = backend.get(&subject).await?;
+            Ok(render_query(
+                &result,
+                &format!("memory get {subject}"),
+                json_mode,
+            ))
+        }
+        "relation" => {
+            let (subject, predicate) = take_pos2(&positional, "memory relation")?;
+            let result = backend.relation(&subject, &predicate).await?;
+            Ok(render_query(
+                &result,
+                &format!("memory relation {subject} {predicate}"),
+                json_mode,
+            ))
+        }
+        "list" => {
+            let limit: Option<usize> = flags
+                .get("limit")
+                .and_then(|s| s.parse().ok())
+                .map(|n: usize| n.min(actions::LIST_DEFAULT_LIMIT));
+            let result = backend.list(limit).await?;
+            Ok(render_query(&result, "memory list", json_mode))
+        }
+        "delete" => {
+            let (s, p, o) = take_pos3(&positional, "memory delete")?;
+            let result = backend.delete(&s, &p, &o).await?;
+            Ok(render_delete(&result, json_mode))
+        }
+        "graph" => {
+            let subject = take_pos1(&positional, "memory graph")?;
+            let depth: Option<u8> = flags.get("depth").and_then(|s| s.parse().ok());
+            let include_deleted = flags
+                .get("include-deleted")
+                .map(|s| s == "true")
+                .unwrap_or(false);
+            let tree = backend.graph(&subject, depth, include_deleted).await?;
+            Ok(render_graph(&tree, json_mode))
+        }
+        "history" => {
+            let (s, p, o) = take_pos3(&positional, "memory history")?;
+            let result = backend.history(&s, &p, &o).await?;
+            Ok(render_history(&result, json_mode))
+        }
+        other => Err(AgentError::UnknownAction(format!("memory {other}"))),
     }
 }
 
@@ -470,6 +487,16 @@ mod tests {
     use super::*;
     use crate::modules::memory::store;
 
+    /// Serializes e2e tests that write the real `~/.config/everyday/memory.db`.
+    ///
+    /// These tests call the `actions::*` handlers directly, which open the
+    /// global single-instance DB (K004). Running several of them in parallel
+    /// hits SQLite's single-writer lock and fails intermittently with
+    /// "attempt to write a readonly database". A process-wide async mutex
+    /// keeps the write-touching tests strictly sequential (tokio mutex so the
+    /// guard may be held across `.await` points without blocking the runtime).
+    static DB_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
     /// Each test runs against a temp DB by overriding the global path
     /// indirectly: tests in this module invoke the *actions* directly, so
     /// they hit the real `~/.config/everyday/memory.db`. To isolate tests
@@ -646,6 +673,7 @@ mod tests {
     /// scopes our assertions.
     #[tokio::test]
     async fn end_to_end_add_get_list_delete_history() {
+        let _guard = DB_LOCK.lock().await;
         // Use a unique subject name to avoid collisions.
         let subject = format!("test-{}", store::gen_id());
 
@@ -717,6 +745,7 @@ mod tests {
     /// `memory delete` on a nonexistent triple returns InvalidArgument.
     #[tokio::test]
     async fn delete_nonexistent_triple_errors() {
+        let _guard = DB_LOCK.lock().await;
         let subject = format!("ghost-{}", store::gen_id());
         let err = actions::delete(&subject, "prefers", "nothing")
             .await
@@ -728,6 +757,7 @@ mod tests {
     /// returns InvalidArgument("already deleted"-style).
     #[tokio::test]
     async fn delete_already_deleted_errors() {
+        let _guard = DB_LOCK.lock().await;
         let subject = format!("dup-{}", store::gen_id());
         actions::add(&subject, "owns", "x", None, None)
             .await
@@ -752,6 +782,7 @@ mod tests {
     /// loop (cycle detection).
     #[tokio::test]
     async fn graph_walks_chain_and_handles_cycles() {
+        let _guard = DB_LOCK.lock().await;
         let subject = format!("chain-{}", store::gen_id());
         // A -> B -> C -> A (cycle).
         actions::add(&subject, "next", "B", None, None)
@@ -775,5 +806,106 @@ mod tests {
         let _ = actions::delete(&subject, "next", "B").await;
         let _ = actions::delete("B", "next", "C").await;
         let _ = actions::delete("C", "next", "A").await;
+    }
+
+    // ============ P1 dispatch tests (Mock backend, no DB) ============
+
+    use backend::testkit::MockMemoryBackend;
+
+    fn fact(s: &str, p: &str, o: &str) -> actions::MemoryFact {
+        actions::MemoryFact {
+            id: format!("id-{s}-{p}-{o}"),
+            subject: s.into(),
+            predicate: p.into(),
+            object: o.into(),
+            confidence: 0.9,
+            source: None,
+            created_at: "2026-08-05T00:00:00Z".into(),
+            deleted_at: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_add_forwards_flags_to_backend() {
+        let mock = MockMemoryBackend {
+            facts: vec![fact("user", "prefers", "rust")],
+            ..Default::default()
+        };
+        let out = dispatch(
+            &mock,
+            "add",
+            &[
+                "user".to_string(),
+                "prefers".to_string(),
+                "go".to_string(),
+                "--confidence".to_string(),
+                "0.7".to_string(),
+                "--source".to_string(),
+                "cli".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        // Mock records the forwarded params; dispatch passes them through.
+        assert_eq!(
+            mock.last_add.lock().unwrap().as_ref(),
+            Some(&("user".to_string(), "prefers".to_string(), "go".to_string()))
+        );
+        assert_eq!(
+            mock.last_add_meta.lock().unwrap().as_ref(),
+            Some(&(Some("0.7".to_string()), Some("cli".to_string())))
+        );
+        assert!(matches!(out, Output::Text(_)));
+    }
+
+    #[tokio::test]
+    async fn dispatch_list_parses_limit_and_renders_records() {
+        let mock = MockMemoryBackend {
+            facts: vec![
+                fact("user", "prefers", "rust"),
+                fact("user", "prefers", "go"),
+            ],
+            ..Default::default()
+        };
+        let out = dispatch(&mock, "list", &["--limit".to_string(), "1".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(*mock.last_list_limit.lock().unwrap(), Some(1));
+        if let Output::TypedRecords { rows, .. } = out {
+            assert_eq!(rows.len(), 1);
+        } else {
+            panic!("expected TypedRecords output (text mode)");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_get_renders_json_envelope() {
+        let mock = MockMemoryBackend {
+            facts: vec![fact("user", "prefers", "rust")],
+            ..Default::default()
+        };
+        crate::util::json_mode::set_json_mode(true);
+        let out = dispatch(&mock, "get", &["user".to_string()]).await.unwrap();
+        crate::util::json_mode::set_json_mode(false);
+        if let Output::Json(v) = out {
+            assert_eq!(v["count"], 1);
+            assert_eq!(v["facts"][0]["object"], "rust");
+        } else {
+            panic!("expected Json output");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_action_errors() {
+        let mock = MockMemoryBackend::default();
+        let err = dispatch(&mock, "bogus", &[]).await.unwrap_err();
+        assert_eq!(err.type_name(), "UnknownAction");
+    }
+
+    #[tokio::test]
+    async fn dispatch_missing_positional_errors() {
+        let mock = MockMemoryBackend::default();
+        let err = dispatch(&mock, "add", &[]).await.unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
     }
 }

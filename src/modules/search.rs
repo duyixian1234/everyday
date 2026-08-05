@@ -49,7 +49,33 @@ impl SearchModule {
     pub fn new(config: Arc<Config>) -> Self {
         Self { config }
     }
+}
 
+// ============ service layer (P1 wiring, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ============
+
+/// Search service trait: domain method, no `Output` in sight (P1).
+///
+/// `ConfigSearchBackend` builds the [`SearchRegistry`] from config and runs the
+/// query; `testkit::MockSearchBackend` (tests) returns fixed data. `dispatch`
+/// is the only place that maps CLI args → service call → `Output`.
+#[async_trait]
+pub trait SearchBackend: Send + Sync {
+    /// Run a unified search against the registered providers.
+    async fn query(
+        &self,
+        q: &SearchQuery,
+        module_filter: &[String],
+        global_limit: usize,
+    ) -> Result<SearchOutcome>;
+}
+
+/// Real backend: holds the full `Config` (search is a cross-module
+/// orchestrator, [F012 P2b](../../docs/adr/F012-architecture-deepening-phase.md)).
+pub struct ConfigSearchBackend {
+    config: Arc<Config>,
+}
+
+impl ConfigSearchBackend {
     /// Build the [`SearchRegistry`] for the current config.
     ///
     /// Local provider accounts are registered one provider per account;
@@ -100,6 +126,28 @@ impl SearchModule {
 }
 
 #[async_trait]
+impl SearchBackend for ConfigSearchBackend {
+    async fn query(
+        &self,
+        q: &SearchQuery,
+        module_filter: &[String],
+        global_limit: usize,
+    ) -> Result<SearchOutcome> {
+        let registry = self.build_registry();
+        registry
+            .query(q, &self.config, module_filter, global_limit)
+            .await
+    }
+}
+
+/// Build the search backend for the current config.
+pub fn for_config(config: &Arc<Config>) -> Box<dyn SearchBackend> {
+    Box::new(ConfigSearchBackend {
+        config: config.clone(),
+    })
+}
+
+#[async_trait]
 impl Executor for SearchModule {
     fn description(&self) -> &'static str {
         "Cross-module unified search: query note / todo / bookmark / rss / cal / mail / memory in one shot."
@@ -132,62 +180,59 @@ impl Executor for SearchModule {
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
         // search has only one action; the default positional arg carries
         // the query string.
-        let (flags, positional) = parse_simple_args(args);
-        let json_mode = crate::util::json_mode::is_json();
-
-        match action {
-            "" | "query" => self.do_query(&positional, &flags, json_mode).await,
-            other => Err(AgentError::UnknownAction(format!("search {other}"))),
-        }
+        let backend = for_config(&self.config);
+        dispatch(&*backend, action, args).await
     }
 }
 
-impl SearchModule {
-    /// Run a unified search.
-    async fn do_query(
-        &self,
-        positional: &[String],
-        flags: &std::collections::HashMap<String, String>,
-        json_mode: bool,
-    ) -> Result<Output> {
-        // The query string: positional[0] or an explicit --query flag.
-        let query = flags
-            .get("query")
-            .cloned()
-            .or_else(|| positional.first().cloned())
-            .ok_or_else(|| {
-                AgentError::InvalidArgument(
-                    "search requires a query string (positional arg or --query Q)".into(),
-                )
-            })?;
+/// CLI dispatch: parse args → call the [`SearchBackend`] service method →
+/// render to `Output` (P1 wiring, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// This is the only function in the search module that touches `Output`;
+/// service methods are output-free and directly testable via
+/// [`testkit::MockSearchBackend`].
+async fn dispatch(backend: &dyn SearchBackend, action: &str, args: &[String]) -> Result<Output> {
+    let (flags, positional) = parse_simple_args(args);
+    let json_mode = crate::util::json_mode::is_json();
 
-        let mut sq = SearchQuery::new(query);
-        if let Some(s) = flags.get("since") {
-            sq.since = Some(parse_since(s)?);
+    match action {
+        "" | "query" => {
+            // The query string: positional[0] or an explicit --query flag.
+            let query = flags
+                .get("query")
+                .cloned()
+                .or_else(|| positional.first().cloned())
+                .ok_or_else(|| {
+                    AgentError::InvalidArgument(
+                        "search requires a query string (positional arg or --query Q)".into(),
+                    )
+                })?;
+
+            let mut sq = SearchQuery::new(query);
+            if let Some(s) = flags.get("since") {
+                sq.since = Some(parse_since(s)?);
+            }
+            if let Some(limit_str) = flags.get("limit") {
+                let parsed: usize = limit_str.parse().map_err(|_| {
+                    AgentError::InvalidArgument(format!(
+                        "invalid --limit '{limit_str}', expected non-negative integer"
+                    ))
+                })?;
+                sq.limit = Some(parsed);
+            }
+
+            // --module allow-list (validated against v1 search scope).
+            let module_filter = parse_source_list(flags.get("module"), SEARCHABLE_MODULES)?;
+
+            // Global limit: --limit overrides default; but --limit also
+            // applies to per-module in sq.limit. The aggregator expects the
+            // global limit as a separate argument (see SearchRegistry::query).
+            let global_limit = sq.limit.unwrap_or(DEFAULT_GLOBAL_LIMIT);
+
+            let outcome = backend.query(&sq, &module_filter, global_limit).await?;
+            render_search(&outcome, &sq, json_mode)
         }
-        if let Some(limit_str) = flags.get("limit") {
-            let parsed: usize = limit_str.parse().map_err(|_| {
-                AgentError::InvalidArgument(format!(
-                    "invalid --limit '{limit_str}', expected non-negative integer"
-                ))
-            })?;
-            sq.limit = Some(parsed);
-        }
-
-        // --module allow-list (validated against v1 search scope).
-        let module_filter = parse_source_list(flags.get("module"), SEARCHABLE_MODULES)?;
-
-        // Global limit: --limit overrides default; but --limit also
-        // applies to per-module in sq.limit. The aggregator expects the
-        // global limit as a separate argument (see SearchRegistry::query).
-        let global_limit = sq.limit.unwrap_or(DEFAULT_GLOBAL_LIMIT);
-
-        let registry = self.build_registry();
-        let outcome = registry
-            .query(&sq, &self.config, &module_filter, global_limit)
-            .await?;
-
-        render_search(&outcome, &sq, json_mode)
+        other => Err(AgentError::UnknownAction(format!("search {other}"))),
     }
 }
 
@@ -270,14 +315,14 @@ fn render_search(outcome: &SearchOutcome, q: &SearchQuery, json_mode: bool) -> R
 mod tests {
     use super::*;
 
-    /// Build a SearchModule with an empty config; memory is registered
+    /// Build a ConfigSearchBackend with an empty config; memory is registered
     /// unconditionally (single-instance, see K004) so the registry is
     /// not empty — only the account-bound providers are absent.
     #[test]
     fn build_registry_empty_config() {
         let cfg = Arc::new(Config::default());
-        let m = SearchModule::new(cfg);
-        let reg = m.build_registry();
+        let backend = ConfigSearchBackend { config: cfg };
+        let reg = backend.build_registry();
         let mods = reg.modules();
         // memory is single-instance; it should always be present.
         assert!(mods.contains(&"memory"));
@@ -308,8 +353,10 @@ mod tests {
             default_database_id: None,
             db_path: None,
         });
-        let m = SearchModule::new(Arc::new(cfg));
-        let reg = m.build_registry();
+        let backend = ConfigSearchBackend {
+            config: Arc::new(cfg),
+        };
+        let reg = backend.build_registry();
         let mods = reg.modules();
         assert!(mods.contains(&"note"));
         assert!(mods.contains(&"todo"));
@@ -326,8 +373,10 @@ mod tests {
             default_page_id: None,
             db_path: None,
         });
-        let m = SearchModule::new(Arc::new(cfg));
-        let reg = m.build_registry();
+        let backend = ConfigSearchBackend {
+            config: Arc::new(cfg),
+        };
+        let reg = backend.build_registry();
         // No note provider for notion accounts in v1.
         assert!(!reg.modules().contains(&"note"));
     }
@@ -337,8 +386,10 @@ mod tests {
     fn build_registry_registers_rss_only_when_feeds_exist() {
         let mut cfg = Config::default();
         // Empty feeds list: no rss provider.
-        let m = SearchModule::new(Arc::new(cfg.clone()));
-        let reg = m.build_registry();
+        let backend = ConfigSearchBackend {
+            config: Arc::new(cfg.clone()),
+        };
+        let reg = backend.build_registry();
         assert!(!reg.modules().contains(&"rss"));
 
         // With one feed: rss provider appears.
@@ -347,8 +398,10 @@ mod tests {
             url: "https://hnrss.org/frontpage".into(),
             category: None,
         });
-        let m = SearchModule::new(Arc::new(cfg));
-        let reg = m.build_registry();
+        let backend = ConfigSearchBackend {
+            config: Arc::new(cfg),
+        };
+        let reg = backend.build_registry();
         assert!(reg.modules().contains(&"rss"));
     }
 
@@ -366,8 +419,10 @@ mod tests {
             username: "me@example.com".into(),
             tls: true,
         });
-        let m = SearchModule::new(Arc::new(cfg));
-        let reg = m.build_registry();
+        let backend = ConfigSearchBackend {
+            config: Arc::new(cfg),
+        };
+        let reg = backend.build_registry();
         assert!(reg.modules().contains(&"mail"));
     }
 
@@ -379,5 +434,107 @@ mod tests {
         assert_eq!(spec.name, "search");
         assert_eq!(spec.actions.len(), 1);
         assert_eq!(spec.actions[0].name, "query");
+    }
+
+    // ============ P1 dispatch tests (Mock backend) ============
+
+    /// Test-only in-memory backend for dispatch tests.
+    pub(crate) mod testkit {
+        use super::super::*;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        pub struct MockSearchBackend {
+            pub outcome: SearchOutcome,
+            /// Query string of the last `query` call.
+            pub last_raw: Mutex<Option<String>>,
+            /// Module filter of the last call.
+            pub last_filter: Mutex<Option<Vec<String>>>,
+        }
+
+        #[async_trait]
+        impl SearchBackend for MockSearchBackend {
+            async fn query(
+                &self,
+                q: &SearchQuery,
+                module_filter: &[String],
+                _global_limit: usize,
+            ) -> Result<SearchOutcome> {
+                *self.last_raw.lock().unwrap() = Some(q.raw.clone());
+                *self.last_filter.lock().unwrap() = Some(module_filter.to_vec());
+                Ok(self.outcome.clone())
+            }
+        }
+    }
+
+    use testkit::MockSearchBackend;
+
+    #[tokio::test]
+    async fn dispatch_query_forwards_query_and_filter() {
+        let mock = MockSearchBackend::default();
+        let out = dispatch(
+            &mock,
+            "query",
+            &[
+                "rust cli".to_string(),
+                "--module".to_string(),
+                "note,todo".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        assert_eq!(mock.last_raw.lock().unwrap().as_deref(), Some("rust cli"));
+        assert_eq!(
+            mock.last_filter.lock().unwrap().as_deref(),
+            Some(["note".to_string(), "todo".to_string()].as_slice())
+        );
+        // Empty outcome → text "no hits" (exit 0).
+        if let Output::Text(s) = out {
+            assert!(s.contains("no hits"));
+        } else {
+            panic!("expected Text output");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_query_requires_query_string() {
+        let mock = MockSearchBackend::default();
+        let err = dispatch(&mock, "query", &[]).await.unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+    }
+
+    #[tokio::test]
+    async fn dispatch_query_invalid_limit_errors() {
+        let mock = MockSearchBackend::default();
+        let err = dispatch(
+            &mock,
+            "query",
+            &["x".to_string(), "--limit".to_string(), "-1".to_string()],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+    }
+
+    #[tokio::test]
+    async fn dispatch_query_invalid_module_errors() {
+        let mock = MockSearchBackend::default();
+        let err = dispatch(
+            &mock,
+            "query",
+            &["x".to_string(), "--module".to_string(), "bogus".to_string()],
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_action_errors() {
+        let mock = MockSearchBackend::default();
+        let err = dispatch(&mock, "bogus", &["x".to_string()])
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "UnknownAction");
     }
 }

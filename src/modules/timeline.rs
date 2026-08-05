@@ -26,7 +26,7 @@ pub mod store;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{Datelike, Duration, Local, NaiveDate, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Duration, Local, NaiveDate, TimeZone, Utc};
 use serde::{Deserialize, Serialize};
 
 use crate::config::Config;
@@ -223,17 +223,8 @@ impl Executor for TimelineModule {
     }
 
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output> {
-        let (flags, _positional) = parse_simple_args(args);
-        let json_mode = crate::util::json_mode::is_json();
-
-        match action {
-            "sync" => self.do_sync(&flags).await,
-            // No action or preset action -> query.
-            "" | "today" | "yesterday" | "week" | "month" => {
-                self.do_query(action, &flags, json_mode).await
-            }
-            other => Err(AgentError::UnknownAction(format!("timeline {other}"))),
-        }
+        let backend = for_config(&self.config);
+        dispatch(&*backend, action, args).await
     }
 
     /// P3 health: timeline.db must open (the event log is DB-backed).
@@ -242,84 +233,137 @@ impl Executor for TimelineModule {
     }
 }
 
-impl TimelineModule {
-    /// Run the `sync` subcommand.
-    async fn do_sync(&self, flags: &std::collections::HashMap<String, String>) -> Result<Output> {
-        let sources = parse_source_filter(flags.get("source"))?;
-        let since = flags.get("since").and_then(|s| parse_date_to_utc(s, false));
+// ============ service layer (P1 wiring, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ============
 
-        let output = orchestrator::run_sync(&self.config, &sources, since).await?;
-        Ok(output.to_output(crate::util::json_mode::is_json()))
+/// Timeline service trait: domain methods, no `Output` in sight (P1).
+///
+/// `ConfigTimelineBackend` talks to the orchestrator (sync) and the store
+/// (query); `testkit::MockTimelineBackend` (tests) returns fixed data.
+/// `dispatch` is the only place that maps CLI args → service calls → `Output`.
+#[async_trait]
+pub trait TimelineBackend: Send + Sync {
+    /// Run a full sync across sources (delegates to [`orchestrator::run_sync`]).
+    async fn sync(
+        &self,
+        sources: &[String],
+        since: Option<DateTime<Utc>>,
+    ) -> Result<orchestrator::SyncOutput>;
+
+    /// Query events in a window (delegates to [`store::query_events`]).
+    async fn query(&self, params: &store::QueryParams) -> Result<Vec<store::EventRow>>;
+}
+
+/// Real backend: holds the full `Config` (timeline is a cross-module
+/// orchestrator, [F012 P2b](../../docs/adr/F012-architecture-deepening-phase.md)).
+pub struct ConfigTimelineBackend {
+    config: Arc<Config>,
+}
+
+#[async_trait]
+impl TimelineBackend for ConfigTimelineBackend {
+    async fn sync(
+        &self,
+        sources: &[String],
+        since: Option<DateTime<Utc>>,
+    ) -> Result<orchestrator::SyncOutput> {
+        orchestrator::run_sync(&self.config, sources, since).await
     }
 
-    /// Run a query (preset or custom range).
-    async fn do_query(
-        &self,
-        preset: &str,
-        flags: &std::collections::HashMap<String, String>,
-        json_mode: bool,
-    ) -> Result<Output> {
-        // --sync: run a sync first, then query.
-        // Sync failures are no longer silently swallowed by `let _ =` (previously this
-        // meant users could see stale data without realising the sync had failed).
-        // The sync error now bubbles up to do_query and ultimately to main.rs's
-        // finalize, which renders it as an error output.
-        if flags.contains_key("sync") {
-            let sources = parse_source_filter(flags.get("source"))?;
-            orchestrator::run_sync(&self.config, &sources, None).await?;
-        }
-
-        // Resolve the time range.
-        // Previously `--from` alone (no `--to`) was silently ignored and fell back to
-        // the preset; an invalid `--from 2026-07-99` was silently swallowed, leading
-        // users to think they had data [L013](../../docs/adr/L013-from-explicit-error.md).
-        // `resolve_query_range` now handles all combinations explicitly and reports errors.
-        let (from_utc, to_utc) = resolve_query_range(
-            preset,
-            flags.get("from").map(String::as_str),
-            flags.get("to").map(String::as_str),
-            flags.get("since").map(String::as_str),
-        )?;
-
-        // Build query params.
-        let sources = parse_source_filter(flags.get("source"))?;
-        let account = flags.get("account").cloned();
-        // Previously `--limit` parse failures silently fell back to 100 (looks like 100
-        // rows of results when actually parsing failed). Switched to explicit error
-        // to avoid silent bugs like "I asked for -1 rows but got 100".
-        let limit: usize = match flags.get("limit") {
-            Some(s) => s.parse().map_err(|_| {
-                AgentError::InvalidArgument(format!(
-                    "invalid --limit '{s}', expected non-negative integer"
-                ))
-            })?,
-            None => 100,
-        };
-
+    async fn query(&self, params: &store::QueryParams) -> Result<Vec<store::EventRow>> {
         let pool = store::open().await?;
-        let params = store::QueryParams {
-            from: Some(from_utc),
-            to: Some(to_utc),
-            sources,
-            account,
-            limit,
-        };
-        let rows = store::query_events(&pool, &params).await?;
+        store::query_events(&pool, params).await
+    }
+}
 
-        if rows.is_empty() {
-            return if json_mode {
-                Ok(Output::Json(serde_json::Value::Array(vec![])))
-            } else {
-                Ok(Output::text("no events"))
+/// Build the timeline backend for the current config.
+pub fn for_config(config: &Arc<Config>) -> Box<dyn TimelineBackend> {
+    Box::new(ConfigTimelineBackend {
+        config: config.clone(),
+    })
+}
+
+/// CLI dispatch: parse args → call the [`TimelineBackend`] service method →
+/// render to `Output` (P1 wiring, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// This is the only function in the timeline module that touches `Output` for
+/// actions; service methods are output-free and directly testable via
+/// [`testkit::MockTimelineBackend`].
+async fn dispatch(backend: &dyn TimelineBackend, action: &str, args: &[String]) -> Result<Output> {
+    let (flags, _positional) = parse_simple_args(args);
+    let json_mode = crate::util::json_mode::is_json();
+
+    match action {
+        "sync" => {
+            let sources = parse_source_filter(flags.get("source"))?;
+            let since = flags.get("since").and_then(|s| parse_date_to_utc(s, false));
+
+            let output = backend.sync(&sources, since).await?;
+            Ok(output.to_output(crate::util::json_mode::is_json()))
+        }
+        // No action or preset action -> query.
+        "" | "today" | "yesterday" | "week" | "month" => {
+            // --sync: run a sync first, then query.
+            // Sync failures are no longer silently swallowed by `let _ =` (previously this
+            // meant users could see stale data without realising the sync had failed).
+            // The sync error now bubbles up to dispatch and ultimately to main.rs's
+            // finalize, which renders it as an error output.
+            if flags.contains_key("sync") {
+                let sources = parse_source_filter(flags.get("source"))?;
+                backend.sync(&sources, None).await?;
+            }
+
+            // Resolve the time range.
+            // Previously `--from` alone (no `--to`) was silently ignored and fell back to
+            // the preset; an invalid `--from 2026-07-99` was silently swallowed, leading
+            // users to think they had data [L013](../../docs/adr/L013-from-explicit-error.md).
+            // `resolve_query_range` now handles all combinations explicitly and reports errors.
+            let (from_utc, to_utc) = resolve_query_range(
+                action,
+                flags.get("from").map(String::as_str),
+                flags.get("to").map(String::as_str),
+                flags.get("since").map(String::as_str),
+            )?;
+
+            // Build query params.
+            let sources = parse_source_filter(flags.get("source"))?;
+            let account = flags.get("account").cloned();
+            // Previously `--limit` parse failures silently fell back to 100 (looks like 100
+            // rows of results when actually parsing failed). Switched to explicit error
+            // to avoid silent bugs like "I asked for -1 rows but got 100".
+            let limit: usize = match flags.get("limit") {
+                Some(s) => s.parse().map_err(|_| {
+                    AgentError::InvalidArgument(format!(
+                        "invalid --limit '{s}', expected non-negative integer"
+                    ))
+                })?,
+                None => 100,
             };
-        }
 
-        if json_mode {
-            Ok(Output::Json(store::rows_to_json(&rows)))
-        } else {
-            let (headers, table_rows) = store::rows_to_table_rows(&rows);
-            Ok(Output::records(headers, table_rows))
+            let params = store::QueryParams {
+                from: Some(from_utc),
+                to: Some(to_utc),
+                sources,
+                account,
+                limit,
+            };
+            let rows = backend.query(&params).await?;
+
+            if rows.is_empty() {
+                return if json_mode {
+                    Ok(Output::Json(serde_json::Value::Array(vec![])))
+                } else {
+                    Ok(Output::text("no events"))
+                };
+            }
+
+            if json_mode {
+                Ok(Output::Json(store::rows_to_json(&rows)))
+            } else {
+                let (headers, table_rows) = store::rows_to_table_rows(&rows);
+                Ok(Output::records(headers, table_rows))
+            }
         }
+        other => Err(AgentError::UnknownAction(format!("timeline {other}"))),
     }
 }
 
@@ -722,5 +766,149 @@ mod tests {
         assert!(diff >= chrono::Duration::minutes(29));
         assert!(diff <= chrono::Duration::minutes(31));
         assert!(to > now - chrono::Duration::minutes(1));
+    }
+
+    // ============ P1 dispatch tests (Mock backend, no DB/network) ============
+
+    /// Test-only in-memory backend for dispatch tests.
+    pub(crate) mod testkit {
+        use super::super::*;
+        use std::sync::Mutex;
+
+        #[derive(Default)]
+        pub struct MockTimelineBackend {
+            /// Rows returned by `query`.
+            pub rows: Vec<store::EventRow>,
+            /// Last `sync` sources + since-flag.
+            pub last_sync: Mutex<Option<(Vec<String>, bool)>>,
+            /// Last `query` limit.
+            pub last_limit: Mutex<Option<usize>>,
+        }
+
+        #[async_trait]
+        impl TimelineBackend for MockTimelineBackend {
+            async fn sync(
+                &self,
+                sources: &[String],
+                since: Option<DateTime<Utc>>,
+            ) -> Result<orchestrator::SyncOutput> {
+                *self.last_sync.lock().unwrap() = Some((sources.to_vec(), since.is_some()));
+                Ok(orchestrator::SyncOutput { results: vec![] })
+            }
+
+            async fn query(&self, params: &store::QueryParams) -> Result<Vec<store::EventRow>> {
+                *self.last_limit.lock().unwrap() = Some(params.limit);
+                Ok(self.rows.clone())
+            }
+        }
+    }
+
+    use testkit::MockTimelineBackend;
+
+    fn event_row(source: &str, title: &str) -> store::EventRow {
+        store::EventRow {
+            id: format!("id-{source}-{title}"),
+            source: source.to_string(),
+            account: None,
+            event_type: "created".to_string(),
+            timestamp: "2026-08-05T00:00:00Z".to_string(),
+            title: title.to_string(),
+            summary: String::new(),
+            ref_id: String::new(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_query_renders_rows_as_records() {
+        let mock = MockTimelineBackend {
+            rows: vec![event_row("todo", "买咖啡")],
+            ..Default::default()
+        };
+        let out = dispatch(&mock, "today", &["--limit".to_string(), "5".to_string()])
+            .await
+            .unwrap();
+        assert_eq!(*mock.last_limit.lock().unwrap(), Some(5));
+        if let Output::Records { rows, .. } = out {
+            assert_eq!(rows.len(), 1);
+            assert!(rows[0].iter().any(|c| c.contains("买咖啡")));
+        } else {
+            panic!("expected Records output (text mode)");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_query_empty_returns_no_events() {
+        let mock = MockTimelineBackend::default();
+        let out = dispatch(&mock, "today", &[]).await.unwrap();
+        if let Output::Text(s) = out {
+            assert!(s.contains("no events"));
+        } else {
+            panic!("expected Text output");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_query_json_mode_returns_array() {
+        let mock = MockTimelineBackend {
+            rows: vec![event_row("rss", "Rust 1.95")],
+            ..Default::default()
+        };
+        crate::util::json_mode::set_json_mode(true);
+        let out = dispatch(&mock, "today", &[]).await.unwrap();
+        crate::util::json_mode::set_json_mode(false);
+        if let Output::Json(v) = out {
+            assert_eq!(v[0]["title"], "Rust 1.95");
+        } else {
+            panic!("expected Json output");
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_sync_forwards_sources_and_since() {
+        let mock = MockTimelineBackend::default();
+        let out = dispatch(
+            &mock,
+            "sync",
+            &[
+                "--source".to_string(),
+                "mail,cal".to_string(),
+                "--since".to_string(),
+                "2026-01-01".to_string(),
+            ],
+        )
+        .await
+        .unwrap();
+        let (sources, since_given) = mock.last_sync.lock().unwrap().clone().unwrap();
+        assert_eq!(sources, vec!["mail", "cal"]);
+        assert!(since_given);
+        assert!(matches!(out, Output::Json(_)) | matches!(out, Output::Text(_)));
+    }
+
+    #[tokio::test]
+    async fn dispatch_query_with_sync_flag_calls_sync_first() {
+        let mock = MockTimelineBackend::default();
+        dispatch(&mock, "today", &["--sync".to_string()])
+            .await
+            .unwrap();
+        let (sources, since_given) = mock.last_sync.lock().unwrap().clone().unwrap();
+        assert!(sources.is_empty());
+        assert!(!since_given); // --sync triggers sync with since=None
+    }
+
+    #[tokio::test]
+    async fn dispatch_invalid_limit_errors() {
+        let mock = MockTimelineBackend::default();
+        let err = dispatch(&mock, "today", &["--limit".to_string(), "-1".to_string()])
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_action_errors() {
+        let mock = MockTimelineBackend::default();
+        let err = dispatch(&mock, "bogus", &[]).await.unwrap_err();
+        assert_eq!(err.type_name(), "UnknownAction");
     }
 }
