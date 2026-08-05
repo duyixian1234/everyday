@@ -414,6 +414,33 @@ everyday memory graph user --depth 2
 everyday search query "rust" --module memory --json
 ```
 
+### health — module health check (NEW in v0.11.0)
+
+Runs every module's `health_check` and renders one row per module. Checks are **local-only by design** (cache / config DB openable, keyring credential present) — never network calls, so `health` is fast and works offline. Modules that don't override the check (search / auth / config) report `ok` via the default. All rows render regardless of state; the **exit code is 0 when every module is healthy and 1 when any module is degraded** (so scripts can gate on it).
+
+| Command | Description | Usage |
+|------|------|------|
+| `health` | Probe every module's local health | `everyday health [--json]` |
+
+**Text output** (one row per module):
+
+```
+$ everyday health
+module    status  detail
+------------------------
+config    ok      ok
+auth      ok      ok
+...
+```
+
+**JSON output** (`--json`):
+
+```json
+[{"detail":"ok","healthy":true,"module":"config"},{"detail":"ok","healthy":true,"module":"auth"},...]
+```
+
+Implemented as part of the lifecycle hooks in [F012](docs/adr/F012-architecture-deepening-phase.md) (P3).
+
 ## Output Modes
 
 ### Text mode (default)
@@ -737,6 +764,7 @@ Adding a module only takes: create a file + implement the trait + register one l
 | `timeline` | ✅ Fully available | unified event log: today / yesterday / week / month / sync |
 | `search` | ✅ Fully available (NEW in v0.7.0) | cross-module unified search: query all modules in one shot |
 | `memory` | ✅ Fully available (NEW in v0.10.0) | append-only `(subject, predicate, object)` triple notebook with confidence/source + graph + Searchable |
+| `health` | ✅ Fully available (NEW in v0.11.0) | root-level ops command: every module's local-only health check, exit 0/1 |
 
 ## License
 

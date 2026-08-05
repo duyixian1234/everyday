@@ -415,6 +415,33 @@ everyday memory graph user --depth 2
 everyday search query "rust" --module memory --json
 ```
 
+### health — 模块健康检查（v0.11.0 新增）
+
+运行所有模块的 `health_check`，每个模块输出一行。检查**刻意仅做本地探测**（缓存 / 配置 DB 可打开、keyring 凭证存在）——绝不做网络调用，因此 `health` 快速且可离线使用。未覆写该检查的模块（search / auth / config）通过默认实现报告 `ok`。无论状态如何都渲染所有行；**退出码：全部健康为 0，任一模块 degraded 为 1**（便于脚本做门禁）。
+
+| 命令 | 描述 | 用法 |
+|------|------|------|
+| `health` | 探测每个模块的本地健康状态 | `everyday health [--json]` |
+
+**Text 输出**（每模块一行）：
+
+```
+$ everyday health
+module    status  detail
+------------------------
+config    ok      ok
+auth      ok      ok
+...
+```
+
+**JSON 输出**（`--json`）：
+
+```json
+[{"detail":"ok","healthy":true,"module":"config"},{"detail":"ok","healthy":true,"module":"auth"},...]
+```
+
+实现见 [F012](docs/adr/F012-architecture-deepening-phase.md) P3 生命周期钩子。
+
 ## 输出模式
 
 ### Text 模式（默认）
@@ -738,6 +765,7 @@ pub trait Executor: Send + Sync {
 | `timeline` | ✅ 完整可用 | 统一事件流：today / yesterday / week / month / sync |
 | `search` | ✅ 完整可用（v0.7.0 新增） | 跨模块统一搜索：query |
 | `memory` | ✅ 完整可用（v0.10.0 新增） | append-only `(subject, predicate, object)` 三元组笔记本 + graph + Searchable |
+| `health` | ✅ 完整可用（v0.11.0 新增） | 根级运维命令：所有模块本地健康检查，退出码 0/1 |
 
 ## 许可证
 

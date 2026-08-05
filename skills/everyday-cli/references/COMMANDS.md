@@ -27,6 +27,19 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + ops-log AOP trace. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`). v0.6.1 修复 `--from` 单独给定被静默回退 preset 的问题 |
 | `memory` | ✅ Complete (v0.10.0) | Single-instance append-only `(subject, predicate, object)` triple notebook with `--confidence` / `--source` metadata; soft delete + full version history; forward-only BFS graph (depth 1..=5); participates in `everyday search`. No `account` column, no `auth` module touch. Storage at `~/.config/everyday/memory.db` |
 | `search` | ✅ Complete (v0.7.0; v0.9.0 +mail, v0.10.0 +memory) | Cross-module unified search fan-out: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`. Modules: `note` / `todo` / `bookmark` / `rss` / `cal` / `mail` (local envelope cache) / `memory` (current-state view). Notion-backed accounts skipped in v1 |
+| `health` | ✅ Complete (v0.11.0) | Root-level ops command (not a module): runs every module's local-only `health_check`, one row per module. Exit 0 when all healthy, 1 when any degraded. JSON = array of `{module, healthy, detail}` |
+
+---
+
+## health — module health check ✅ (v0.11.0)
+
+Runs every module's `health_check` and renders one row per module. Checks are **local-only by design** (cache / config DB openable, keyring credential present) — never network calls, so `health` is fast and works offline. Modules without an override (search / auth / config) report `ok` via the default. All rows render regardless of state.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `health` | Probe every module's local health | `everyday health` / `everyday health --json` |
+
+Text output is a `module | status | detail` table; JSON output is an array of `{"module": ..., "healthy": bool, "detail": ...}`. **Exit code**: 0 when all modules healthy, 1 when any is degraded (scripts can gate on it). Implemented as part of the F012 P3 lifecycle hooks.
 
 ---
 

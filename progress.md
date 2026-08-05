@@ -10,11 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
-- **v0.10.0 已发布** — Memory 模块落地：append-only `(subject, predicate, object)` 三元组 + 当前态视图 + 前向 graph + Searchable（[K001–K004](./docs/adr/K001-memory-module.md)）。
-- **F012 Phase 2 P1 接线完成（未发版）** — 特殊模块（memory/search/timeline/auth）补 service-layer trait（`MemoryBackend`/`SearchBackend`/`TimelineBackend`/`AuthBackend` + `for_config` 工厂 + Mock 直测），execute 收敛为 `dispatch()` 唯一 Output 触点；config 保留 Executor 直实现（无 domain 层，理由见 [F012](./docs/adr/F012-architecture-deepening-phase.md)）。commit `fe1ab51`。
-- **F012 Phase 3 完成（未发版）** — 架构深化第三阶段（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：P3 lifecycle hooks（`everyday health` + Executor 默认方法）+ P4 RequestContext（thread-local 非破坏传播）+ P5 Middleware 栈（默认 LoggingMiddleware，stderr 结构化日志）。
-- **F012 Phase 2 完成（未发版）** — 架构深化第二阶段（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：P1 CLI/business 分离（`cli_action!`/`flag!` 宏削减 ArgSpec ~40-55% + mail/cal/rss service-layer trait + Mock 直测）+ P2b config 子集注入（业务模块只依赖自己的 section）。
-- **F012 Phase 1 完成（未发版）** — 架构深化第一阶段（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：P6 `TypedValue` 保类型输出（mail list uid/unread、memory confidence 走原生 JSON 类型）+ P2c `Config::validate()` 加载时校验 + P2a `AccountProvider` trait 统一账户解析（替代 R007 宏）。
+- **v0.11.0-rc 已发布** — 架构深化三阶段落地（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：Phase 1（P6 TypedValue / P2c Config 校验 / P2a AccountProvider）+ Phase 2（P1 CLI/business 分离 + P2b config 子集）+ Phase 3（P3 lifecycle `everyday health` / P4 RequestContext / P5 Middleware）。
 - **v0.9.0 已发布** — 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存（[S007](./docs/adr/S007-mail-search-local-cache.md)）。
 - **v0.8.1 已发布** — 动作层 Backend DI 重构（[R016–R018](./docs/adr/R016-action-backend-di.md)）。
 - **v0.8.0 已发布** — 凭据 / `login` 收拢到顶层 `auth` 模块（[R013–R015](./docs/adr/R013-auth-module-consolidation.md)；破坏性）。
@@ -66,6 +62,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.11.0-rc** | `v0.11.0-rc` | 架构深化三阶段：P6 TypedValue / P2c Config 校验 / P2a AccountProvider / P1 CLI/business 分离 / P2b config 子集 / P3 lifecycle（`everyday health`）/ P4 RequestContext / P5 Middleware | [F012](./docs/adr/F012-architecture-deepening-phase.md) |
 | **v0.10.0** | `v0.10.0` | Memory 模块落地：append-only `(subject, predicate, object)` 三元组 + 当前态视图 + graph + Searchable | [K001–K004](./docs/adr/K001-memory-module.md) |
 | **v0.9.0** | `v0.9.0` | 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存 | [S007](./docs/adr/S007-mail-search-local-cache.md) |
 | **v0.8.1** | `v0.8.1` | 动作层 Backend DI 重构：note/todo/bookmark 去 `NotionClient` 直接引用 | [R016–R018](./docs/adr/R016-action-backend-di.md) |

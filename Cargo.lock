@@ -919,7 +919,7 @@ dependencies = [
 
 [[package]]
 name = "everyday"
-version = "0.10.0"
+version = "0.11.0-rc"
 dependencies = [
  "anyhow",
  "async-imap",
