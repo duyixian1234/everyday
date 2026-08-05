@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 use crate::error::{AgentError, Result};
 use crate::modules::parse_simple_args;
 use crate::modules::{Executor, ModuleArgSpec};
-use crate::output::Output;
+use crate::output::{Output, TypedValue};
 use crate::search::Searchable;
 use std::sync::Arc;
 
@@ -282,22 +282,27 @@ fn render_query(q: &actions::QueryResult, header: &str, json_mode: bool) -> Outp
             "id".to_string(),
             "created_at".to_string(),
         ];
-        let rows: Vec<Vec<String>> = q
+        // Typed cells: confidence stays numeric in JSON mode (F012 P6); absent
+        // source renders as null. Text-mode table display is unchanged.
+        let rows: Vec<Vec<TypedValue>> = q
             .facts
             .iter()
             .map(|f| {
                 vec![
-                    f.subject.clone(),
-                    f.predicate.clone(),
-                    f.object.clone(),
-                    format!("{}", f.confidence),
-                    f.source.clone().unwrap_or_default(),
-                    f.id.clone(),
-                    f.created_at.clone(),
+                    TypedValue::text(f.subject.clone()),
+                    TypedValue::text(f.predicate.clone()),
+                    TypedValue::text(f.object.clone()),
+                    TypedValue::number(f.confidence),
+                    f.source
+                        .clone()
+                        .map(TypedValue::text)
+                        .unwrap_or(TypedValue::null()),
+                    TypedValue::text(f.id.clone()),
+                    TypedValue::text(f.created_at.clone()),
                 ]
             })
             .collect();
-        Output::records(headers, rows)
+        Output::typed_records(headers, rows)
     }
 }
 
@@ -316,20 +321,27 @@ fn render_history(q: &actions::QueryResult, json_mode: bool) -> Output {
             "created_at".to_string(),
             "deleted_at".to_string(),
         ];
-        let rows: Vec<Vec<String>> = q
+        // Typed cells: confidence numeric, absent source/deleted_at render as null (F012 P6).
+        let rows: Vec<Vec<TypedValue>> = q
             .facts
             .iter()
             .map(|f| {
                 vec![
-                    f.id.clone(),
-                    format!("{}", f.confidence),
-                    f.source.clone().unwrap_or_default(),
-                    f.created_at.clone(),
-                    f.deleted_at.clone().unwrap_or_default(),
+                    TypedValue::text(f.id.clone()),
+                    TypedValue::number(f.confidence),
+                    f.source
+                        .clone()
+                        .map(TypedValue::text)
+                        .unwrap_or(TypedValue::null()),
+                    TypedValue::text(f.created_at.clone()),
+                    f.deleted_at
+                        .clone()
+                        .map(TypedValue::text)
+                        .unwrap_or(TypedValue::null()),
                 ]
             })
             .collect();
-        Output::records(headers, rows)
+        Output::typed_records(headers, rows)
     }
 }
 

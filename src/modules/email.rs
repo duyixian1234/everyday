@@ -22,7 +22,7 @@ use crate::config::{Config, MailAccount};
 use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::modules::{email_cache, email_pool};
-use crate::output::Output;
+use crate::output::{Output, TypedValue};
 use crate::search::{Hit, SearchQuery, Searchable};
 use sqlx::sqlite::SqlitePool;
 
@@ -396,23 +396,26 @@ async fn mail_list(
     };
     let envelopes = email_cache::query_envelopes(&cache, &account.name, &query).await?;
 
-    // 6. render table rows
-    let rows: Vec<Vec<String>> = envelopes
+    // 6. render table rows (typed cells: uid/unread stay numeric/boolean in
+    //    JSON mode instead of being stringified — F012 P6)
+    let rows: Vec<Vec<TypedValue>> = envelopes
         .into_iter()
         .map(|e| {
             vec![
-                e.uid.to_string(),
-                decode_imap_utf7(&e.folder),
-                e.date,
-                e.from_addr,
-                decode_mime_header(&e.subject),
+                TypedValue::number(e.uid as f64),
+                TypedValue::boolean(!e.flags.contains("\\Seen")),
+                TypedValue::text(decode_imap_utf7(&e.folder)),
+                TypedValue::text(e.date),
+                TypedValue::text(e.from_addr),
+                TypedValue::text(decode_mime_header(&e.subject)),
             ]
         })
         .collect();
 
-    Ok(Output::records(
+    Ok(Output::typed_records(
         vec![
             "uid".into(),
+            "unread".into(),
             "folder".into(),
             "date".into(),
             "from".into(),

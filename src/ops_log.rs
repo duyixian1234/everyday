@@ -218,6 +218,17 @@ fn extract_from_output(
             }
             Value::Object(obj)
         }
+        Output::TypedRecords { headers, rows } => {
+            // Typed table output → array of JSON objects (native types); take the first row.
+            if rows.is_empty() {
+                return Ok((String::new(), String::new(), Value::Null));
+            }
+            let mut obj = serde_json::Map::new();
+            for (h, v) in headers.iter().zip(rows[0].iter()) {
+                obj.insert(h.clone(), v.to_json());
+            }
+            Value::Object(obj)
+        }
     };
 
     let ref_id = json_val
