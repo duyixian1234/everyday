@@ -43,127 +43,59 @@ impl Executor for EmailModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ArgKind, ArgSpec, ModuleArgSpec, Positional};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
-            ActionArgSpec {
-                name: "folders",
-                description: "列出所有文件夹",
-                usage: "everyday mail folders [--account NAME]",
-                args: &[],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "list",
-                description: "列出邮件（走本地 envelope 缓存）",
-                usage: "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "unread",
-                        help: "仅未读",
-                        kind: ArgKind::Bool,
-                    },
-                    ArgSpec {
-                        name: "limit",
-                        help: "条数上限",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "folder",
-                        help: "限定文件夹",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "no-recursive",
-                        help: "仅查 INBOX（不递归子文件夹）",
-                        kind: ArgKind::Bool,
-                    },
-                    ArgSpec {
-                        name: "sync",
-                        help: "强制立即同步本地缓存",
-                        kind: ArgKind::Bool,
-                    },
+            cli_action!(
+                "folders",
+                "列出所有文件夹",
+                "everyday mail folders [--account NAME]",
+                &[]
+            ),
+            cli_action!(
+                "list",
+                "列出邮件（走本地 envelope 缓存）",
+                "everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync] [--account NAME]",
+                &[
+                    flag!("unread", "仅未读", Bool),
+                    flag!("limit", "条数上限"),
+                    flag!("folder", "限定文件夹"),
+                    flag!("no-recursive", "仅查 INBOX（不递归子文件夹）", Bool),
+                    flag!("sync", "强制立即同步本地缓存", Bool),
+                ]
+            ),
+            cli_action!(
+                "read",
+                "读取邮件正文",
+                "everyday mail read <uid> [--folder NAME] [--no-recursive] [--account NAME]",
+                &[
+                    flag!("id", "邮件 UID（--uid 的替代写法）"),
+                    flag!("folder", "邮件所在文件夹"),
+                    flag!("no-recursive", "仅查 INBOX", Bool),
                 ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "read",
-                description: "读取邮件正文",
-                usage: "everyday mail read <uid> [--folder NAME] [--no-recursive] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "id",
-                        help: "邮件 UID（--uid 的替代写法）",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "folder",
-                        help: "邮件所在文件夹",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "no-recursive",
-                        help: "仅查 INBOX",
-                        kind: ArgKind::Bool,
-                    },
-                ],
-                positional: Positional::OptionalSingle,
-            },
-            ActionArgSpec {
-                name: "search",
-                description: "在服务器搜索邮件",
-                usage: "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "query",
-                        help: "搜索关键词",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "limit",
-                        help: "条数上限",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "folder",
-                        help: "限定文件夹",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "no-recursive",
-                        help: "仅查 INBOX",
-                        kind: ArgKind::Bool,
-                    },
-                ],
-                positional: Positional::None,
-            },
-            ActionArgSpec {
-                name: "send",
-                description: "发送邮件",
-                usage: "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]",
-                args: &[
-                    ArgSpec {
-                        name: "to",
-                        help: "收件人地址",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "subject",
-                        help: "主题",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "body",
-                        help: "正文",
-                        kind: ArgKind::Value,
-                    },
-                    ArgSpec {
-                        name: "cc",
-                        help: "抄送地址",
-                        kind: ArgKind::Value,
-                    },
-                ],
-                positional: Positional::None,
-            },
+                Positional::OptionalSingle
+            ),
+            cli_action!(
+                "search",
+                "在服务器搜索邮件",
+                "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
+                &[
+                    flag!("query", "搜索关键词"),
+                    flag!("limit", "条数上限"),
+                    flag!("folder", "限定文件夹"),
+                    flag!("no-recursive", "仅查 INBOX", Bool),
+                ]
+            ),
+            cli_action!(
+                "send",
+                "发送邮件",
+                "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]",
+                &[
+                    flag!("to", "收件人地址"),
+                    flag!("subject", "主题"),
+                    flag!("body", "正文"),
+                    flag!("cc", "抄送地址"),
+                ]
+            ),
         ];
         ModuleArgSpec {
             name: "mail",
@@ -178,16 +110,257 @@ impl Executor for EmailModule {
             .config
             .mail_account(flags.get("account").map(|s| s.as_str()))?;
 
-        let password = crate::modules::auth::get_credential(&self.config, "mail", &account.name)?;
-        match action {
-            "folders" => mail_folders(account, &password).await,
-            "list" => mail_list(account, &password, &flags).await,
-            "read" => mail_read(account, &password, &flags, &positional).await,
-            "search" => mail_search(account, &password, &flags).await,
-            "send" => mail_send(account, &password, &flags).await,
-            other => Err(AgentError::UnknownAction(format!("mail {other}"))),
-        }
+        // DI seam (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)):
+        // credential lookup + backend construction happen here; `dispatch` only
+        // parses CLI args and calls service methods. Tests inject a
+        // `MockMailBackend` and drive `dispatch` directly — no IMAP/SMTP.
+        let backend = for_account(&self.config, account)?;
+        dispatch(backend.as_ref(), action, &flags, &positional).await
     }
+}
+
+// ============ service layer (P1) ============
+
+/// Domain type: a mail envelope summary (what `mail list` / `mail search` return).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailEnvelope {
+    pub uid: u32,
+    pub unread: bool,
+    pub folder: String,
+    pub date: String,
+    pub from: String,
+    pub subject: String,
+}
+
+/// Domain type: a full message (what `mail read` returns).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailMessage {
+    pub uid: u32,
+    pub folder: String,
+    pub subject: String,
+    pub from: String,
+    pub date: String,
+    pub body: String,
+}
+
+/// Options for `list` / `search`, parsed from CLI flags by `dispatch`.
+#[derive(Debug, Clone, Default)]
+pub struct MailListOptions {
+    pub unread_only: bool,
+    pub limit: usize,
+    pub folder: Option<String>,
+    pub no_recursive: bool,
+    pub force_sync: bool,
+}
+
+/// Outbound message (`mail send`).
+#[derive(Debug, Clone)]
+pub struct MailSendRequest {
+    pub to: String,
+    pub cc: Option<String>,
+    pub subject: String,
+    pub body: String,
+}
+
+/// Receipt for a sent message.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MailSendReceipt {
+    pub to: String,
+    pub subject: String,
+}
+
+/// Mail service trait: domain methods, no `Output` in sight (P1).
+///
+/// `ImapMailBackend` talks to IMAP/SMTP (+ the local envelope cache);
+/// `MockMailBackend` (tests) returns fixed data. `dispatch` is the only place
+/// that maps CLI args → service calls → `Output`.
+#[async_trait]
+pub trait MailBackend: Send + Sync {
+    /// All mailbox folders (IMAP LIST).
+    async fn folders(&self) -> Result<Vec<String>>;
+    /// List envelopes (local cache with staleness-driven sync).
+    async fn list(&self, opts: &MailListOptions) -> Result<Vec<MailEnvelope>>;
+    /// Read one message in full.
+    async fn read(&self, uid: u32, folder: Option<&str>, no_recursive: bool)
+    -> Result<MailMessage>;
+    /// Server-side search, returning summary envelopes.
+    async fn search(&self, query: &str, opts: &MailListOptions) -> Result<Vec<MailEnvelope>>;
+    /// Send a message via SMTP.
+    async fn send(&self, req: &MailSendRequest) -> Result<MailSendReceipt>;
+}
+
+/// Real IMAP/SMTP backend. Holds the resolved account + credential so the
+/// service methods don't re-resolve them per call.
+pub struct ImapMailBackend {
+    account: MailAccount,
+    password: String,
+}
+
+/// Build the mail backend for an account (credential read happens here, once).
+pub fn for_account(config: &Config, account: &MailAccount) -> Result<Box<dyn MailBackend>> {
+    let password = crate::modules::auth::get_credential(config, "mail", &account.name)?;
+    Ok(Box::new(ImapMailBackend {
+        account: account.clone(),
+        password,
+    }))
+}
+
+/// CLI dispatch: parse flags → call the backend service method → render to `Output`.
+///
+/// This is the only function in the mail module that touches `Output` for
+/// actions; service methods themselves are output-free and directly testable.
+async fn dispatch(
+    backend: &dyn MailBackend,
+    action: &str,
+    flags: &HashMap<String, String>,
+    positional: &[String],
+) -> Result<Output> {
+    match action {
+        "folders" => {
+            let folders = backend.folders().await?;
+            render_folders(folders)
+        }
+        "list" => {
+            let opts = parse_list_options(flags);
+            let envelopes = backend.list(&opts).await?;
+            render_list(envelopes)
+        }
+        "read" => {
+            let uid = parse_uid(flags, positional)?;
+            let folder = flags.get("folder").map(String::as_str);
+            let no_recursive = flags.contains_key("no-recursive");
+            let msg = backend.read(uid, folder, no_recursive).await?;
+            render_read(msg)
+        }
+        "search" => {
+            let query = flags.get("query").ok_or_else(|| {
+                AgentError::InvalidArgument("usage: everyday mail search --query Q".into())
+            })?;
+            let opts = parse_list_options(flags);
+            let envelopes = backend.search(query, &opts).await?;
+            render_search(envelopes)
+        }
+        "send" => {
+            let req = parse_send_request(flags)?;
+            let receipt = backend.send(&req).await?;
+            render_send(&receipt)
+        }
+        other => Err(AgentError::UnknownAction(format!("mail {other}"))),
+    }
+}
+
+fn parse_uid(flags: &HashMap<String, String>, positional: &[String]) -> Result<u32> {
+    let uid_str = positional
+        .first()
+        .or_else(|| flags.get("id"))
+        .ok_or_else(|| AgentError::InvalidArgument("usage: everyday mail read <uid>".into()))?;
+    uid_str
+        .parse()
+        .map_err(|_| AgentError::InvalidArgument("uid must be a number".into()))
+}
+
+fn parse_list_options(flags: &HashMap<String, String>) -> MailListOptions {
+    MailListOptions {
+        unread_only: flags.contains_key("unread"),
+        limit: flags
+            .get("limit")
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(20),
+        folder: flags.get("folder").cloned(),
+        no_recursive: flags.contains_key("no-recursive"),
+        force_sync: flags.contains_key("sync"),
+    }
+}
+
+fn parse_send_request(flags: &HashMap<String, String>) -> Result<MailSendRequest> {
+    let to = flags
+        .get("to")
+        .ok_or_else(|| AgentError::InvalidArgument("usage: everyday mail send --to ADDR".into()))?
+        .clone();
+    let subject = flags
+        .get("subject")
+        .ok_or_else(|| AgentError::InvalidArgument("usage: everyday mail send --subject S".into()))?
+        .clone();
+    let body = flags
+        .get("body")
+        .ok_or_else(|| AgentError::InvalidArgument("usage: everyday mail send --body TEXT".into()))?
+        .clone();
+    Ok(MailSendRequest {
+        to,
+        cc: flags.get("cc").cloned(),
+        subject,
+        body,
+    })
+}
+
+// ---- render: domain → Output ----
+
+fn render_folders(folders: Vec<String>) -> Result<Output> {
+    let rows: Vec<Vec<String>> = folders.into_iter().map(|f| vec![f]).collect();
+    Ok(Output::records(vec!["folder".into()], rows))
+}
+
+/// `mail list` rows are typed (F012 P6): uid numeric, unread boolean.
+fn render_list(envelopes: Vec<MailEnvelope>) -> Result<Output> {
+    let rows: Vec<Vec<TypedValue>> = envelopes
+        .into_iter()
+        .map(|e| {
+            vec![
+                TypedValue::number(e.uid as f64),
+                TypedValue::boolean(e.unread),
+                TypedValue::text(e.folder),
+                TypedValue::text(e.date),
+                TypedValue::text(e.from),
+                TypedValue::text(e.subject),
+            ]
+        })
+        .collect();
+    Ok(Output::typed_records(
+        vec![
+            "uid".into(),
+            "unread".into(),
+            "folder".into(),
+            "date".into(),
+            "from".into(),
+            "subject".into(),
+        ],
+        rows,
+    ))
+}
+
+/// `mail search` keeps plain-string records (historical contract).
+fn render_search(envelopes: Vec<MailEnvelope>) -> Result<Output> {
+    let rows: Vec<Vec<String>> = envelopes
+        .into_iter()
+        .map(|e| vec![e.uid.to_string(), e.folder, e.date, e.from, e.subject])
+        .collect();
+    Ok(Output::records(
+        vec![
+            "uid".into(),
+            "folder".into(),
+            "date".into(),
+            "from".into(),
+            "subject".into(),
+        ],
+        rows,
+    ))
+}
+
+fn render_read(msg: MailMessage) -> Result<Output> {
+    Ok(Output::Records {
+        headers: vec!["field".into(), "value".into()],
+        rows: vec![
+            vec!["subject".into(), msg.subject],
+            vec!["from".into(), msg.from],
+            vec!["date".into(), msg.date],
+            vec!["folder".into(), msg.folder],
+            vec!["body".into(), msg.body],
+        ],
+    })
+}
+
+fn render_send(receipt: &MailSendReceipt) -> Result<Output> {
+    Ok(Output::text(format!("sent to {}", receipt.to)))
 }
 
 // ============ IMAP connection ============
@@ -232,19 +405,224 @@ pub(crate) async fn imap_connect(account: &MailAccount, password: &str) -> Resul
     Ok(session)
 }
 
-// ============ action implementations ============
+// ============ IMAP/SMTP backend (P1) ============
 
-/// List all mailbox folders (IMAP LIST).
-async fn mail_folders(account: &MailAccount, password: &str) -> Result<Output> {
-    let mut session = imap_connect(account, password).await?;
-    let folders = list_all_folders(&mut session).await?;
-    session.logout().await.ok();
-    let rows = folders
-        .into_iter()
-        .map(|f| vec![decode_imap_utf7(&f)])
-        .collect();
-    Ok(Output::records(vec!["folder".into()], rows))
+impl ImapMailBackend {
+    /// Establish a fresh IMAP session for this backend's account.
+    async fn connect(&self) -> Result<ImapSession> {
+        imap_connect(&self.account, &self.password).await
+    }
 }
+
+#[async_trait]
+impl MailBackend for ImapMailBackend {
+    /// List all mailbox folders (IMAP LIST), decoded to display names.
+    async fn folders(&self) -> Result<Vec<String>> {
+        let mut session = self.connect().await?;
+        let folders = list_all_folders(&mut session).await?;
+        session.logout().await.ok();
+        Ok(folders.into_iter().map(|f| decode_imap_utf7(&f)).collect())
+    }
+
+    /// List message summaries (recursively across all folders by default).
+    ///
+    /// Implementation per ADR [M002](../../docs/adr/M002-imap-connection-pool.md)–
+    /// [M005](../../docs/adr/M005-staleness-auto-sync.md):
+    /// 1. open `mail_cache.db`.
+    /// 2. resolve target folders (one ad-hoc IMAP session to get LIST).
+    /// 3. staleness check (any folder with `last_sync_at > 15min` or no watermark
+    ///    → trigger sync).
+    /// 4. `--sync` flag forces an immediate sync.
+    /// 5. sync goes through `email_pool::Pool` (M=4) concurrently across folders,
+    ///    writing envelopes + updating watermarks.
+    /// 6. query the local `envelopes` table and return.
+    async fn list(&self, opts: &MailListOptions) -> Result<Vec<MailEnvelope>> {
+        let account = &self.account;
+
+        // 1. open the local cache
+        let cache = email_cache::open().await?;
+
+        // 2. resolve folders (one-shot ad-hoc session; list is not persisted)
+        let mut list_session = self.connect().await?;
+        let folders =
+            resolve_folders(&mut list_session, opts.folder.as_deref(), opts.no_recursive).await?;
+        list_session.logout().await.ok();
+
+        // 3. staleness check
+        let now = chrono::Utc::now();
+        let mut needs_sync = opts.force_sync;
+        if !needs_sync {
+            for folder in &folders {
+                match email_cache::get_folder_state(&cache, &account.name, folder).await? {
+                    None => {
+                        // no watermark → first-time sync
+                        needs_sync = true;
+                        break;
+                    }
+                    Some(state) if email_cache::is_stale(&state, now) => {
+                        needs_sync = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 4. sync if needed (concurrent across folders, best-effort)
+        if needs_sync {
+            let pool = email_pool::Pool::new(account.clone(), self.password.clone()).await?;
+            sync_folders_concurrent(&pool, &cache, &account.name, &folders).await?;
+            // sessions are dropped silently when the pool drops
+        }
+
+        // 5. query local envelopes → domain rows
+        let query = email_cache::EnvelopeQuery {
+            folder: opts.folder.clone(),
+            unread_only: opts.unread_only,
+            since: None,
+            limit: Some(opts.limit),
+        };
+        let envelopes = email_cache::query_envelopes(&cache, &account.name, &query).await?;
+        Ok(envelopes
+            .into_iter()
+            .map(|e| MailEnvelope {
+                uid: e.uid,
+                unread: !e.flags.contains("\\Seen"),
+                folder: decode_imap_utf7(&e.folder),
+                date: e.date,
+                from: e.from_addr,
+                subject: decode_mime_header(&e.subject),
+            })
+            .collect())
+    }
+
+    /// Read a single message's full content.
+    /// - `folder: Some(name)`: look only in that folder
+    /// - default (recursive): walk all folders, return the first hit for the UID
+    /// - `no_recursive`: only INBOX
+    ///
+    /// Note: IMAP UIDs are unique only within a single folder, not across folders.
+    /// `list` recurses by default, so `read` without a folder also recurses,
+    /// guaranteeing any uid shown by list can be read.
+    async fn read(
+        &self,
+        uid: u32,
+        folder: Option<&str>,
+        no_recursive: bool,
+    ) -> Result<MailMessage> {
+        let mut session = self.connect().await?;
+        // consistent with list/search: recurse all folders by default, folder picks one, no_recursive is INBOX only
+        let folders = resolve_folders(&mut session, folder, no_recursive).await?;
+
+        // try uid_fetch per folder, return the first hit. Folders without the UID yield an empty set (no error).
+        let mut last_err: Option<AgentError> = None;
+        let mut found: Option<(async_imap::types::Fetch, String)> = None;
+        for folder in &folders {
+            if select_folder(&mut session, folder).await.is_err() {
+                continue; // skip folders that cannot be SELECTed (e.g. \NoSelect)
+            }
+            match session.uid_fetch(uid.to_string(), "(UID BODY[])").await {
+                Ok(stream) => match stream.try_collect::<Vec<_>>().await {
+                    Ok(fetches) => {
+                        if let Some(f) = fetches.into_iter().next() {
+                            found = Some((f, decode_imap_utf7(folder)));
+                            break;
+                        }
+                        // this folder has no such UID; try the next
+                    }
+                    Err(e) => last_err = Some(AgentError::Network(format!("fetch collect: {e}"))),
+                },
+                Err(e) => last_err = Some(AgentError::Network(format!("fetch: {e}"))),
+            }
+        }
+        session.logout().await.ok();
+
+        let (fetch, folder_name) = found.ok_or_else(|| match last_err {
+            Some(e) => e,
+            None => AgentError::Other(format!(
+                "no message with uid {uid} (searched {} folder{})",
+                folders.len(),
+                if folders.len() == 1 { "" } else { "s" }
+            )),
+        })?;
+        let body = fetch
+            .body()
+            .ok_or_else(|| AgentError::Other("message has no body".into()))?;
+
+        let parsed = mailparse::parse_mail(body)
+            .map_err(|e| AgentError::Other(format!("parse mail: {e}")))?;
+        Ok(MailMessage {
+            uid,
+            folder: folder_name,
+            subject: header_value(&parsed, "Subject"),
+            from: header_value(&parsed, "From"),
+            date: header_value(&parsed, "Date"),
+            body: extract_body(&parsed),
+        })
+    }
+
+    /// Search messages (recursively across all folders by default).
+    async fn search(&self, query: &str, opts: &MailListOptions) -> Result<Vec<MailEnvelope>> {
+        let mut session = self.connect().await?;
+        let folders =
+            resolve_folders(&mut session, opts.folder.as_deref(), opts.no_recursive).await?;
+        // IMAP SEARCH TEXT "query" — escape double quotes and backslashes
+        let escaped = query.replace('\\', "\\\\").replace('"', "\\\"");
+        let search = format!("TEXT \"{escaped}\"");
+        let envs = collect_across_folders(&mut session, folders, &search, opts.limit).await?;
+        session.logout().await.ok();
+        Ok(envs)
+    }
+
+    /// Send a message (SMTP via lettre, STARTTLS).
+    async fn send(&self, req: &MailSendRequest) -> Result<MailSendReceipt> {
+        let account = &self.account;
+
+        use lettre::message::{Mailbox, header::ContentType};
+        use lettre::transport::smtp::authentication::Credentials;
+        use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
+
+        let from: Mailbox = account.username.parse().map_err(|e| {
+            AgentError::InvalidArgument(format!("invalid from address '{}': {e}", account.username))
+        })?;
+        let to_mb: Mailbox = req.to.parse().map_err(|e| {
+            AgentError::InvalidArgument(format!("invalid to address '{}': {e}", req.to))
+        })?;
+
+        let mut builder = Message::builder().from(from).to(to_mb);
+        if let Some(cc) = &req.cc {
+            let cc_mb: Mailbox = cc.parse().map_err(|e| {
+                AgentError::InvalidArgument(format!("invalid cc address '{cc}': {e}"))
+            })?;
+            builder = builder.cc(cc_mb);
+        }
+        let email = builder
+            .subject(&req.subject)
+            .header(ContentType::TEXT_PLAIN)
+            .body(req.body.clone())
+            .map_err(|e| AgentError::InvalidArgument(format!("build email: {e}")))?;
+
+        let transport = AsyncSmtpTransport::<Tokio1Executor>::relay(&account.smtp_host)
+            .map_err(|e| AgentError::Network(format!("smtp relay '{}': {e}", account.smtp_host)))?
+            .port(account.smtp_port)
+            .credentials(Credentials::new(
+                account.username.clone(),
+                self.password.clone(),
+            ))
+            .build();
+        transport
+            .send(email)
+            .await
+            .map_err(|e| AgentError::Network(format!("smtp send: {e}")))?;
+
+        Ok(MailSendReceipt {
+            to: req.to.clone(),
+            subject: req.subject.clone(),
+        })
+    }
+}
+
+// ============ IMAP helpers (shared by the backend & timeline) ============
 
 /// Call IMAP LIST to list all folder names (filtering out \NoSelect).
 async fn list_all_folders(session: &mut ImapSession) -> Result<Vec<String>> {
@@ -268,33 +646,34 @@ async fn list_all_folders(session: &mut ImapSession) -> Result<Vec<String>> {
     Ok(folders)
 }
 
-/// Resolve the folder list to traverse from CLI flags.
-/// - `--folder NAME`: only that folder
-/// - default (recursive): all folders
-/// - `--no-recursive`: only INBOX
+/// Resolve the folder list to traverse.
+/// - `folder: Some(name)` → only that folder
+/// - `no_recursive` → only INBOX
+/// - default (recursive) → all folders
 async fn resolve_folders(
     session: &mut ImapSession,
-    flags: &HashMap<String, String>,
+    folder: Option<&str>,
+    no_recursive: bool,
 ) -> Result<Vec<String>> {
-    if let Some(f) = flags.get("folder") {
-        return Ok(vec![f.clone()]);
+    if let Some(f) = folder {
+        return Ok(vec![f.to_string()]);
     }
-    if flags.contains_key("no-recursive") {
+    if no_recursive {
         return Ok(vec!["INBOX".to_string()]);
     }
     list_all_folders(session).await
 }
 
-/// Collect mail summaries across multiple folders, merge them, sort by UID
-/// descending and truncate to `limit`.
-/// Folders that cannot be SELECTed (e.g. \NoSelect) are skipped.
+/// Collect mail summaries across multiple folders, merge them, sort by date
+/// descending and truncate to `limit`. Folders that cannot be SELECTed
+/// (e.g. \NoSelect) are skipped; per-folder search failures are non-fatal.
 async fn collect_across_folders(
     session: &mut ImapSession,
     folders: Vec<String>,
     search_query: &str,
     limit: usize,
-) -> Result<Vec<Vec<String>>> {
-    let mut all_rows: Vec<Vec<String>> = Vec::new();
+) -> Result<Vec<MailEnvelope>> {
+    let mut all: Vec<MailEnvelope> = Vec::new();
     for folder in &folders {
         // select_folder accepts both the raw encoded name and the decoded Chinese name (user's --folder input)
         if select_folder(session, folder).await.is_err() {
@@ -307,13 +686,13 @@ async fn collect_across_folders(
         // display uses the decoded Chinese name; select uses the raw encoded name
         let display_folder = decode_imap_utf7(folder);
         // take the most recent `limit` per folder as global candidates; do not break early so every folder participates
-        let rows = fetch_summaries(session, uids, limit, &display_folder).await?;
-        all_rows.extend(rows);
+        let envs = fetch_summaries(session, uids, limit, &display_folder).await?;
+        all.extend(envs);
     }
     // global sort by message date descending (cross-folder UIDs are not contiguous, so date is more accurate)
-    all_rows.sort_by(|a, b| {
-        let da = a.get(2).and_then(|s| parse_mail_date(s));
-        let db = b.get(2).and_then(|s| parse_mail_date(s));
+    all.sort_by(|a, b| {
+        let da = parse_mail_date(&a.date);
+        let db = parse_mail_date(&b.date);
         match (da, db) {
             (Some(da), Some(db)) => db.cmp(&da),
             (Some(_), None) => std::cmp::Ordering::Less, // dated entries sort first
@@ -321,278 +700,8 @@ async fn collect_across_folders(
             (None, None) => std::cmp::Ordering::Equal,
         }
     });
-    all_rows.truncate(limit);
-    Ok(all_rows)
-}
-
-/// List message summaries (recursively across all folders by default).
-///
-/// Implementation per ADR [M002](../../docs/adr/M002-imap-connection-pool.md)–
-/// [M005](../../docs/adr/M005-staleness-auto-sync.md):
-/// 1. open `mail_cache.db`.
-/// 2. resolve target folders (one ad-hoc IMAP session to get LIST).
-/// 3. staleness check (any folder with `last_sync_at > 15min` or no watermark
-///    → trigger sync).
-/// 4. `--sync` flag forces an immediate sync.
-/// 5. sync goes through `email_pool::Pool` (M=4) concurrently across folders,
-///    writing envelopes + updating watermarks.
-/// 6. query the local `envelopes` table and return.
-async fn mail_list(
-    account: &MailAccount,
-    password: &str,
-    flags: &HashMap<String, String>,
-) -> Result<Output> {
-    let unread = flags.contains_key("unread");
-    let limit: usize = flags
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
-    let force_sync = flags.contains_key("sync");
-
-    // 1. open the local cache
-    let cache = email_cache::open().await?;
-
-    // 2. resolve folders (one-shot ad-hoc session; list is not persisted)
-    let mut list_session = imap_connect(account, password).await?;
-    let folders = resolve_folders(&mut list_session, flags).await?;
-    list_session.logout().await.ok();
-
-    // 3. staleness check
-    let now = chrono::Utc::now();
-    let mut needs_sync = force_sync;
-    if !needs_sync {
-        for folder in &folders {
-            match email_cache::get_folder_state(&cache, &account.name, folder).await? {
-                None => {
-                    // no watermark → first-time sync
-                    needs_sync = true;
-                    break;
-                }
-                Some(state) if email_cache::is_stale(&state, now) => {
-                    needs_sync = true;
-                    break;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // 4. sync if needed (concurrent across folders, best-effort)
-    let _sync_stats = if needs_sync {
-        let pool = email_pool::Pool::new(account.clone(), password.to_string()).await?;
-        let stats = sync_folders_concurrent(&pool, &cache, &account.name, &folders).await?;
-        // sessions are dropped silently when the pool drops
-        Some(stats)
-    } else {
-        None
-    };
-
-    // 5. query local envelopes
-    let query = email_cache::EnvelopeQuery {
-        folder: flags.get("folder").cloned(),
-        unread_only: unread,
-        since: None,
-        limit: Some(limit),
-    };
-    let envelopes = email_cache::query_envelopes(&cache, &account.name, &query).await?;
-
-    // 6. render table rows (typed cells: uid/unread stay numeric/boolean in
-    //    JSON mode instead of being stringified — F012 P6)
-    let rows: Vec<Vec<TypedValue>> = envelopes
-        .into_iter()
-        .map(|e| {
-            vec![
-                TypedValue::number(e.uid as f64),
-                TypedValue::boolean(!e.flags.contains("\\Seen")),
-                TypedValue::text(decode_imap_utf7(&e.folder)),
-                TypedValue::text(e.date),
-                TypedValue::text(e.from_addr),
-                TypedValue::text(decode_mime_header(&e.subject)),
-            ]
-        })
-        .collect();
-
-    Ok(Output::typed_records(
-        vec![
-            "uid".into(),
-            "unread".into(),
-            "folder".into(),
-            "date".into(),
-            "from".into(),
-            "subject".into(),
-        ],
-        rows,
-    ))
-}
-
-/// Read a single message's full content.
-/// - `--folder NAME`: look only in that folder
-/// - default (recursive): walk all folders, return the first hit for the UID
-/// - `--no-recursive`: only INBOX
-///
-/// Note: IMAP UIDs are unique only within a single folder, not across folders.
-/// `mail list` recurses by default, so `mail read` without `--folder` also
-/// recurses, guaranteeing any uid shown by list can be read.
-async fn mail_read(
-    account: &MailAccount,
-    password: &str,
-    flags: &HashMap<String, String>,
-    positional: &[String],
-) -> Result<Output> {
-    let uid_str = positional
-        .first()
-        .or_else(|| flags.get("id"))
-        .ok_or_else(|| AgentError::InvalidArgument("usage: everyday mail read <uid>".into()))?;
-    let uid: u32 = uid_str
-        .parse()
-        .map_err(|_| AgentError::InvalidArgument("uid must be a number".into()))?;
-
-    let mut session = imap_connect(account, password).await?;
-    // consistent with list/search: recurse all folders by default, --folder picks one, --no-recursive is INBOX only
-    let folders = resolve_folders(&mut session, flags).await?;
-
-    // try uid_fetch per folder, return the first hit. Folders without the UID yield an empty set (no error).
-    let mut last_err: Option<AgentError> = None;
-    let mut found: Option<(async_imap::types::Fetch, String)> = None;
-    for folder in &folders {
-        if select_folder(&mut session, folder).await.is_err() {
-            continue; // skip folders that cannot be SELECTed (e.g. \NoSelect)
-        }
-        match session.uid_fetch(uid.to_string(), "(UID BODY[])").await {
-            Ok(stream) => match stream.try_collect::<Vec<_>>().await {
-                Ok(fetches) => {
-                    if let Some(f) = fetches.into_iter().next() {
-                        found = Some((f, decode_imap_utf7(folder)));
-                        break;
-                    }
-                    // this folder has no such UID; try the next
-                }
-                Err(e) => last_err = Some(AgentError::Network(format!("fetch collect: {e}"))),
-            },
-            Err(e) => last_err = Some(AgentError::Network(format!("fetch: {e}"))),
-        }
-    }
-    session.logout().await.ok();
-
-    let (fetch, folder_name) = found.ok_or_else(|| match last_err {
-        Some(e) => e,
-        None => AgentError::Other(format!(
-            "no message with uid {uid} (searched {} folder{})",
-            folders.len(),
-            if folders.len() == 1 { "" } else { "s" }
-        )),
-    })?;
-    let body = fetch
-        .body()
-        .ok_or_else(|| AgentError::Other("message has no body".into()))?;
-
-    let parsed =
-        mailparse::parse_mail(body).map_err(|e| AgentError::Other(format!("parse mail: {e}")))?;
-    let subject = header_value(&parsed, "Subject");
-    let from = header_value(&parsed, "From");
-    let date = header_value(&parsed, "Date");
-    let text = extract_body(&parsed);
-
-    Ok(Output::Records {
-        headers: vec!["field".into(), "value".into()],
-        rows: vec![
-            vec!["subject".into(), subject],
-            vec!["from".into(), from],
-            vec!["date".into(), date],
-            vec!["folder".into(), folder_name],
-            vec!["body".into(), text],
-        ],
-    })
-}
-
-/// Search messages (recursively across all folders by default).
-async fn mail_search(
-    account: &MailAccount,
-    password: &str,
-    flags: &HashMap<String, String>,
-) -> Result<Output> {
-    let query = flags.get("query").ok_or_else(|| {
-        AgentError::InvalidArgument("usage: everyday mail search --query Q".into())
-    })?;
-    let limit: usize = flags
-        .get("limit")
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20);
-
-    let mut session = imap_connect(account, password).await?;
-    let folders = resolve_folders(&mut session, flags).await?;
-    // IMAP SEARCH TEXT "query" — escape double quotes and backslashes
-    let escaped = query.replace('\\', "\\\\").replace('"', "\\\"");
-    let search = format!("TEXT \"{escaped}\"");
-    let rows = collect_across_folders(&mut session, folders, &search, limit).await?;
-    session.logout().await.ok();
-
-    Ok(Output::records(
-        vec![
-            "uid".into(),
-            "folder".into(),
-            "date".into(),
-            "from".into(),
-            "subject".into(),
-        ],
-        rows,
-    ))
-}
-
-/// Send a message (SMTP via lettre, STARTTLS).
-async fn mail_send(
-    account: &MailAccount,
-    password: &str,
-    flags: &HashMap<String, String>,
-) -> Result<Output> {
-    let to = flags
-        .get("to")
-        .ok_or_else(|| AgentError::InvalidArgument("--to <addr> is required".into()))?;
-    let subject = flags
-        .get("subject")
-        .ok_or_else(|| AgentError::InvalidArgument("--subject <text> is required".into()))?;
-    let body = flags
-        .get("body")
-        .ok_or_else(|| AgentError::InvalidArgument("--body <text> is required".into()))?;
-
-    use lettre::message::{Mailbox, header::ContentType};
-    use lettre::transport::smtp::authentication::Credentials;
-    use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
-
-    let from: Mailbox = account.username.parse().map_err(|e| {
-        AgentError::InvalidArgument(format!("invalid from address '{}': {e}", account.username))
-    })?;
-    let to_mb: Mailbox = to
-        .parse()
-        .map_err(|e| AgentError::InvalidArgument(format!("invalid to address '{to}': {e}")))?;
-
-    let mut builder = Message::builder().from(from).to(to_mb);
-    if let Some(cc) = flags.get("cc") {
-        let cc_mb: Mailbox = cc
-            .parse()
-            .map_err(|e| AgentError::InvalidArgument(format!("invalid cc address '{cc}': {e}")))?;
-        builder = builder.cc(cc_mb);
-    }
-    let email = builder
-        .subject(subject)
-        .header(ContentType::TEXT_PLAIN)
-        .body(body.clone())
-        .map_err(|e| AgentError::InvalidArgument(format!("build email: {e}")))?;
-
-    let transport = AsyncSmtpTransport::<Tokio1Executor>::relay(&account.smtp_host)
-        .map_err(|e| AgentError::Network(format!("smtp relay '{}': {e}", account.smtp_host)))?
-        .port(account.smtp_port)
-        .credentials(Credentials::new(
-            account.username.clone(),
-            password.to_string(),
-        ))
-        .build();
-    transport
-        .send(email)
-        .await
-        .map_err(|e| AgentError::Network(format!("smtp send: {e}")))?;
-
-    Ok(Output::text(format!("sent to {to}")))
+    all.truncate(limit);
+    Ok(all)
 }
 
 // ============ helper functions ============
@@ -608,13 +717,14 @@ async fn search_uids(session: &mut ImapSession, query: &str) -> Result<Vec<u32>>
     Ok(uids)
 }
 
-/// Batch-fetch summaries by UID, capped to a count, returning table rows (with a folder column).
+/// Batch-fetch summaries by UID, capped to a count, returning domain envelopes
+/// (with a folder column).
 async fn fetch_summaries(
     session: &mut ImapSession,
     mut uids: Vec<u32>,
     limit: usize,
     folder: &str,
-) -> Result<Vec<Vec<String>>> {
+) -> Result<Vec<MailEnvelope>> {
     uids.truncate(limit);
     if uids.is_empty() {
         return Ok(Vec::new());
@@ -632,26 +742,27 @@ async fn fetch_summaries(
         .await
         .map_err(|e| AgentError::Network(format!("fetch collect: {e}")))?;
 
-    let mut rows: Vec<(u32, Vec<String>)> = Vec::with_capacity(fetches.len());
+    let mut envelopes: Vec<MailEnvelope> = Vec::with_capacity(fetches.len());
     for f in &fetches {
         // skip fetches with no uid or no envelope (previously `let env = f.envelope(); ... continue`)
         let Some(fields) = extract_envelope_fields(f) else {
             continue;
         };
-        rows.push((
-            fields.uid,
-            vec![
-                fields.uid.to_string(),
-                folder.to_string(),
-                decode_mime_header(&fields.date),
-                fields.from,
-                decode_mime_header(&fields.subject),
-            ],
-        ));
+        // async-imap 0.9 `flags()` returns an iterator of `Flag`; absent
+        // `\Seen` ⇒ unread (an empty flag set counts as unread).
+        let unread = !f.flags().any(|g| g == async_imap::types::Flag::Seen);
+        envelopes.push(MailEnvelope {
+            uid: fields.uid,
+            unread,
+            folder: folder.to_string(),
+            date: decode_mime_header(&fields.date),
+            from: fields.from,
+            subject: decode_mime_header(&fields.subject),
+        });
     }
     // sort by UID descending (fetch order is not guaranteed)
-    rows.sort_by_key(|r| Reverse(r.0));
-    Ok(rows.into_iter().map(|(_, r)| r).collect())
+    envelopes.sort_by_key(|e| Reverse(e.uid));
+    Ok(envelopes)
 }
 
 /// Unified extraction of IMAP `Envelope` fields.
@@ -1499,6 +1610,148 @@ mod mail_search_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- P1 service layer (F012) ----
+
+    /// In-memory backend driving `dispatch` and service calls without IMAP/SMTP
+    /// (DI regression guard, same pattern as note/todo/bookmark mocks).
+    #[derive(Default)]
+    struct MockMailBackend {
+        folders: Vec<String>,
+        envelopes: Vec<MailEnvelope>,
+    }
+
+    #[async_trait]
+    impl MailBackend for MockMailBackend {
+        async fn folders(&self) -> Result<Vec<String>> {
+            Ok(self.folders.clone())
+        }
+        async fn list(&self, _opts: &MailListOptions) -> Result<Vec<MailEnvelope>> {
+            Ok(self.envelopes.clone())
+        }
+        async fn read(&self, uid: u32, _folder: Option<&str>, _nr: bool) -> Result<MailMessage> {
+            Err(AgentError::Other(format!(
+                "mock read {uid} not implemented"
+            )))
+        }
+        async fn search(&self, _query: &str, _opts: &MailListOptions) -> Result<Vec<MailEnvelope>> {
+            Ok(self.envelopes.clone())
+        }
+        async fn send(&self, req: &MailSendRequest) -> Result<MailSendReceipt> {
+            Ok(MailSendReceipt {
+                to: req.to.clone(),
+                subject: req.subject.clone(),
+            })
+        }
+    }
+
+    fn sample_envelope() -> MailEnvelope {
+        MailEnvelope {
+            uid: 42,
+            unread: true,
+            folder: "INBOX".into(),
+            date: "2026-08-05T00:00:00Z".into(),
+            from: "sender@example.com".into(),
+            subject: "你好".into(),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_list_uses_mock_backend_and_renders_typed_records() {
+        let mock = MockMailBackend {
+            envelopes: vec![sample_envelope()],
+            ..Default::default()
+        };
+        let mut flags = HashMap::new();
+        flags.insert("unread".into(), String::new());
+        let out = dispatch(&mock, "list", &flags, &[]).await.unwrap();
+        match out {
+            Output::TypedRecords { headers, rows } => {
+                assert_eq!(
+                    headers,
+                    vec!["uid", "unread", "folder", "date", "from", "subject"]
+                );
+                assert!(matches!(&rows[0][0], TypedValue::Number(n) if *n == 42.0));
+                assert!(matches!(&rows[0][1], TypedValue::Boolean(true)));
+                assert!(matches!(&rows[0][2], TypedValue::Text(s) if s == "INBOX"));
+            }
+            other => panic!("expected TypedRecords, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn service_methods_callable_directly_without_cli_parsing() {
+        // P1 goal: service methods are output-free and directly testable.
+        let mock = MockMailBackend {
+            folders: vec!["INBOX".into(), "Sent".into()],
+            ..Default::default()
+        };
+        let folders = mock.folders().await.unwrap();
+        assert_eq!(folders, vec!["INBOX", "Sent"]);
+
+        let receipt = mock
+            .send(&MailSendRequest {
+                to: "a@example.com".into(),
+                cc: None,
+                subject: "hi".into(),
+                body: "body".into(),
+            })
+            .await
+            .unwrap();
+        assert_eq!(receipt.to, "a@example.com");
+        assert_eq!(receipt.subject, "hi");
+    }
+
+    #[tokio::test]
+    async fn dispatch_read_parses_uid_and_renders_field_value() {
+        let mock = MockMailBackend::default();
+        // uid parsing happens in dispatch, before the backend is called.
+        let err = dispatch(&mock, "read", &HashMap::new(), &[])
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+        // uid as --id flag reaches the backend (mock errors cleanly).
+        let mut flags = HashMap::new();
+        flags.insert("id".into(), "7".into());
+        let err = dispatch(&mock, "read", &flags, &[]).await.unwrap_err();
+        assert_eq!(err.type_name(), "Other");
+    }
+
+    #[test]
+    fn parse_send_request_requires_fields() {
+        let flags = HashMap::new();
+        assert!(parse_send_request(&flags).is_err());
+        let mut flags = HashMap::new();
+        flags.insert("to".into(), "a@example.com".into());
+        flags.insert("subject".into(), "s".into());
+        flags.insert("body".into(), "b".into());
+        let req = parse_send_request(&flags).unwrap();
+        assert_eq!(req.to, "a@example.com");
+        assert_eq!(req.subject, "s");
+        assert_eq!(req.body, "b");
+        assert_eq!(req.cc, None);
+    }
+
+    #[test]
+    fn parse_uid_positional_or_flag() {
+        let flags = HashMap::new();
+        assert!(parse_uid(&flags, &[]).is_err());
+        assert_eq!(parse_uid(&flags, &["123".into()]).unwrap(), 123);
+        let mut flags = HashMap::new();
+        flags.insert("id".into(), "456".into());
+        assert_eq!(parse_uid(&flags, &[]).unwrap(), 456);
+    }
+
+    #[test]
+    fn parse_list_options_defaults() {
+        let flags = HashMap::new();
+        let opts = parse_list_options(&flags);
+        assert!(!opts.unread_only);
+        assert_eq!(opts.limit, 20);
+        assert!(!opts.no_recursive);
+        assert!(!opts.force_sync);
+        assert_eq!(opts.folder, None);
+    }
 
     #[test]
     fn decode_plain_header_unchanged() {

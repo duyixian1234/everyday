@@ -96,6 +96,67 @@ pub struct ModuleArgSpec {
     pub actions: &'static [ActionArgSpec],
 }
 
+/// Declare one CLI action with compact syntax (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// Replaces the hand-written `ActionArgSpec { name, description, usage, args,
+/// positional }` literal (~15 lines per action) with a single call; combined
+/// with [`flag!`] this cuts ArgSpec boilerplate by roughly 70%. Positional is
+/// optional and defaults to [`Positional::None`].
+///
+/// ```
+/// cli_action!("list", "列出邮件", "everyday mail list [--unread]", &[flag!("unread", "仅未读", Bool)])
+/// ```
+#[macro_export]
+macro_rules! cli_action {
+    ($name:literal, $description:literal, $usage:literal, $args:expr) => {
+        $crate::modules::ActionArgSpec {
+            name: $name,
+            description: $description,
+            usage: $usage,
+            args: $args,
+            positional: $crate::modules::Positional::None,
+        }
+    };
+    ($name:literal, $description:literal, $usage:literal, $args:expr, $positional:expr) => {
+        $crate::modules::ActionArgSpec {
+            name: $name,
+            description: $description,
+            usage: $usage,
+            args: $args,
+            positional: $positional,
+        }
+    };
+}
+
+/// Declare one flag with compact syntax (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+///
+/// Default kind is [`ArgKind::Value`] (`--name VALUE`); pass `Bool` for a
+/// switch (`--name`) or `Multi` for a repeatable value flag.
+#[macro_export]
+macro_rules! flag {
+    ($name:literal, $help:literal) => {
+        $crate::modules::ArgSpec {
+            name: $name,
+            help: $help,
+            kind: $crate::modules::ArgKind::Value,
+        }
+    };
+    ($name:literal, $help:literal, Bool) => {
+        $crate::modules::ArgSpec {
+            name: $name,
+            help: $help,
+            kind: $crate::modules::ArgKind::Bool,
+        }
+    };
+    ($name:literal, $help:literal, Multi) => {
+        $crate::modules::ArgSpec {
+            name: $name,
+            help: $help,
+            kind: $crate::modules::ArgKind::Multi,
+        }
+    };
+}
+
 /// Module registry.
 ///
 /// Built by injecting config and an optional `--account` override; each
