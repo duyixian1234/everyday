@@ -109,7 +109,12 @@ pub(crate) fn build_root_command(registry: &ModuleRegistry) -> Command {
                 .value_name("NAME")
                 .num_args(1)
                 .global(true),
-        );
+        )
+        // Root-level ops command (P3, [F012](../docs/adr/F012-architecture-deepening-phase.md)):
+        // `everyday health` runs every module's health_check. It is not a module
+        // (no business actions), so it is added statically here and dispatched
+        // specially in main.rs.
+        .subcommand(Command::new("health").about("运行所有模块健康检查（仅本地探测，无网络调用）"));
     for m in registry.modules.values() {
         cmd = cmd.subcommand(build_module_command(&m.module_arg_spec()));
     }

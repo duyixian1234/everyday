@@ -26,7 +26,7 @@ Verify with `everyday --version`. Full install steps (per-platform extraction co
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `config`
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `config` (+ root-level `health`)
 
 ## Rules (follow exactly)
 
@@ -37,8 +37,9 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
 3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
 4. **Modules.** `mail` (IMAP/SMTP), `cal` (CalDAV), `rss` (feeds), `bookmark` (local SQLite / Notion bookmarks), `note` (Notion), `todo` (Notion tasks + `delete`), `timeline` (unified event log: `today` / `yesterday` / `week` / `month` / `sync`), `memory` (single-instance append-only triple notebook: `add` / `get` / `relation` / `list` / `delete` / `graph` / `history` — no account, no auth touch), `search` (cross-module unified query: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`), and `config` are implemented — verify per action. Always pass `--json` for machine-readable output.
-5. **`timeline today --json` is the aggregated activity snapshot.** It is one of the cheapest ways to answer "what's happened recently across all my integrations?". Always prefer it over per-module polling unless the user explicitly asks for a specific module.
-6. **`memory` is the agent's own structured notebook.** Use `everyday memory add` to persist stable facts about the user, projects, or the world (subjects like `user`, `project-everyday`, `tech:rust`); use `memory get <SUBJECT>` to recall them. Subject naming is a convention enforced by the agent, not the program — see [Subject naming convention](#memory-subject-naming-convention) below. Memory facts automatically participate in `everyday search`.
+5. **`everyday health --json`** runs a local-only health probe of every module (cache DB openable, keyring credential present — never network). Use it to diagnose why a module misbehaves before deeper debugging; exit code 1 + `"healthy": false` rows identify degraded modules. Dispatch logs (`_log` lines, request ids) go to stderr and are safe to ignore unless debugging.
+6. **`timeline today --json` is the aggregated activity snapshot.** It is one of the cheapest ways to answer "what's happened recently across all my integrations?". Always prefer it over per-module polling unless the user explicitly asks for a specific module.
+7. **`memory` is the agent's own structured notebook.** Use `everyday memory add` to persist stable facts about the user, projects, or the world (subjects like `user`, `project-everyday`, `tech:rust`); use `memory get <SUBJECT>` to recall them. Subject naming is a convention enforced by the agent, not the program — see [Subject naming convention](#memory-subject-naming-convention) below. Memory facts automatically participate in `everyday search`.
 
 ## First-time setup (only if config is missing)
 

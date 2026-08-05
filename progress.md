@@ -11,7 +11,8 @@
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
 - **v0.10.0 已发布** — Memory 模块落地：append-only `(subject, predicate, object)` 三元组 + 当前态视图 + 前向 graph + Searchable（[K001–K004](./docs/adr/K001-memory-module.md)）。
-- **F012 Phase 2 完成（未发版）** — 架构深化第二阶段（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：P1 CLI/business 分离（`cli_action!`/`flag!` 宏削减 ArgSpec ~65% + mail/cal/rss service-layer trait + Mock 直测）+ P2b config 子集注入（业务模块只依赖自己的 section）。Phase 3（P3–P5）待启动。
+- **F012 Phase 3 完成（未发版）** — 架构深化第三阶段（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：P3 lifecycle hooks（`everyday health` + Executor 默认方法）+ P4 RequestContext（thread-local 非破坏传播）+ P5 Middleware 栈（默认 LoggingMiddleware，stderr 结构化日志）。
+- **F012 Phase 2 完成（未发版）** — 架构深化第二阶段（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：P1 CLI/business 分离（`cli_action!`/`flag!` 宏削减 ArgSpec ~40-55% + mail/cal/rss service-layer trait + Mock 直测）+ P2b config 子集注入（业务模块只依赖自己的 section）。
 - **F012 Phase 1 完成（未发版）** — 架构深化第一阶段（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：P6 `TypedValue` 保类型输出（mail list uid/unread、memory confidence 走原生 JSON 类型）+ P2c `Config::validate()` 加载时校验 + P2a `AccountProvider` trait 统一账户解析（替代 R007 宏）。
 - **v0.9.0 已发布** — 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存（[S007](./docs/adr/S007-mail-search-local-cache.md)）。
 - **v0.8.1 已发布** — 动作层 Backend DI 重构（[R016–R018](./docs/adr/R016-action-backend-di.md)）。
@@ -29,7 +30,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
-| 2026-08-05 | F | [F012](./docs/adr/F012-architecture-deepening-phase.md) | 架构深化阶段：Phase 1（P6 TypedValue 保类型输出 / P2c Config 加载时校验 / P2a AccountProvider trait）+ Phase 2（P1 CLI/business 分离 + P2b config 子集注入）落地；Phase 3 规划中 |
+| 2026-08-05 | F | [F012](./docs/adr/F012-architecture-deepening-phase.md) | 架构深化阶段：Phase 1（P6 TypedValue / P2c Config 校验 / P2a AccountProvider）+ Phase 2（P1 CLI/business 分离 + P2b config 子集）+ Phase 3（P3 lifecycle + P4 request context + P5 middleware）全部落地 |
 | 2026-07-14 | K | [K001–K004](./docs/adr/K001-memory-module.md) | Memory 模块设计完成（append-only 三元组 / 当前态视图 / graph / Searchable / 单实例） |
 | 2026-07-14 | S | [S007](./docs/adr/S007-mail-search-local-cache.md) | Mail 搜索走本地 envelope 缓存（非 live IMAP `SEARCH`），与 rss/cal 一致 |
 | 2026-07-12 | R | [R013–R015](./docs/adr/R013-auth-module-consolidation.md) | 凭据 / `login` 逻辑收拢到顶层 `auth` 模块；verify 显式可选；非交互输入契约 |

@@ -26,7 +26,7 @@ use clap::ArgMatches;
 use crate::cli::{build_root_command, matches_to_args};
 use crate::config::Config;
 use crate::modules::ModuleRegistry;
-use crate::output::{RenderMode, finalize, mode_from_json_flag, render_error};
+use crate::output::{Output, RenderMode, finalize, mode_from_json_flag, render_error};
 
 #[tokio::main]
 async fn main() {
@@ -59,6 +59,14 @@ async fn main() {
 }
 
 async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
+    // Request context (P4): one request_id per invocation, propagated via
+    // thread-local so modules/middleware read it without signature changes.
+    crate::shared::request_context::set_request_context(
+        crate::shared::request_context::RequestContext::cli(
+            crate::shared::request_context::generate_request_id(),
+        ),
+    );
+
     // Resolve module / action. clap guarantees the module subcommand exists
     // (subcommand_required), so the empty case is only a defensive fallback.
     let Some((module_name, module_matches)) = matches.subcommand() else {
@@ -81,9 +89,39 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         Err(e) => return (1, render_error(&e, mode)),
     };
 
+    // Lifecycle (P3): initialize every module once, before any dispatch. An
+    // initialize failure is surfaced as a warning, not a hard error — the
+    // module may still function for its core actions, and `everyday health`
+    // reports the underlying state.
+    for (name, e) in registry.initialize_all() {
+        match mode {
+            RenderMode::Json => {
+                eprintln!(
+                    "{{\"_warning\":\"initialize_failed\",\"module\":\"{}\",\"message\":\"{}\"}}",
+                    name,
+                    e.message().replace('"', "'")
+                );
+            }
+            RenderMode::Text => {
+                eprintln!("warning: {name} initialize failed: {}", e.message());
+            }
+        }
+    }
+
+    // `everyday health` (P3): root-level ops command, not a module. Runs every
+    // module's health_check and renders one row per module.
+    if module_name == "health" {
+        let out = run_health(&registry, mode).await;
+        registry.shutdown_all();
+        return out;
+    }
+
     let module = match registry.get(module_name) {
         Ok(m) => m,
-        Err(e) => return (1, render_error(&e, mode)),
+        Err(e) => {
+            registry.shutdown_all();
+            return (1, render_error(&e, mode));
+        }
     };
 
     // Resolve the action. The module-level subcommand_required guarantees it
@@ -106,7 +144,19 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         args.push(acc.clone());
     }
 
-    let result = module.execute(action_name, &args).await;
+    // Middleware stack (P5): default = LoggingMiddleware. Dispatch goes through
+    // the chain so cross-cutting concerns (logging, timing) live here, not in
+    // modules. See [F012](../docs/adr/F012-architecture-deepening-phase.md).
+    let middleware: Vec<Box<dyn crate::shared::middleware::Middleware>> =
+        vec![Box::new(crate::shared::middleware::LoggingMiddleware)];
+    let result = crate::shared::middleware::run_with_middleware(
+        &middleware,
+        module_name,
+        module,
+        action_name,
+        &args,
+    )
+    .await;
 
     // Ops-log AOP hook: after a successful execution that is a Notion-account
     // write, record it to the ops-log. Failure does not block the user command,
@@ -137,5 +187,59 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         }
     }
 
+    // Lifecycle (P3): graceful shutdown after the action completes.
+    registry.shutdown_all();
+
+    // Request context (P4): clear after dispatch so the thread-local never
+    // leaks into the next invocation.
+    crate::shared::request_context::clear_request_context();
+
     finalize(result, mode)
+}
+
+/// `everyday health` (P3, [F012](../docs/adr/F012-architecture-deepening-phase.md)):
+/// run every module's health_check and render one row per module. A degraded
+/// module renders a status row but does not fail the command; only an internal
+/// dispatch error does.
+async fn run_health(registry: &ModuleRegistry, mode: RenderMode) -> (i32, String) {
+    let rows = registry.health_check_all().await;
+    let any_unhealthy = rows.iter().any(|(_, s)| !s.healthy);
+    let output = match mode {
+        RenderMode::Json => {
+            let arr: Vec<serde_json::Value> = rows
+                .iter()
+                .map(|(name, s)| {
+                    serde_json::json!({
+                        "module": name,
+                        "healthy": s.healthy,
+                        "detail": s.detail,
+                    })
+                })
+                .collect();
+            Output::Json(serde_json::Value::Array(arr))
+        }
+        RenderMode::Text => {
+            let table_rows: Vec<Vec<String>> = rows
+                .iter()
+                .map(|(name, s)| {
+                    vec![
+                        name.to_string(),
+                        if s.healthy {
+                            "ok".to_string()
+                        } else {
+                            "degraded".to_string()
+                        },
+                        s.detail.clone(),
+                    ]
+                })
+                .collect();
+            Output::records(
+                vec!["module".into(), "status".into(), "detail".into()],
+                table_rows,
+            )
+        }
+    };
+    let text = output.render(mode);
+    // Exit code: 0 when all healthy, 1 when any module is degraded.
+    (if any_unhealthy { 1 } else { 0 }, text)
 }

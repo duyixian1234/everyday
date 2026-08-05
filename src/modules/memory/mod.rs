@@ -188,6 +188,21 @@ impl Executor for MemoryModule {
             other => Err(AgentError::UnknownAction(format!("memory {other}"))),
         }
     }
+
+    /// P3 health: memory.db must open (the module is entirely DB-backed).
+    async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
+        use crate::modules::HealthStatus;
+        match store::open().await {
+            Ok(pool) => {
+                pool.close().await;
+                Ok(HealthStatus::healthy())
+            }
+            Err(e) => Ok(HealthStatus::degraded(format!(
+                "memory db: {}",
+                e.message()
+            ))),
+        }
+    }
 }
 
 // ============ positional helpers ============

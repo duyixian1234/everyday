@@ -42,6 +42,61 @@ pub trait Executor: Send + Sync {
     /// - `action`: the action name (e.g. `list`, `send`, `status`)
     /// - `args`: the remaining command-line arguments (parsed by the module)
     async fn execute(&self, action: &str, args: &[String]) -> Result<Output>;
+
+    // ---- Lifecycle hooks (P3, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
+    //
+    // Default implementations are no-ops / healthy; modules opt in by
+    // overriding. These enable resource management, health monitoring and
+    // graceful shutdown without touching `execute` (additive, non-breaking).
+
+    /// Initialize resources. Called once before the first `execute` when the
+    /// dispatcher is lifecycle-aware. Default: no-op.
+    fn initialize(&self) -> Result<()> {
+        Ok(())
+    }
+
+    /// Report module health (used by `everyday health`). Default: healthy.
+    ///
+    /// Modules override to probe cheap local resources (cache DB openable,
+    /// keyring credential present) — never network calls, which would make
+    /// `everyday health` slow and dependent on external services.
+    async fn health_check(&self) -> Result<HealthStatus> {
+        Ok(HealthStatus::healthy())
+    }
+
+    /// Graceful shutdown. Called once before process exit when the dispatcher
+    /// is lifecycle-aware. Default: no-op.
+    fn shutdown(&self) {}
+}
+
+/// Module health status (P3).
+///
+/// `healthy` + a one-line detail; modules may report degraded (e.g. cache DB
+/// unreadable) without failing the whole command.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HealthStatus {
+    /// Whether the module considers itself operational.
+    pub healthy: bool,
+    /// One-line human-readable detail (e.g. "cache db: open").
+    pub detail: String,
+}
+
+impl HealthStatus {
+    /// A healthy module with a default "ok" detail.
+    pub fn healthy() -> Self {
+        Self {
+            healthy: true,
+            detail: "ok".to_string(),
+        }
+    }
+
+    /// A degraded module (still runnable, but something is off).
+    pub fn degraded(detail: impl Into<String>) -> Self {
+        Self {
+            healthy: false,
+            detail: detail.into(),
+        }
+    }
 }
 
 /// clap subcommanding: each module declares its argument structure as data,
@@ -254,6 +309,45 @@ impl ModuleRegistry {
             .get(name)
             .map(|b| b.as_ref())
             .ok_or_else(|| AgentError::ModuleNotFound(name.to_string()))
+    }
+
+    /// Run every module's `health_check` (P3). Best-effort: a module reporting
+    /// degraded is not an error here — the caller renders all rows.
+    pub async fn health_check_all(&self) -> Vec<(&'static str, HealthStatus)> {
+        let mut out = Vec::with_capacity(self.modules.len());
+        for (name, module) in &self.modules {
+            let status = match module.health_check().await {
+                Ok(s) => s,
+                Err(e) => HealthStatus::degraded(format!("error: {}", e.message())),
+            };
+            out.push((*name, status));
+        }
+        // Deterministic order: config first, then alphabetical, then memory.
+        out.sort_by_key(|(name, _)| match *name {
+            "config" => (0, *name),
+            "memory" => (2, *name),
+            _ => (1, *name),
+        });
+        out
+    }
+
+    /// Run every module's `initialize` (P3). Best-effort; failures are returned
+    /// as `(module, error)` pairs so the caller can decide how strict to be.
+    pub fn initialize_all(&self) -> Vec<(&'static str, AgentError)> {
+        let mut errors = Vec::new();
+        for (name, module) in &self.modules {
+            if let Err(e) = module.initialize() {
+                errors.push((*name, e));
+            }
+        }
+        errors
+    }
+
+    /// Run every module's `shutdown` (P3). Best-effort, never fails.
+    pub fn shutdown_all(&self) {
+        for module in self.modules.values() {
+            module.shutdown();
+        }
     }
 }
 

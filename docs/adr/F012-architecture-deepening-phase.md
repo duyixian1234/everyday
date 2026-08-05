@@ -1,6 +1,6 @@
 # ADR: Architecture Deepening Phase (v0.11–v0.12)
 
-**Status**: Accepted (Phase 1 implemented 2026-08-05; Phase 2 implemented 2026-08-05; Phase 3 pending)
+**Status**: Accepted (Phases 1–3 implemented 2026-08-05)
 
 **Date**: 2026-08-05
 
@@ -19,9 +19,9 @@
 | P2a AccountProvider trait | 1 | **Done** (commit `274143e`) | `AccountProvider` single resolution algorithm on the five account configs; `Config::resolve_account_name()`; ops_log delegates; `X_account()` kept for backward compat; `impl_account_lookup!` macro (R007) removed |
 | P1 CLI/business separation | 2 | **Done** (commits `1f37aba`, `e1d964a`, `fa72ad8`) | ArgSpec boilerplate cut ~40–55% via `cli_action!`/`flag!` macros (all 11 modules; mail `module_arg_spec` 129→61 lines); service-layer traits with domain types + Mock direct tests: `MailBackend`/`CalBackend`/`RssBackend` (+ note/todo/bookmark `*Backend` from R016); dispatch() is the only Output-touching path; special modules (timeline/search/auth/config/memory) got macro ArgSpec only — they were already render-separated with direct tests but have no dedicated ModuleService trait (deferred to Phase 3 wiring) |
 | P2b Config subsets | 2 | **Done** (commit `56e29a6`) | `MailModuleConfig`/`CalendarModuleConfig`/`RssModuleConfig`/`NoteModuleConfig`/`TodoModuleConfig`/`BookmarkModuleConfig` via `impl_module_config!`; `ModuleRegistry::build` slices via `Config::X_module_config()`; `for_account()` factories drop Config; `auth::get_credential_with_user()` for subset-held modules; timeline/search/auth keep `Arc<Config>` (cross-module orchestrators) |
-| P3 Lifecycle hooks | 3 | Pending | v0.12.0 |
-| P4 Request context | 3 | Pending | v0.12.0 (breaking) |
-| P5 Middleware stack | 3 | Pending | v0.12.0 |
+| P3 Lifecycle hooks | 3 | **Done** | `Executor::initialize()/health_check()/shutdown()` default no-ops; `HealthStatus`; `ModuleRegistry::{initialize_all,health_check_all,shutdown_all}`; `everyday health` root command (text/JSON, exit 0/1); mail/memory/timeline override `health_check` (local DB probes only); main.rs wires initialize+shutdown around dispatch |
+| P4 Request context | 3 | **Done** (non-breaking) | `RequestContext { request_id, deadline, caller }` in `shared::request_context`; thread-local propagation (one set site in main.rs, clear after dispatch); `generate_request_id()` = `cli-<nanos>-<pid>`; explicit-parameter form (breaking) deferred to v0.12 |
+| P5 Middleware stack | 3 | **Done** | `shared::middleware`: `Middleware` trait (before/after/on_error) + `run_with_middleware`; default `LoggingMiddleware` (stderr: request_id/module/action/elapsed, JSON structured `_log` lines); main.rs dispatch goes through the stack; modules untouched |
 
 ---
 

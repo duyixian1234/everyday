@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.10.0 已发布；F012 Phase 1 完成（P6 TypedValue 保类型输出 / P2c Config 加载时校验 / P2a AccountProvider trait），Phase 2 完成（P1 CLI/business 分离 + P2b config 子集注入），Phase 3（P3–P5）待启动。
+**当前状态：** v0.10.0 已发布；F012 Phase 1（P6/P2c/P2a）、Phase 2（P1+P2b）、Phase 3（P3 lifecycle / P4 request context / P5 middleware）全部完成，ADR 三阶段落地，待并入 v0.11.0-rc。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
@@ -71,6 +71,12 @@
 - **P1**：`cli_action!`/`flag!` 宏压缩全 11 模块 ArgSpec（净 -321 行，mail `module_arg_spec` 129→61）；mail/cal/rss 建 service-layer trait（`MailBackend`/`CalBackend`/`RssBackend` + domain 类型 + `for_account` DI 工厂 + `dispatch()` 唯一 Output 触点 + Mock backend 直测）；note/todo/bookmark 沿用 R016 `*Backend`；timeline/search/auth/config/memory 仅宏化 ArgSpec（已渲染分离 + 直测，未建独立 ModuleService trait，留待 Phase 3 接线）。
 - **P2b**：业务模块注入 config 子集（`MailModuleConfig` 等，`impl_module_config!` 宏），`ModuleRegistry::build` 经 `Config::X_module_config()` 切片；`for_account()` 弃 Config 参数，凭据走 `auth::get_credential_with_user()`；timeline/search/auth 保留 `Arc<Config>`（跨模块编排器）。
 - Phase 3（P3 lifecycle / P4 request context / P5 middleware）按 F012 时间线后续启动。
+
+### Phase 18: 架构深化 Phase 3 — lifecycle / request context / middleware [complete]
+按 ADR [F012](./docs/adr/F012-architecture-deepening-phase.md) 落地第三阶段（未发版，待并入 v0.11.0-rc）：
+- **P3**：`Executor` 加 `initialize()`/`health_check()`/`shutdown()` 默认实现 + `HealthStatus`；`ModuleRegistry::{initialize_all, health_check_all, shutdown_all}`；根级 `everyday health` 命令（text/JSON 双输出，exit 0/1）；mail/memory/timeline override health_check（仅本地 DB 探测，无网络）；main.rs 在 dispatch 前后接线 initialize/shutdown。
+- **P4**：`shared::request_context` — `RequestContext { request_id, deadline, caller }` 非破坏性 thread-local 传播（v0.12 才改显式参数 breaking）；`generate_request_id()` = `cli-<nanos>-<pid>`；main.rs 每命令设置 + 完成后清除。
+- **P5**：`shared::middleware` — `Middleware` trait（before/after/on_error）+ `run_with_middleware`；默认 `LoggingMiddleware`（stderr 输出 request_id/module/action/elapsed，JSON 模式输出结构化 `_log` 行）；main.rs dispatch 走 middleware 链，模块零侵入。
 
 ---
 

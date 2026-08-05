@@ -117,6 +117,40 @@ impl Executor for EmailModule {
         let backend = for_account(account)?;
         dispatch(backend.as_ref(), action, &flags, &positional).await
     }
+
+    /// P3 health: cache DB openable + default account's keyring credential
+    /// present (never IMAP — `everyday health` must stay local & fast).
+    async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
+        use crate::modules::HealthStatus;
+        // Cache DB must open.
+        let pool = match email_cache::open().await {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(HealthStatus::degraded(format!("cache db: {}", e.message())));
+            }
+        };
+        pool.close().await;
+        // Default account credential must exist (if any account is configured).
+        match self.config.resolve_account(None) {
+            Ok(account) => {
+                if crate::modules::auth::get_credential_with_user(
+                    "mail",
+                    &account.name,
+                    &account.username,
+                )
+                .is_ok()
+                {
+                    Ok(HealthStatus::healthy())
+                } else {
+                    Ok(HealthStatus::degraded(format!(
+                        "account '{}': no keyring credential (run `everyday auth login --module mail --account {}`)",
+                        account.name, account.name
+                    )))
+                }
+            }
+            Err(_) => Ok(HealthStatus::healthy()), // no account configured → nothing to check
+        }
+    }
 }
 
 // ============ service layer (P1) ============
