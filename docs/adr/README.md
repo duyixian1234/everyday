@@ -38,6 +38,7 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [F008](F008-rss-module.md) | RSS module — feed-rs based subscription aggregator | Accepted | 2026-07-09 |
 | [F009](F009-performance-budget.md) | Performance budget — cold start < 100 ms, network timeouts, large-output streaming | Accepted | 2026-07-12 |
 | [F010](F010-testing-requirements.md) | Testing requirements — mandatory coverage, mocks, CI behaviour, bug-fix discipline | Accepted | 2026-07-12 |
+| [F012](F012-architecture-deepening-phase.md) | Architecture deepening phase — P2c/P2a/P6 implemented (Phase 1); P1/P2b (Phase 2), P3–P5 (Phase 3) planned | Accepted | 2026-08-05 |
 
 ## Mail (M-series)
 

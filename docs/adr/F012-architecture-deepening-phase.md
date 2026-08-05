@@ -1,12 +1,27 @@
 # ADR: Architecture Deepening Phase (v0.11–v0.12)
 
-**Status**: Proposed (pending team review)
+**Status**: Accepted (Phase 1 implemented 2026-08-05; Phases 2–3 pending)
 
 **Date**: 2026-08-05
 
 **Deciders**: Everyday Architecture Review (codebase-design skill)
 
 **Participants**: Development team, module owners
+
+---
+
+## Implementation Status
+
+| Item | Phase | Status | Notes |
+|------|-------|--------|-------|
+| P6 TypedValue (`Output::TypedRecords`) | 1 | **Done** (commit `4264909`) | `TypedValue` Text/Number/Boolean/Null; JSON keeps native types; `mail list` uid/unread typed, `memory list`/`history` confidence typed; backward compat via existing `Records` variant |
+| P2c Config validation | 1 | **Done** (commit `d3de1be`) | `Config::validate()` inside `load_from()`: default-account references, required fields, provider whitelist, Notion ID shape |
+| P2a AccountProvider trait | 1 | **Done** (commit `274143e`) | `AccountProvider` single resolution algorithm on the five account configs; `Config::resolve_account_name()`; ops_log delegates; `X_account()` kept for backward compat; `impl_account_lookup!` macro (R007) removed |
+| P1 CLI/business separation | 2 | Pending | v0.11.0 workstream |
+| P2b Config subsets | 2 | Pending | v0.11.0 workstream |
+| P3 Lifecycle hooks | 3 | Pending | v0.12.0 |
+| P4 Request context | 3 | Pending | v0.12.0 (breaking) |
+| P5 Middleware stack | 3 | Pending | v0.12.0 |
 
 ---
 
@@ -353,9 +368,9 @@ Execute a three-phase architecture deepening initiative to deepen module interfa
   - Martin, Robert C. *Clean Architecture*. Dependency Inversion, Interface Segregation
 
 - **Related ADRs** (in this repo):
-  - [F001](docs/adr/F001-cli-shape.md) — CLI output abstraction
-  - [F003](docs/adr/F003-module-scope-external-integration.md) — Module scope
-  - [R012](docs/adr/R012-config-executor-trait.md) — Config as executor
-  - [R013–R015](docs/adr/R013-auth-module-consolidation.md) — Auth consolidation
-  - [S001–S006](docs/adr/S001-search-architecture.md) — Search architecture (good model)
+  - [F001](F001-cli-shape.md) — CLI output abstraction
+  - [F003](F003-module-scope-external-integration.md) — Module scope
+  - [R012](R012-config-executor-trait.md) — Config as executor
+  - [R013–R015](R013-auth-module-consolidation.md) — Auth consolidation
+  - [S001–S006](S001-search-architecture.md) — Search architecture (good model)
 

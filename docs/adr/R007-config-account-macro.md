@@ -1,6 +1,6 @@
 # ADR R007: Macro for `Config::X_account()` lookups (module-scope, not inside `impl`)
 
-**Status:** Accepted
+**Status:** Superseded (2026-08-05, by [F012](F012-architecture-deepening-phase.md) P2a — `impl_account_lookup!` removed in favor of the `AccountProvider` trait)
 **Date:** 2026-07-11
 
 ## Context
