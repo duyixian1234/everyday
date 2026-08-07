@@ -454,21 +454,13 @@ A persistent, append-only notebook for the agent itself. Triples `(subject, pred
 - **Append-only**: `add` always inserts a new row. Re-adding the same `(S, P, O)` does **not** update the existing row; it appends a new version. `history` returns every version.
 - **Soft delete**: `delete` sets `deleted_at = now()` on the **current-state** row (the row with `MAX(created_at) WHERE deleted_at IS NULL`). Subsequent `delete` calls on the same triple return `InvalidArgument("triple not found or already deleted")`.
 - **Resurrection**: `add` after delete creates a new row (append-only). To recover a specific historical row by `id`, wait for v2 `undelete-by-id` (K001, v2 deferred).
-- **No semantic validation**: the program does not enforce `prefers`/`knows`/etc.; triples are free-form. Conventions live in `SKILL.md`.
+- **No semantic validation**: the program does not enforce `prefers`/`knows`/etc.; triples are free-form. Conventions live in [MEMORY.md](MEMORY.md).
 - **Graph**: forward-only BFS over current state; cycle detection via visited set keyed by `(subject, predicate, object)`. `--include-deleted` flips the source view to the underlying table for the traversal.
 - **Searchable**: memory facts (current state) participate in `everyday search`. `Hit.id` is `"memory:<row_id>"` so agents can drill into `memory history` / `memory get` via the id.
 
-### Subject naming convention (recommended, not enforced)
+### Subject naming convention
 
-```
-user                       # bare subject for the human user
-project-everyday           # project entity
-tech:rust                  # domain-prefixed: technology knowledge
-team:backend:alice         # hierarchical: team > sub-team > person
-agent:self                 # agent's own self-description (rare)
-```
-
-Multiple agents writing `(user, prefers, rust)` land in the same version history. Use `tech:rust` vs `tech:python` to avoid collisions on shared nouns.
+The recommended vocabulary (and rationale) lives in [MEMORY.md](MEMORY.md); it is a convention, not enforced in code.
 
 ---
 

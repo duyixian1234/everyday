@@ -8,7 +8,7 @@ everyday <module> <action> [options] [--json] [--account NAME]
 
 ## Guidance for Agents
 
-- **To run everyday commands**, load the **`everyday-cli`** skill (`everyday-cli/SKILL.md`). It contains trigger scenarios, must-follow rules, and common task examples.
+- **To run everyday commands**, load the **`everyday-cli`** skill (`everyday-cli/SKILL.md`). It contains trigger scenarios and must-follow rules; per-module recipes live in `everyday-cli/references/TASKS.md`.
 - **The full command table, options, and output schema** live in `everyday-cli/references/COMMANDS.md`; read it on demand.
 - **Always add `--json`** for interaction and process the structured data — an AI should not parse human-readable tables.
 - **Credentials go through the system keyring** (`everyday/<module>/<account>`); passwords are never stored in the config file nor passed as command-line arguments.

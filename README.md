@@ -390,7 +390,7 @@ A persistent, append-only notebook for the agent itself — store stable facts a
 | `--depth N` | `graph` | Recursion depth in `1..=5`, default 2 |
 | `--include-deleted` | `graph` | Include soft-deleted edges in the traversal |
 
-**Subject naming convention** (program does not enforce; documented in `skills/everyday-cli/SKILL.md`):
+**Subject naming convention** (program does not enforce; documented in `skills/everyday-cli/references/MEMORY.md`):
 
 ```
 user                       # bare subject for the human user
@@ -707,7 +707,9 @@ everyday/
 │   └── everyday-cli/
 │       ├── SKILL.md           # Agent Skill entry (follows the agentskills.io spec)
 │       └── references/
-│           └── COMMANDS.md    # Full command reference (loaded on demand)
+│           ├── COMMANDS.md    # Full command reference (loaded on demand)
+│           ├── TASKS.md       # Common task recipes (loaded on demand)
+│           └── MEMORY.md      # Memory notebook semantics & naming conventions
 ├── Cargo.toml
 ├── config.example.toml
 └── agents.md            # AI Agent collaboration guidelines

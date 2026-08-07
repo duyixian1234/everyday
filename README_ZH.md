@@ -390,7 +390,7 @@ Agent 自身的持久化、append-only 笔记本 —— 以 `(subject, predicate
 | `--depth N` | `graph` | 递归深度，`1..=5`，默认 2 |
 | `--include-deleted` | `graph` | 在遍历中包含软删除边 |
 
-**Subject 命名约定**（程序不强制，约定见 `skills/everyday-cli/SKILL.md`）：
+**Subject 命名约定**（程序不强制，约定见 `skills/everyday-cli/references/MEMORY.md`）：
 
 ```
 user                       # 表示用户本人
@@ -708,7 +708,9 @@ everyday/
 │   └── everyday-cli/
 │       ├── SKILL.md           # Agent Skill 入口（遵循 agentskills.io 规范）
 │       └── references/
-│           └── COMMANDS.md    # 完整命令参考（按需加载）
+│           ├── COMMANDS.md    # 完整命令参考（按需加载）
+│           ├── TASKS.md       # 常见任务配方（按需加载）
+│           └── MEMORY.md      # memory 语义与命名约定
 ├── Cargo.toml
 ├── config.example.toml
 └── agents.md            # AI Agent 协作规范

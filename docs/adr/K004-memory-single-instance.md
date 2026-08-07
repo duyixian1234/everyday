@@ -24,11 +24,11 @@ The user's reasoning during design was that memory is "agent's own notebook" —
 |---|---|
 | No account column | Current CLI is single-agent per invocation; no concrete multi-agent scenario justifies the schema cost |
 | No per-account config blocks | `~/.config/everyday/config.toml` does not gain a `[memory.accounts]` section |
-| Multi-agent isolation by **subject naming convention** | Program does not enforce; documented in `skills/everyday-cli/SKILL.md` so agents agree on a convention |
+| Multi-agent isolation by **subject naming convention** | Program does not enforce; documented in `skills/everyday-cli/references/MEMORY.md` so agents agree on a convention |
 | No `auth::get_credential` calls | Memory has no external service; credentials are not applicable |
 | Single global `MemorySearchProvider` | Mirrors `rss` / `search` single-instance pattern (see [K003](K003-memory-searchable.md)) |
 
-**Subject naming convention** (documented in `skills/everyday-cli/SKILL.md`, not enforced in code):
+**Subject naming convention** (documented in `skills/everyday-cli/references/MEMORY.md`, not enforced in code):
 
 ```
 user                       # bare subject for the human user

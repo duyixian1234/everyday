@@ -241,7 +241,7 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 `add` / `get` / `relation` / `list` / `delete` / `graph` / `history`。详见 [K001](docs/adr/K001-memory-module.md) §v1 commands。
 
 ### Semantic correctness
-程序**不**校验三元组的语义合法性（predicate 是否"事实形"、object 是否合理等）——这是 agent 的责任。规则写进 `skills/everyday-cli/SKILL.md`，不在代码层强制。用户原话："memory 是由具体的 agent 发起的，不应在程序中限制"。
+程序**不**校验三元组的语义合法性（predicate 是否"事实形"、object 是否合理等）——这是 agent 的责任。规则写进 `skills/everyday-cli/references/MEMORY.md`，不在代码层强制。用户原话："memory 是由具体的 agent 发起的，不应在程序中限制"。
 
 ### 错误模型
 不开新 `AgentError` 变体，全部走现有 `InvalidArgument` / `Io`：

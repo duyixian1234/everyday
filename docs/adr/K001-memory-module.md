@@ -82,7 +82,7 @@ ORDER BY created_at DESC;
 | `graph <SUBJECT> [--depth N] [--include-deleted]` | Forward-only recursive traversal — see [K002](K002-memory-graph-query.md) |
 | `history <S> <P> <O>` | Full version history (including deleted rows) |
 
-**No semantic validation:** the program does not validate that a triple is "fact-shaped" (e.g., it will accept `memory add user sent-email-to alice` without complaint). Semantic correctness is the agent's responsibility; rules go in `skills/everyday-cli/SKILL.md`. This matches the philosophy that memory is "agent's own notebook" — the program is a durable store, not a fact-checker.
+**No semantic validation:** the program does not validate that a triple is "fact-shaped" (e.g., it will accept `memory add user sent-email-to alice` without complaint). Semantic correctness is the agent's responsibility; rules go in `skills/everyday-cli/references/MEMORY.md`. This matches the philosophy that memory is "agent's own notebook" — the program is a durable store, not a fact-checker.
 
 **No `auth` module touch:** memory never calls `auth::*`. See [K004](K004-memory-single-instance.md).
 
