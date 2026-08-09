@@ -53,8 +53,10 @@ mod tests {
 
     #[test]
     fn gen_id_embeds_pid() {
+        let id = gen_id("x");
         // The PID segment is what keeps ids unique across nextest processes
-        // (each test = one process, counters all start at 0).
-        assert!(gen_id("x").ends_with(&format!("-{:x}-2", *PID)));
+        // (each test = one process, counters all start at 0). The seq suffix
+        // is process-local, so it must not be pinned here.
+        assert!(id.contains(&format!("-{:x}-", *PID)), "{id}");
     }
 }
