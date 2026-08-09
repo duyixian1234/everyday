@@ -163,6 +163,6 @@ username = "me"
 
 ## Phase 状态汇总
 
-- Phase 1–18 全部 complete；Phase 19–20 已并入 v0.13 系列（Phase 20 = R020 env 凭据回退）。详见上文「阶段规划」。
-- 当前最新发布：v0.13.1（Phase 20 未发版，见 [progress.md](./progress.md)）。
+- Phase 1–18 全部 complete；Phase 19–20 已并入 v0.13/v0.14 系列（Phase 20 = R020 env 凭据回退，随 **v0.14.0** 发布）。详见上文「阶段规划」。
+- 当前最新发布：v0.14.0。
 - 历史发版一览见 [progress.md](./progress.md) §发版流水。

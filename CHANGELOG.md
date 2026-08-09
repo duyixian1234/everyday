@@ -1,3 +1,8 @@
+## [0.14.0] - 2026-08-09
+
+### 🚀 Features
+
+- *(auth)* Opt-in env-credential fallback when keyring is unavailable (R020)
 ## [0.13.1] - 2026-08-09
 
 ### 🐛 Bug Fixes
@@ -24,6 +29,7 @@
 - *(ci)* Add typos spelling gate
 - *(release)* Add git-cliff changelog generation
 - *(release)* Adopt cargo-dist for the release pipeline (G001 batch 2)
+- Release v0.13.1
 ## [0.13.0] - 2026-08-09
 
 ### 🚀 Features
