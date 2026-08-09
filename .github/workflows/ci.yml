@@ -54,14 +54,16 @@ jobs:
           tool: cargo-nextest
 
       - name: Test (nextest)
-        run: cargo nextest run --target ${{ matrix.target }} --junit junit-${{ matrix.target }}.xml
+        # junit output is configured in .config/nextest.toml
+        # (nextest 0.9 removed the --junit CLI flag)
+        run: cargo nextest run --target ${{ matrix.target }}
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: junit-${{ matrix.target }}
-          path: junit-${{ matrix.target }}.xml
+          path: target/nextest/default/junit.xml
 
   fmt:
     name: Format check

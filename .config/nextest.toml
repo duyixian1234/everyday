@@ -1,0 +1,7 @@
+# nextest configuration — see docs/adr/G001-quality-tools-suite.md.
+# nextest 0.9 junit output lives under [profile.<name>.junit] (the old
+# --junit CLI flag was removed). CI uploads the junit.xml per job.
+
+[profile.default.junit]
+# Path is relative to store.dir/<profile> = target/nextest/default/
+path = "junit.xml"
