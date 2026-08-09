@@ -1,6 +1,6 @@
 # ADR L010: OpsLogProvider — project ops-log rows into the events table
 
-**Status:** Accepted
+**Status:** Superseded by [R019](R019-remove-notion-provider.md) (2026-08-09, Notion provider removed)
 **Date:** 2026-07-11
 
 ## Context

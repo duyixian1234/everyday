@@ -94,12 +94,11 @@
 - Output is CRLF; `NaiveDateTime::and_utc()` returns `DateTime<Utc>` (not
   `Option`).
 
-## `Notion`
+## `Notion` (removed)
 
-- Base URL: `https://api.notion.com/v1`. Headers: `Notion-Version: 2022-06-28`
-  and `Authorization: Bearer <token>`.
-- 429 → back off using `Retry-After` (default 1s), once.
-- 401 / 403 → `AgentError::Auth`. Other non-2xx → `AgentError::Network`.
+The Notion API client dependency was removed in v0.13.0
+([R019](../docs/adr/R019-remove-notion-provider.md)); its API quirks and error
+handling notes below applied to the then-current code and no longer apply.
 
 ## New crate policy
 

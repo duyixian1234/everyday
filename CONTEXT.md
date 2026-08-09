@@ -79,17 +79,8 @@ cal 的窗口刷新模式窗口 = `[last_sync, now + 7天]`（前看 7 天）。
 ### ref_id
 事件引用的实体在来源系统中的稳定标识（如邮件 `<account>:<IMAP UID>`、日历 VEVENT UID、todo 的本地 id）。用于跨多条事件关联同一实体的生命周期。
 
-### Provider 范围与 Notion ops-log
-- **local provider**（todo/note/bookmark 默认）：TimelineProvider 直接查模块自己的 SQLite 表（按 `created_at`/`updated_at` 增量），毫秒级。
-- **notion provider**：不查 Notion API（无增量历史、限流、状态变更时间丢失）。改为从**本地 ops-log**（`~/.config/everyday/ops-log.db`）拉取——CLI 执行 notion 账户动作时记录的操作审计日志。
-- **明确限制**：notion.so 网页端 / 其他客户端的修改不进 ops-log，Timeline 看不到。仅捕获 CLI 发起的操作。
-
-### Ops-log（操作审计日志）
-统一库 `~/.config/everyday/ops-log.db`，记录 CLI 对 notion 账户执行的写操作。Schema：
-- `ops_log` 表：`id`（自增）、`module`（todo/note/bookmark）、`account`、`action`（add/complete/start/delete/create/update）、`ref_id`、`title`、`metadata`（JSON）、`occurred_at`（RFC3339 UTC）。
-- 索引 `ix_ops_module_account_time(module, account, occurred_at)`。
-
-Timeline 的 notion provider 查 `SELECT * FROM ops_log WHERE module=? AND account=? AND occurred_at > ?`，映射为事件。
+### Provider 范围
+`todo` / `note` / `bookmark` 仅有一个 provider：**local**（本地 SQLite，别名 `sqlite`）。TimelineProvider 直接查模块自己的 SQLite 表（按 `created_at`/`updated_at` 增量），毫秒级。无远程 provider（Notion 支持已于 v0.13.0 移除，见 [R019](docs/adr/R019-remove-notion-provider.md)）。
 
 ### 各 source 字段映射
 | source | event_type | title | summary | ref_id | metadata |
@@ -101,20 +92,12 @@ Timeline 的 notion provider 查 `SELECT * FROM ops_log WHERE module=? AND accou
 | `note` | `created`/`updated` | note title | `""` | note id | `{props:{...}}` |
 | `bookmark` | `added` | bookmark title | url | bookmark id | `{url,tags:[...]}` |
 
-### Ops-log AOP 写入
-ops-log 写入与模块脱钩，采用 dispatch 层 hook（`main.rs::run()` 中 `module.execute()` 返回后调用 `ops_log::maybe_log_op()`）。逻辑集中在 `src/ops_log.rs`：
-1. 仅 `todo`/`note`/`bookmark` 模块的写操作记录（`list`/`search`/`read`/`login`/`init-db` 等跳过）。
-2. 仅 `provider = "notion"` 的账户记录（local 账户的 timeline provider 直接拉 SQLite）。
-3. 从 Output 的 JSON 提取 `id`（→ ref_id）和 `title`（可能缺失，取空）。
-4. 写入失败不阻断用户命令（`let _ =` 吞错，stderr 警告）。
-
 ### 本地 provider 的事件粒度
 本地 provider 从"当前态快照"拉取，非完整转移历史。降级语义：
 - **todo**：`created`（`created_at`）+ 当前状态映射的事件（`updated_at` 变化时生成，如 `completed`）。多次转移合并为一条最新态事件（Todo→In Progress→Done 间只生成 `completed`）。需给 `todos` 表加 `updated_at` 列。
 - **note**：`created`（`created_at`）+ `updated`（`updated_at`）。多次更新合并为一条。
 - **bookmark**：`added`（`created_at`）。
 - **删除**：当前无 delete action，暂不支持。将来加 delete 时改为软删除（`deleted_at` 列），provider 查 `WHERE deleted_at > last_sync`。
-- **notion 账户**无此降级——ops-log 在执行时记录每次转移，粒度完整。
 
 ### Sync 执行模型
 - **Best-effort + 逐 provider 水位**：每个 provider 独立 try/catch。成功的更新 `sync_state` 水位，失败的跳过（水位不变，下次 sync 重试该窗口）。一个坏源不阻塞其他源。sync 整体返回成功，输出标注失败项。
@@ -133,7 +116,6 @@ src/
 │       ├── store.rs         # timeline.db 读写（events / sync_state 表）
 │       ├── orchestrator.rs  # sync 编排器（遍历 providers、水位管理、并行）
 │       └── providers.rs     # 各 source 的 provider adapter（调各模块 fetch_for_timeline）
-├── ops_log.rs               # AOP hook（dispatch 层 ops-log 写入）
 ```
 
 ### Provider adapter 模式
@@ -198,7 +180,7 @@ delete 后再 add 同一三元组 → 新行（`deleted_at` NULL），append-onl
 自由文本 provenance 标签：`conversation` / `explicit` / `inferred` / `user_correction` 等，agent 自填。**不约束**——agent 决定词汇表。供 agent 后续过滤（"只信 `explicit` 来源"）。
 
 ### Storage location
-`~/.config/everyday/memory.db`——独立 SQLite 文件，**不**与 `timeline.db` / `ops-log.db` / `mail_cache.db` 共享。理由：写入模型不同（append-only triples vs append-only events vs append-only envelopes vs append-only ops）、失败域独立、迁移节奏不同。详见 [K004](docs/adr/K004-memory-single-instance.md) 与 [K001](docs/adr/K001-memory-module.md) §Storage。
+`~/.config/everyday/memory.db`——独立 SQLite 文件，**不**与 `timeline.db` / `mail_cache.db` 共享。理由：写入模型不同（append-only triples vs append-only events vs append-only envelopes）、失败域独立、迁移节奏不同。详见 [K004](docs/adr/K004-memory-single-instance.md) 与 [K001](docs/adr/K001-memory-module.md) §Storage。
 
 ### No account column
 Memory 单实例全局，无 `account` 列。多 agent 隔离靠 subject 命名约定（见下）。`auth` 模块**不**被 memory 调用——无 `everyday auth login --module memory`。
@@ -233,7 +215,7 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 ### Boundary: memory vs timeline vs note
 - **timeline** = 时间戳事件（"X 在 T 发生"）——append-only 事件日志
 - **memory** = 跨时间稳定事实（"X 是 Y"）——append-only 三元组库
-- **note** = 可读文本（"以下是散文"）——Notion blocks
+- **note** = 可读文本（"以下是散文"）——本地 Markdown/散文
 
 判定问题："这条信息有没有确定的时刻 T，过了 T 它就成历史？" 有 → timeline；没有 → memory。内容是不是给人读的散文？是 → note。
 
@@ -271,14 +253,13 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 ### AuthStrategy（认证策略）
 按 (module, account) 派生出的凭据分类，决定如何存储与验证：
 - `Password`：`mail` / `cal`。keyring user = `account.username`；验证走 IMAP / CalDAV 真实登录。
-- `Token`：`note` / `todo` / `bookmark` 且 `provider = "notion"`。keyring user = `"token"`；验证走 `notion_client`。
-- `None`：`note` / `todo` / `bookmark` 的 `local`/`sqlite` provider，以及 `rss`。无凭据，无需存储或验证。
+- `None`：`note` / `todo` / `bookmark`（local/sqlite）与 `rss`。无凭据，无需存储或验证。
 
 ### auth 模块
 顶层命令 + 共享模块，独占凭据的完整生命周期（store / get / delete / verify）。各模块改调 `auth::get_credential` 而非自行读 keyring。
 
 ### verify（认证）
-证明已存凭据有效的行为——连接外部服务（IMAP/CalDAV 登录、Notion API 调用）。与"凭据存储"正交：`auth login` 默认只存，`verify` 是显式可选步骤（`--verify` flag 或独立 `auth verify` 动作）。
+证明已存凭据有效的行为——连接外部服务（IMAP/CalDAV 登录）。与"凭据存储"正交：`auth login` 默认只存，`verify` 是显式可选步骤（`--verify` flag 或独立 `auth verify` 动作）。
 
 ### not_required
 `verify` / `list` 的一种状态，表示该账户 provider 无需凭据（local/sqlite、rss），故无可存、无可验。
@@ -291,19 +272,19 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 > 设计决策见 [R016](docs/adr/R016-action-backend-di.md) / [R017](docs/adr/R017-backend-layout-scope.md) / [R018](docs/adr/R018-backend-domain-mocks.md)。
 
 ### Backend（动作层后端）
-动作执行层（响应用户 `everyday <module> <action>` 命令）的抽象接口，面向"对某实体的写/读动作"，而非 Timeline 的"事件投影"。每个双 provider 模块有一个 trait：`NoteBackend` / `TodoBackend` / `BookmarkBackend`。与 `TimelineProvider`（见上）/ `Searchable`（见 [S001](docs/adr/S001-search-architecture.md)）**同名不同义**——后者是 read 侧、跨模块、无状态的事件/搜索源；`Backend` 是动作侧、模块内、有状态的存储后端。
+动作执行层（响应用户 `everyday <module> <action>` 命令）的抽象接口，面向"对某实体的写/读动作"，而非 Timeline 的"事件投影"。每个模块有一个 trait：`NoteBackend` / `TodoBackend` / `BookmarkBackend`。与 `TimelineProvider`（见上）/ `Searchable`（见 [S001](docs/adr/S001-search-architecture.md)）**同名不同义**——后者是 read 侧、跨模块、无状态的事件/搜索源；`Backend` 是动作侧、模块内、有状态的存储后端。
 
 ### for_account（Backend 工厂）
-`NoteBackend::for_account(&Config, &Account) -> Result<Box<dyn NoteBackend>>`。集中完成 provider 选择（`is_local_provider`）+ notion token 读取（`auth::get_credential`，见 [R013](docs/adr/R013-auth-module-consolidation.md)）+ 具体 backend 构造。模块动作代码只调 `for_account` 拿 `Box<dyn NoteBackend>`，**永不**出现 `NotionClient`、provider 分支或 keyring 读取。
+`NoteBackend::for_account(&Account) -> Result<Box<dyn NoteBackend>>`。集中完成 backend 构造（唯一实现为 `Local*Backend`；模块动作代码只调 `for_account` 拿 `Box<dyn NoteBackend>`，**永不**出现 provider 分支或 keyring 读取）。自 v0.13.0（[R019](docs/adr/R019-remove-notion-provider.md)）起不再有 notion 分支与 token 读取。
 
-### Notion*Backend / Local*Backend
-`Backend` trait 的两个实现：`NotionNoteBackend`（包装 `NotionClient`，把 notion_client 错误 `map_err` 成 `AgentError`）与 `LocalNoteBackend`（包装现有本地 SQLite 实现，返回同一 domain 类型）。
+### Local*Backend
+`Backend` trait 的本地实现：`LocalNoteBackend` / `LocalTodoBackend` / `LocalBookmarkBackend`（包装本地 SQLite 实现，返回 domain 类型）。
 
 ### Domain type（动作层域类型）
-Backend 方法返回的强类型结构体（如 `NoteSummary` / `NoteDetail` / `TodoItem` / `BookmarkItem`），notion 与 local 两侧归一到同一类型；模块负责把它渲染成 `Output`。与 `Output`（[F001](docs/adr/F001-cli-shape.md)）的区别：domain type 是"数据"，`Output` 是"展示"。
+Backend 方法返回的强类型结构体（如 `NoteSummary` / `NoteDetail` / `TodoItem` / `BookmarkItem`），模块负责把它渲染成 `Output`。与 `Output`（[F001](docs/adr/F001-cli-shape.md)）的区别：domain type 是"数据"，`Output` 是"展示"。
 
 ### Mock*Backend（测试替身）
-in-memory `MockNoteBackend` 等，注入动作层单测，证明零 `NotionClient` 依赖且 provider 无关（[R018](docs/adr/R018-backend-domain-mocks.md)）。
+in-memory `MockNoteBackend` 等，注入动作层单测，证明动作层与具体存储实现无关（[R018](docs/adr/R018-backend-domain-mocks.md)）。
 
 ---
 

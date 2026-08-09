@@ -1,28 +1,20 @@
-//! `todo` module: todo task management. Defaults to the local SQLite provider
-//! (`local`), switchable to Notion (`provider = "notion"`)
-//! [T001](../../../docs/adr/T001-notion-todo-module.md)
-//! [F005](../../../docs/adr/F005-default-provider-local.md).
+//! `todo` module: todo task management, local SQLite only
+//! (Notion provider removed in v0.13.0 — [R019](../../../docs/adr/R019-remove-notion-provider.md)).
 //!
 //! Action dispatch is dependency-inverted: `execute` resolves the account, builds a
 //! `Box<dyn TodoBackend>` via [`for_account`], calls the corresponding trait method, and
 //! renders the returned domain struct ([R016](../../../docs/adr/R016-action-backend-di.md)
-//! / [R018](../../../docs/adr/R018-backend-domain-mocks.md)). The module never names
-//! `NotionClient`, never branches on provider, and never touches the keyring — all of that
-//! lives in the `for_account` factory and the provider implementations.
+//! / [R018](../../../docs/adr/R018-backend-domain-mocks.md)).
 //!
 //! Commands (actions):
-//! - `auth login` stores the Notion Integration Token in the system keyring (see `auth` module)
-//! - `init-db`  creates the task database in Notion (needs `parent_page_id`) and writes
-//!   `database_id` back into the config; for the local provider it just creates the table
 //! - `list`     lists open tasks (by Due ascending); `--all` lists every task
 //! - `add`      adds a task (`--title` required; `--due` / `--priority` optional)
 //! - `start`    marks the task In Progress
 //! - `complete` marks the task Done
-//! - `delete`   archives the Notion page (soft delete) / physically deletes the local row
+//! - `delete`   physically deletes the local row
 
 pub mod backend;
 pub mod local;
-pub mod notion;
 
 use async_trait::async_trait;
 use serde_json::{Value, json};
@@ -31,8 +23,8 @@ use std::collections::HashMap;
 use crate::config::TodoModuleConfig;
 use crate::error::{AgentError, Result};
 use crate::modules::todo::backend::{
-    STATUS_DONE, STATUS_IN_PROGRESS, TodoAdded, TodoBackend, TodoDeleted, TodoInitDb, TodoItem,
-    TodoStatusSet, for_account,
+    STATUS_DONE, STATUS_IN_PROGRESS, TodoAdded, TodoBackend, TodoDeleted, TodoItem, TodoStatusSet,
+    for_account,
 };
 use crate::modules::{Executor, parse_simple_args};
 use crate::output::Output;
@@ -58,36 +50,26 @@ impl TodoModule {
 #[async_trait]
 impl Executor for TodoModule {
     fn description(&self) -> &'static str {
-        "Todo tasks (Notion or local sqlite): init-db, list, add, start, complete, delete."
+        "Todo tasks (local sqlite): list, add, start, complete, delete."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
             cli_action!(
-                "init-db",
-                "初始化待办数据库（local 建表 / Notion 建库）",
-                "everyday todo init-db [--parent PAGE_ID] [--account NAME]",
-                &[flag!("parent", "父页面 ID（默认账户父页）")]
-            ),
-            cli_action!(
                 "list",
                 "列出待办",
-                "everyday todo list [--db ID] [--all] [--account NAME]",
-                &[
-                    flag!("db", "数据库 ID"),
-                    flag!("all", "列出全部（默认仅未完成）", Bool),
-                ]
+                "everyday todo list [--all] [--account NAME]",
+                &[flag!("all", "列出全部（默认仅未完成）", Bool),]
             ),
             cli_action!(
                 "add",
                 "新增待办",
-                "everyday todo add --title T [--due DATE] [--priority P] [--db ID] [--account NAME]",
+                "everyday todo add --title T [--due DATE] [--priority P] [--account NAME]",
                 &[
                     flag!("title", "标题"),
                     flag!("due", "截止日期（如 2026-07-15）"),
                     flag!("priority", "优先级（如 P0/P1/P2）"),
-                    flag!("db", "数据库 ID"),
                 ]
             ),
             cli_action!(
@@ -130,35 +112,15 @@ impl Executor for TodoModule {
             .config
             .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // DI seam: the module never names `NotionClient`, never branches on provider,
-        // never touches the keyring — all of that lives in `for_account`.
+        // DI seam: the module never branches on provider or touches the keyring —
+        // all of that lives in `for_account`.
         let backend = for_account(account)?;
         dispatch(&*backend, action, &flags, &positional).await
     }
 
-    /// P3 health: for a notion account, the keyring token must exist; local
-    /// accounts need no credential. No Notion network probe (health = local).
+    /// P3 health: local-only since v0.13.0 — no credentials to check.
     async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
-        use crate::modules::HealthStatus;
-        match self.config.resolve_account(None) {
-            Ok(account) => {
-                let token_ok = crate::modules::auth::get_credential_with_user(
-                    "todo",
-                    &account.name,
-                    crate::shared::keyring_user::KEYRING_USER,
-                )
-                .is_ok();
-                if crate::modules::local::is_local_provider(&account.provider) || token_ok {
-                    Ok(HealthStatus::healthy())
-                } else {
-                    Ok(HealthStatus::degraded(format!(
-                        "account '{}': no notion token in keyring (run `everyday auth login --module todo --account {}`)",
-                        account.name, account.name
-                    )))
-                }
-            }
-            Err(_) => Ok(HealthStatus::healthy()), // no account → nothing to check
-        }
+        Ok(crate::modules::HealthStatus::healthy())
     }
 }
 
@@ -166,7 +128,7 @@ impl Executor for TodoModule {
 /// `MockTodoBackend` acceptance tests ([R018](../../../docs/adr/R018-backend-domain-mocks.md)):
 /// it maps an action + parsed args onto a `TodoBackend` trait call and renders the returned
 /// domain struct. Because it takes `&dyn TodoBackend`, the test suite can inject an in-memory
-/// mock and exercise the entire action path without a `NotionClient`, SQLite, or keyring.
+/// mock and exercise the entire action path without SQLite or keyring.
 pub(crate) async fn dispatch(
     backend: &dyn TodoBackend,
     action: &str,
@@ -174,11 +136,6 @@ pub(crate) async fn dispatch(
     positional: &[String],
 ) -> Result<Output> {
     match action {
-        "init-db" => {
-            let parent = flags.get("parent").map(|s| s.as_str());
-            let r = backend.init_db(parent).await?;
-            Ok(render_init_db(r))
-        }
         "list" => {
             let all = flags.contains_key("all");
             let items = backend.list(all).await?;
@@ -220,31 +177,7 @@ pub(crate) async fn dispatch(
 
 // ============ Rendering (R018) ============
 
-/// Render `init-db` result. Text mode names the provider and prints the location
-/// (local db path or Notion url); JSON mode emits all populated fields.
-fn render_init_db(r: TodoInitDb) -> Output {
-    if mode_json() {
-        return Output::Json(json!({
-            "account": r.account,
-            "provider": r.provider,
-            "db_path": r.db_path,
-            "database_id": r.database_id,
-            "url": r.url,
-        }));
-    }
-    let location = r.db_path.or(r.url).unwrap_or_default();
-    let verb = if r.provider == "local" {
-        "initialized local"
-    } else {
-        "created"
-    };
-    Output::text(format!(
-        "{verb} todo database for account '{}'\n{}",
-        r.account, location
-    ))
-}
-
-/// Render `list` result: a Records table (text) or a JSON array (both provider shapes identical).
+/// Render `list` result: a Records table (text) or a JSON array.
 fn render_list(items: Vec<TodoItem>) -> Output {
     if mode_json() {
         let arr: Vec<Value> = items
@@ -278,20 +211,17 @@ fn render_list(items: Vec<TodoItem>) -> Output {
     }
 }
 
-/// Render `add` result.
+/// Render `add` result. `url` is kept (always empty for local todos) for
+/// `--json` consumers ([R019](../../../docs/adr/R019-remove-notion-provider.md)).
 fn render_add(r: TodoAdded) -> Output {
     if mode_json() {
         return Output::Json(json!({
             "id": r.id,
-            "url": r.url,
+            "url": "",
             "title": r.title,
-            "database_id": r.database_id,
         }));
     }
-    match r.url {
-        Some(url) => Output::text(format!("added todo '{}' (id={})\n{}", r.title, r.id, url)),
-        None => Output::text(format!("added todo '{}' (id={})", r.title, r.id)),
-    }
+    Output::text(format!("added todo '{}' (id={})", r.title, r.id))
 }
 
 /// Render `start` / `complete` result.
@@ -300,16 +230,10 @@ fn render_status(r: TodoStatusSet) -> Output {
         return Output::Json(json!({
             "id": r.id,
             "status": r.status,
-            "url": r.url,
+            "url": "",
         }));
     }
-    match r.url {
-        Some(url) => Output::text(format!(
-            "set todo {} -> status '{}'\n{}",
-            r.id, r.status, url
-        )),
-        None => Output::text(format!("set todo {} -> status '{}'", r.id, r.status)),
-    }
+    Output::text(format!("set todo {} -> status '{}'", r.id, r.status))
 }
 
 /// Render `delete` result.
@@ -319,7 +243,6 @@ fn render_delete(r: TodoDeleted) -> Output {
             "id": r.id,
             "title": r.title,
             "status": r.status,
-            "archived": r.archived,
         }));
     }
     Output::text(format!("deleted todo '{}' (id={})", r.title, r.id))
@@ -344,10 +267,10 @@ mod tests {
     }
 
     /// (a) The full action path — parse → backend → render — runs end-to-end against a
-    /// `MockTodoBackend` that holds no `NotionClient` and no SQLite. This proves the DI seam
-    /// removes `NotionClient` / provider branches / keyring reads from the action layer.
+    /// `MockTodoBackend` with no SQLite. This proves the DI seam keeps provider /
+    /// keyring concerns out of the action layer.
     #[tokio::test]
-    async fn dispatch_with_mock_runs_action_path_without_notion_client() {
+    async fn dispatch_with_mock_runs_action_path() {
         let backend = MockTodoBackend {
             items: vec![sample_item()],
             ..Default::default()
@@ -366,7 +289,7 @@ mod tests {
     }
 
     /// (b) The render layer is provider-agnostic: the same domain data renders identically
-    /// whether it originated from Notion or the local backend. We render directly with
+    /// regardless of the source backend. We render directly with
     /// MockTodoBackend-supplied data and assert both text (Records) and JSON shapes.
     #[test]
     fn render_is_provider_agnostic_for_same_domain_data() {

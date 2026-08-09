@@ -1,35 +1,25 @@
-//! Note module: notes / knowledge-base management. Defaults to the local SQLite provider (`local`),
-//! but can switch to the Notion API (`provider = "notion"`) [N001](../../../docs/adr/N001-notion-note-module.md)
-//! [F005](../../../docs/adr/F005-default-provider-local.md).
+//! Note module: notes / knowledge-base management, local SQLite only
+//! (Notion provider removed in v0.13.0 — [R019](../../../docs/adr/R019-remove-notion-provider.md)).
 //!
-//! Design goal: hide Notion's verbose Block nesting and expose two high-level capabilities to the Agent:
+//! Design goal: hide storage details and expose two high-level capabilities to the Agent:
 //! **plain-text / Markdown append** and **simplified property operations**.
 //!
 //! Supported `action`s:
-//! - `auth login` stores the Notion Integration Token in the keyring (see the `auth` module)
-//! - `search`  search pages / databases by title keyword
-//! - `create`  create a record in a database (with title and simplified properties)
-//! - `read`    read page body, aggregated into Markdown (`--json` returns a structured object)
-//! - `append`  append a text block to the end of a page (supports `--text` or piped stdin)
-//! - `update`  modify page properties (meta info)
-//! - `list`    list all pages under a database (title + properties)
-//!
-//! Credential safety: the token is stored only in the system keyring (service = `everyday/note/<account>`),
-//! never persisted to config [F002](../../../docs/adr/F002-multi-account-keyring.md).
-//!
-//! Provider selection + token fetch happen entirely inside
-//! [`NoteBackend::for_account`](../../../docs/adr/R016-action-backend-di.md); this module only
-//! dispatches actions to a `Box<dyn NoteBackend>` and renders the returned domain structs.
+//! - `search`  search notes by title keyword
+//! - `create`  create a note (with title and simplified properties)
+//! - `read`    read note body, aggregated into Markdown (`--json` returns a structured object)
+//! - `append`  append a text block to the end of a note (supports `--text` or piped stdin)
+//! - `update`  modify note properties (meta info)
+//! - `list`    list notes (title + properties)
 
 pub mod backend;
 pub mod local;
-pub mod notion;
 
 use std::collections::HashMap;
 use std::io::{IsTerminal, Read};
 
 use async_trait::async_trait;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::config::{NoteAccount, NoteModuleConfig};
 use crate::error::{AgentError, Result};
@@ -53,7 +43,7 @@ impl NoteModule {
 #[async_trait]
 impl Executor for NoteModule {
     fn description(&self) -> &'static str {
-        "Note & knowledge-base (Notion or local sqlite): search, list, create, read, append, update."
+        "Note & knowledge-base (local sqlite): search, list, create, read, append, update."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
@@ -68,10 +58,9 @@ impl Executor for NoteModule {
             cli_action!(
                 "create",
                 "新建页面",
-                "everyday note create --title T [--db ID] [--prop K:V ...] [--account NAME]",
+                "everyday note create --title T [--prop K:V ...] [--account NAME]",
                 &[
                     flag!("title", "页面标题"),
-                    flag!("db", "数据库 ID（默认账户默认库）"),
                     flag!("prop", "属性 K:V（可重复）", Multi),
                 ]
             ),
@@ -99,8 +88,8 @@ impl Executor for NoteModule {
             cli_action!(
                 "list",
                 "列出数据库中的页面",
-                "everyday note list [--db ID] [--limit N] [--account NAME]",
-                &[flag!("db", "数据库 ID"), flag!("limit", "条数上限"),]
+                "everyday note list [--limit N] [--account NAME]",
+                &[flag!("limit", "条数上限"),]
             ),
         ];
         ModuleArgSpec {
@@ -121,8 +110,8 @@ impl Executor for NoteModule {
             .config
             .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // DI seam: the module never names `NotionClient`, never branches on provider,
-        // never touches the keyring — all of that lives in `for_account`.
+        // DI seam: the module never branches on provider or touches the keyring —
+        // all of that lives in `for_account`.
         let backend = for_account(account)?;
         dispatch(
             backend.as_ref(),
@@ -135,35 +124,16 @@ impl Executor for NoteModule {
         .await
     }
 
-    /// P3 health: for a notion account, the keyring token must exist; local
-    /// accounts need no credential. No Notion network probe (health = local).
+    /// P3 health: local-only since v0.13.0 — no credentials to check, so the
+    /// module is healthy whenever an account is resolvable (or none is configured).
     async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
-        use crate::modules::HealthStatus;
-        match self.config.resolve_account(None) {
-            Ok(account) => {
-                let token_ok = crate::modules::auth::get_credential_with_user(
-                    "note",
-                    &account.name,
-                    crate::shared::keyring_user::KEYRING_USER,
-                )
-                .is_ok();
-                if crate::modules::local::is_local_provider(&account.provider) || token_ok {
-                    Ok(HealthStatus::healthy())
-                } else {
-                    Ok(HealthStatus::degraded(format!(
-                        "account '{}': no notion token in keyring (run `everyday auth login --module note --account {}`)",
-                        account.name, account.name
-                    )))
-                }
-            }
-            Err(_) => Ok(HealthStatus::healthy()), // no account → nothing to check
-        }
+        Ok(crate::modules::HealthStatus::healthy())
     }
 }
 
 /// Core action dispatch, parameterized over a `NoteBackend`. `execute` supplies a real
 /// backend via `for_account`; tests supply a `MockNoteBackend`. This is the DI seam that
-/// keeps the action path free of `NotionClient` / provider branches / keyring reads
+/// keeps the action path free of provider / keyring concerns
 /// ([R016](../../../docs/adr/R016-action-backend-di.md)).
 async fn dispatch(
     backend: &dyn NoteBackend,
@@ -187,28 +157,20 @@ async fn dispatch(
             Ok(render_search(results))
         }
         "list" => {
-            let db_id = flags
-                .get("db")
-                .map(|s| s.as_str())
-                .or(account.default_database_id.as_deref());
             let limit: usize = flags
                 .get("limit")
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(50)
                 .min(100);
-            let rows = backend.list(db_id, limit).await?;
+            let rows = backend.list(limit).await?;
             Ok(render_list(rows))
         }
         "create" => {
             let title = flags.get("title").ok_or_else(|| {
                 AgentError::InvalidArgument("create requires --title <title>".into())
             })?;
-            let db_id = flags
-                .get("db")
-                .map(|s| s.as_str())
-                .or(account.default_database_id.as_deref());
             let props = split_props(multi)?;
-            let created = backend.create(title, db_id, &props).await?;
+            let created = backend.create(title, &props).await?;
             Ok(render_create(created))
         }
         "read" => {
@@ -328,36 +290,30 @@ fn resolve_append_text(flags: &HashMap<String, String>) -> Result<String> {
 
 // ============ Rendering (module owns Output; backends return domain structs) ============
 
-/// Render `search` results (rows: id / type / title / last_edited; JSON: id / type / title / last_edited / url?).
+/// Render `search` results (rows: id / title / last_edited; JSON: id / title / last_edited / url).
+/// The Notion object-type `type` column was removed with the provider (v0.13.0);
+/// `url` is kept (always empty for local notes) for `--json` consumers.
 fn render_search(results: Vec<NoteSummary>) -> Output {
     if crate::util::json_mode::is_json() {
         let items: Vec<Value> = results
             .into_iter()
             .map(|s| {
-                let mut m = Map::new();
-                m.insert("id".into(), Value::String(s.id));
-                m.insert("type".into(), Value::String(s.kind));
-                m.insert("title".into(), Value::String(s.title));
-                m.insert("last_edited".into(), Value::String(s.updated));
-                if let Some(u) = s.url {
-                    m.insert("url".into(), Value::String(u));
-                }
-                Value::Object(m)
+                json!({
+                    "id": s.id,
+                    "title": s.title,
+                    "last_edited": s.updated,
+                    "url": "",
+                })
             })
             .collect();
         Output::Json(Value::Array(items))
     } else {
         let rows: Vec<Vec<String>> = results
             .into_iter()
-            .map(|s| vec![s.id, s.kind, s.title, s.updated])
+            .map(|s| vec![s.id, s.title, s.updated])
             .collect();
         Output::records(
-            vec![
-                "id".into(),
-                "type".into(),
-                "title".into(),
-                "last_edited".into(),
-            ],
+            vec!["id".into(), "title".into(), "last_edited".into()],
             rows,
         )
     }
@@ -369,13 +325,13 @@ fn render_list(rows: Vec<NoteListEntry>) -> Output {
         let items: Vec<Value> = rows
             .into_iter()
             .map(|s| {
-                let mut m = Map::new();
-                m.insert("id".into(), Value::String(s.id));
-                m.insert("title".into(), Value::String(s.title));
-                m.insert("url".into(), Value::String(s.url.unwrap_or_default()));
-                m.insert("last_edited".into(), Value::String(s.updated));
-                m.insert("properties".into(), Value::Object(s.properties));
-                Value::Object(m)
+                json!({
+                    "id": s.id,
+                    "title": s.title,
+                    "url": "",
+                    "last_edited": s.updated,
+                    "properties": Value::Object(s.properties),
+                })
             })
             .collect();
         Output::Json(Value::Array(items))
@@ -391,27 +347,11 @@ fn render_list(rows: Vec<NoteListEntry>) -> Output {
     }
 }
 
-/// Render `create` result. Notion (`database_id` set) emits a page record; local emits a note record.
+/// Render `create` result (local note record).
 fn render_create(d: NoteCreated) -> Output {
-    let json_out = if d.database_id.is_some() {
-        json!({
-            "id": d.id,
-            "url": d.url.clone().unwrap_or_default(),
-            "title": d.title,
-            "database_id": d.database_id.clone().unwrap_or_default(),
-        })
-    } else {
-        json!({ "id": d.id, "title": d.title, "properties": d.prop_count })
-    };
+    let json_out = json!({ "id": d.id, "title": d.title, "properties": d.prop_count });
     if crate::util::json_mode::is_json() {
         Output::Json(json_out)
-    } else if d.resource == "page" {
-        let url = d.url.clone().unwrap_or_default();
-        let db = d.database_id.clone().unwrap_or_default();
-        Output::text(format!(
-            "created page '{}' (id={}, database={})\n{}",
-            d.title, d.id, db, url
-        ))
     } else {
         Output::text(format!(
             "created note '{}' (id={}, props={})",
@@ -422,11 +362,10 @@ fn render_create(d: NoteCreated) -> Output {
 
 /// Render `read` result: aggregated Markdown body + properties.
 fn render_read(d: NoteRead) -> Output {
-    let url = d.url.clone().unwrap_or_default();
     let json_out = json!({
         "id": d.id,
         "title": d.title,
-        "url": url,
+        "url": "",
         "properties": Value::Object(d.properties),
         "content": d.content,
     });
@@ -437,9 +376,6 @@ fn render_read(d: NoteRead) -> Output {
         if !d.title.is_empty() {
             text.push_str(&format!("# {}\n\n", d.title));
         }
-        if !url.is_empty() {
-            text.push_str(&format!("({url})\n\n"));
-        }
         text.push_str(&d.content);
         Output::text(text)
     }
@@ -447,38 +383,23 @@ fn render_read(d: NoteRead) -> Output {
 
 /// Render `append` result.
 fn render_append(d: NoteAppended) -> Output {
-    let url = d.url.clone().unwrap_or_default();
-    let json_out = json!({ "id": d.id, "url": url, "appended": d.appended });
+    let json_out = json!({ "id": d.id, "url": "", "appended": d.appended });
     if crate::util::json_mode::is_json() {
         Output::Json(json_out)
     } else {
-        let suffix = if url.is_empty() {
-            String::new()
-        } else {
-            format!("\n{url}")
-        };
-        Output::text(format!(
-            "appended {} {}(s) to {} {}{}",
-            d.appended, d.unit, d.resource, d.id, suffix
-        ))
+        Output::text(format!("appended {} line(s) to note {}", d.appended, d.id))
     }
 }
 
 /// Render `update` result.
 fn render_update(d: NoteUpdated) -> Output {
-    let url = d.url.clone().unwrap_or_default();
-    let json_out = json!({ "id": d.id, "url": url, "updated": d.updated_count });
+    let json_out = json!({ "id": d.id, "url": "", "updated": d.updated_count });
     if crate::util::json_mode::is_json() {
         Output::Json(json_out)
     } else {
-        let suffix = if url.is_empty() {
-            String::new()
-        } else {
-            format!("\n{url}")
-        };
         Output::text(format!(
-            "updated {} propert(ies) on {} {}{}",
-            d.updated_count, d.resource, d.id, suffix
+            "updated {} propert(ies) on note {}",
+            d.updated_count, d.id
         ))
     }
 }
@@ -538,23 +459,20 @@ mod tests {
         NoteAccount {
             name: "test".into(),
             provider: "local".into(),
-            default_database_id: None,
             default_page_id: None,
             db_path: None,
         }
     }
 
     /// (a) The full action path — parse → backend → render — runs end-to-end against a
-    /// `MockNoteBackend` that holds no `NotionClient` and no SQLite. This proves the DI seam
-    /// removes `NotionClient` / provider branches / keyring reads from the action layer.
+    /// `MockNoteBackend` with no SQLite. This proves the DI seam keeps provider /
+    /// keyring concerns out of the action layer.
     #[tokio::test]
-    async fn dispatch_with_mock_runs_action_path_without_notion_client() {
+    async fn dispatch_with_mock_runs_action_path() {
         let backend = MockNoteBackend {
             summaries: vec![NoteSummary {
                 id: "p1".into(),
-                kind: "page".into(),
                 title: "Rust 笔记".into(),
-                url: Some("https://example.com/p1".into()),
                 updated: "2026-07-12".into(),
             }],
             ..Default::default()
@@ -568,48 +486,42 @@ mod tests {
             .unwrap();
         match out {
             Output::Records { headers, rows } => {
-                assert_eq!(headers, vec!["id", "type", "title", "last_edited"]);
-                assert_eq!(rows, vec![vec!["p1", "page", "Rust 笔记", "2026-07-12"]]);
+                assert_eq!(headers, vec!["id", "title", "last_edited"]);
+                assert_eq!(rows, vec![vec!["p1", "Rust 笔记", "2026-07-12"]]);
             }
             other => panic!("expected Records, got {other:?}"),
         }
     }
 
-    /// (b) The render layer is provider-agnostic: the same domain data renders identically
-    /// whether it originated from Notion or the local backend. Here we render directly with
-    /// MockNoteBackend-supplied data and assert both text (Records) and JSON shapes.
+    /// (b) The render layer emits stable shapes for the local-only domain data.
     #[test]
-    fn render_is_provider_agnostic_for_same_domain_data() {
+    fn render_is_stable_for_domain_data() {
         let summary = NoteSummary {
             id: "p1".into(),
-            kind: "page".into(),
             title: "Rust 笔记".into(),
-            url: Some("https://example.com/p1".into()),
             updated: "2026-07-12".into(),
         };
 
-        // Text mode → table with stable columns (backend-independent).
+        // Text mode → table with stable columns.
         let text_out = render_search(vec![summary.clone()]);
         match text_out {
             Output::Records { headers, rows } => {
-                assert_eq!(headers, vec!["id", "type", "title", "last_edited"]);
+                assert_eq!(headers, vec!["id", "title", "last_edited"]);
                 assert_eq!(rows[0][0], "p1");
-                assert_eq!(rows[0][2], "Rust 笔记");
+                assert_eq!(rows[0][1], "Rust 笔记");
             }
             other => panic!("expected Records, got {other:?}"),
         }
 
-        // JSON mode → object with the same keys, regardless of source backend.
+        // JSON mode → object with the stable keys.
         crate::util::json_mode::set_json_mode(true);
         let json_out = render_search(vec![summary]);
         crate::util::json_mode::set_json_mode(false);
         if let Output::Json(Value::Array(arr)) = json_out {
             assert_eq!(arr.len(), 1);
             assert_eq!(arr[0]["id"], json!("p1"));
-            assert_eq!(arr[0]["type"], json!("page"));
             assert_eq!(arr[0]["title"], json!("Rust 笔记"));
             assert_eq!(arr[0]["last_edited"], json!("2026-07-12"));
-            assert_eq!(arr[0]["url"], json!("https://example.com/p1"));
         } else {
             panic!("expected Json array, got {json_out:?}");
         }

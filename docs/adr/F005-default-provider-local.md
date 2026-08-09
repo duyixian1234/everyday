@@ -1,7 +1,9 @@
 # ADR F005: Default provider is local SQLite for note/todo/bookmark
 
-**Status:** Accepted
+**Status:** Accepted (revised 2026-08-09 by [R019](R019-remove-notion-provider.md) — "notion opt-in" clause removed)
 **Date:** 2026-07-10
+
+> **Update (2026-08-09):** The Notion provider was removed entirely in [R019](R019-remove-notion-provider.md). The core conclusion of this ADR survives — `local` is the only and therefore default provider — but the "Notion backend remains available as `provider = "notion"`" clause and all notion mechanics below are obsolete. Read this ADR for *why local was chosen as default*, not as a description of the current provider set.
 
 ## Context
 

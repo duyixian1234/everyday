@@ -1,8 +1,7 @@
 //! Shared infrastructure layer (`shared`).
 //!
 //! Hosts the low-level facilities reused across modules: config loading
-//! [`config`], unified errors [`error`], output rendering [`output`], and the
-//! Notion low-level client [`notion_client`].
+//! [`config`], unified errors [`error`], and output rendering [`output`].
 //!
 //! Domain modules (see `crate::modules`) reach these via
 //! `crate::{config, error, output, ...}` — those paths are re-exported at
@@ -11,8 +10,6 @@
 
 pub mod config;
 pub mod error;
-pub mod keyring_user;
 pub mod middleware;
-pub mod notion_client;
 pub mod output;
 pub mod request_context;

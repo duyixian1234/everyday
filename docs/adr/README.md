@@ -31,8 +31,8 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [F001](F001-cli-shape.md) | CLI command shape, Executor trait, Output, AgentError | Accepted | 2026-07-08 |
 | [F002](F002-multi-account-keyring.md) | Multi-account configuration + OS keyring credentials | Accepted | 2026-07-08 |
 | [F003](F003-module-scope-external-integration.md) | Module scope — external integration interface only (no fs/net/sys) | Accepted | 2026-07-10 |
-| [F004](F004-shared-notion-client.md) | Shared Notion client SDK with 429 backoff retry | Accepted | 2026-07-10 |
-| [F005](F005-default-provider-local.md) | Default provider is local SQLite for note/todo/bookmark | Accepted | 2026-07-10 |
+| [F004](F004-shared-notion-client.md) | Shared Notion client SDK with 429 backoff retry | Superseded | 2026-07-10 |
+| [F005](F005-default-provider-local.md) | Default provider is local SQLite for note/todo/bookmark | Accepted (rev. R019) | 2026-07-10 |
 | [F006](F006-ci-release-github-only.md) | CI + GitHub-only release workflow (cnb mirror excluded) | Accepted | 2026-07-10 |
 | [F007](F007-clap-subcommand-tree.md) | Data-driven clap subcommand tree via module_arg_spec | Accepted | 2026-07-12 |
 | [F008](F008-rss-module.md) | RSS module — feed-rs based subscription aggregator | Accepted | 2026-07-09 |
@@ -63,20 +63,20 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 
 | # | Title | Status | Date |
 |---|-------|--------|------|
-| [N001](N001-notion-note-module.md) | Note module — Notion API integration that shields block nesting | Accepted | 2026-07-10 |
+| [N001](N001-notion-note-module.md) | Note module — Notion API integration that shields block nesting | Superseded | 2026-07-10 |
 
 ## Todo (T-series)
 
 | # | Title | Status | Date |
 |---|-------|--------|------|
-| [T001](T001-notion-todo-module.md) | Todo module — Notion API + shared notion-client (strongly-typed DTO) | Accepted | 2026-07-10 |
+| [T001](T001-notion-todo-module.md) | Todo module — Notion API + shared notion-client (strongly-typed DTO) | Superseded | 2026-07-10 |
 | [T002](T002-todo-delete-action.md) | Todo delete action — Notion archive + local physical delete (with title preservation) | Accepted | 2026-07-11 |
 
 ## Bookmark (B-series)
 
 | # | Title | Status | Date |
 |---|-------|--------|------|
-| [B001](B001-bookmark-dual-provider.md) | Bookmark module — local SQLite (default) + Notion (with exact-match tag filter) | Accepted | 2026-07-10 |
+| [B001](B001-bookmark-dual-provider.md) | Bookmark module — local SQLite (default) + Notion (with exact-match tag filter) | Superseded | 2026-07-10 |
 
 ## Timeline (L-series)
 
@@ -88,10 +88,10 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [L004](L004-timeline-provider-pull-only.md) | TimelineProvider as separate trait + pull-only model | Accepted | 2026-07-11 |
 | [L005](L005-no-auto-sync.md) | No auto-sync on query — query/sync separation | Accepted | 2026-07-11 |
 | [L006](L006-utc-storage-local-query.md) | UTC timestamp storage with local-timezone query | Accepted | 2026-07-11 |
-| [L007](L007-notion-ops-log.md) | Notion provider via local ops-log with AOP dispatch hook | Accepted | 2026-07-11 |
+| [L007](L007-notion-ops-log.md) | Notion provider via local ops-log with AOP dispatch hook | Superseded | 2026-07-11 |
 | [L008](L008-local-provider-degraded-granularity.md) | Local provider degraded event granularity (latest-state snapshot) | Accepted | 2026-07-11 |
 | [L009](L009-best-effort-sync.md) | Best-effort sync with per-provider watermarks + grouped parallel | Accepted | 2026-07-11 |
-| [L010](L010-ops-log-provider.md) | OpsLogProvider — project ops-log rows into the events table | Accepted | 2026-07-11 |
+| [L010](L010-ops-log-provider.md) | OpsLogProvider — project ops-log rows into the events table | Superseded | 2026-07-11 |
 | [L011](L011-aop-handles-output-text.md) | AOP ops-log hook must parse Output::Text variant | Accepted | 2026-07-11 |
 | [L012](L012-since-query-flag.md) | `--since` flag in query path (date + relative duration) | Accepted | 2026-07-11 |
 | [L013](L013-from-explicit-error.md) | Timeline `--from` solo explicit error (resolve_query_range) | Accepted | 2026-07-12 |
@@ -110,9 +110,9 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [R006](R006-ops-log-surfacing.md) | Surface ops-log write failures to the user | Accepted | 2026-07-11 |
 | [R007](R007-config-account-macro.md) | Macro for `Config::X_account()` lookups (module-scope, not inside `impl`) | Superseded | 2026-07-11 |
 | [R008](R008-sql-glob-not-like.md) | Use SQL `GLOB`, not `LIKE`, for token-boundary flag matching | Accepted | 2026-07-11 |
-| [R009](R009-notion-common-local-module.md) | Common `local` module for shared Notion abstractions (login_flow, parse_tags, set_module_database_id) | Accepted | 2026-07-11 |
-| [R010](R010-notion-local-account.md) | `NotionLocalAccount` merge + type alias (TodoAccount / BookmarkAccount) | Accepted | 2026-07-11 |
-| [R011](R011-add-dual-providers-macro.md) | `add_dual_providers!` macro for `build_providers` (todo/note/bookmark) | Accepted | 2026-07-11 |
+| [R009](R009-notion-common-local-module.md) | Common `local` module for shared abstractions (login_flow, parse_tags, set_module_database_id) | Accepted (rev. R019) | 2026-07-11 |
+| [R010](R010-notion-local-account.md) | `NotionLocalAccount` merge + type alias (TodoAccount / BookmarkAccount) | Superseded | 2026-07-11 |
+| [R011](R011-add-dual-providers-macro.md) | `add_dual_providers!` macro for `build_providers` (todo/note/bookmark) | Superseded | 2026-07-11 |
 | [R012](R012-config-executor-trait.md) | `ConfigModule` goes through the `Executor` trait | Accepted | 2026-07-12 |
 | [R013](R013-auth-module-consolidation.md) | Consolidate all credential/login logic into a top-level `auth` module + command | Accepted | 2026-07-12 |
 | [R014](R014-auth-verify-opt-in.md) | `verify` is an explicit opt-in step, separate from credential storage | Accepted | 2026-07-12 |
@@ -120,6 +120,7 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [R016](R016-action-backend-di.md) | Action-layer `Backend` trait + Dependency Inversion for note/todo/bookmark (kill `NotionClient` leak) | Accepted | 2026-07-12 |
 | [R017](R017-backend-layout-scope.md) | Backend directory layout (L-B) + action-layer scope boundary | Accepted | 2026-07-12 |
 | [R018](R018-backend-domain-mocks.md) | Backend domain types + in-memory mock backends (DI regression guard) | Accepted | 2026-07-12 |
+| [R019](R019-remove-notion-provider.md) | Remove the Notion provider — note/todo/bookmark become local-only (v0.13 breaking) | Accepted | 2026-08-09 |
 
 ## Search (S-series)
 

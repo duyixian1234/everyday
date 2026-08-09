@@ -1,15 +1,9 @@
 //! Local SQLite provider for the `todo` module.
 //!
 //! `LocalTodoBackend` implements [`TodoBackend`] ([R016](../../../docs/adr/R016-action-backend-di.md)),
-//! a parity implementation of `init-db` / `list` / `add` / `start` / `complete` / `delete`
-//! alongside the Notion provider [T001](../../../docs/adr/T001-notion-todo-module.md),
 //! with data persisted in the account's local SQLite file. The local provider needs no
-//! credentials (credentials are owned by the `auth` module), and `init-db` only creates
-//! the table and reports its path.
-//!
-//! Output shape (column names / JSON keys) is deliberately kept identical to the Notion
-//! version, so an Agent can switch providers without changing its parsing logic
-//! [F005](../../../docs/adr/F005-default-provider-local.md).
+//! credentials; the table is created lazily on first use. The Notion provider was
+//! removed in v0.13.0 ([R019](../../../docs/adr/R019-remove-notion-provider.md)).
 
 use async_trait::async_trait;
 use sqlx::Row;
@@ -18,8 +12,7 @@ use crate::config::{Config, TodoAccount};
 use crate::error::{AgentError, Result};
 use crate::modules::local::{connect, resolve_db_path};
 use crate::modules::todo::backend::{
-    STATUS_DONE, STATUS_TODO, TodoAdded, TodoBackend, TodoDeleted, TodoInitDb, TodoItem,
-    TodoStatusSet,
+    STATUS_DONE, STATUS_TODO, TodoAdded, TodoBackend, TodoDeleted, TodoItem, TodoStatusSet,
 };
 use crate::search::{Hit, SearchQuery, Searchable};
 
@@ -73,20 +66,6 @@ impl LocalTodoBackend {
 
 #[async_trait]
 impl TodoBackend for LocalTodoBackend {
-    /// `init-db` (local): create the table and report the database path.
-    async fn init_db(&self, _parent: Option<&str>) -> Result<TodoInitDb> {
-        let path = resolve_db_path("todo", &self.account.name, self.account.db_path.as_deref())?;
-        let _ = open(&self.account).await?;
-        let path_str = path.to_string_lossy().to_string();
-        Ok(TodoInitDb {
-            account: self.account.name.clone(),
-            provider: "local",
-            db_path: Some(path_str),
-            database_id: None,
-            url: None,
-        })
-    }
-
     /// `list [--all]` (local): list tasks, filtering done by default, ordered by due ascending (nulls last).
     async fn list(&self, all: bool) -> Result<Vec<TodoItem>> {
         let pool = open(&self.account).await?;
@@ -146,9 +125,7 @@ impl TodoBackend for LocalTodoBackend {
 
         Ok(TodoAdded {
             id,
-            url: None,
             title: title.to_string(),
-            database_id: None,
         })
     }
 
@@ -170,16 +147,14 @@ impl TodoBackend for LocalTodoBackend {
         Ok(TodoStatusSet {
             id: id.to_string(),
             status: status.to_string(),
-            url: None,
         })
     }
 
     /// `delete <id>` (local): physically delete a task.
     ///
     /// SELECT the title first, then DELETE; `rows_affected == 0` is treated as
-    /// "id not found" and reported as an error. The extra read lets the ops-log
-    /// delete event carry the title, matching the Notion version's convention
-    /// [T002](../../../docs/adr/T002-todo-delete-action.md).
+    /// "id not found" and reported as an error. The extra read lets the delete
+    /// event carry the title.
     async fn delete(&self, id: &str) -> Result<TodoDeleted> {
         let pool = open(&self.account).await?;
         let row = sqlx::query("SELECT title FROM todos WHERE id = ?1")
@@ -208,7 +183,6 @@ impl TodoBackend for LocalTodoBackend {
             id: id.to_string(),
             title,
             status: "deleted".to_string(),
-            archived: false,
         })
     }
 }
@@ -282,7 +256,7 @@ const SEARCH_PER_MODULE_CAP: usize = 50;
 /// `created_at` when `updated_at` is the default empty string (untouched
 /// after add).
 ///
-/// Notion accounts are skipped in v1 (live-fetch-on-search rejected by
+/// Search covers the account's local SQLite store (live-fetch-on-search rejected by
 /// [S005](../../../docs/adr/S005-time-semantics-scope.md)).
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub async fn search_for_search(account: &TodoAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
@@ -396,8 +370,6 @@ mod tests {
         TodoAccount {
             name: "test".into(),
             provider: "local".into(),
-            parent_page_id: None,
-            default_database_id: None,
             db_path: Some(file.to_string_lossy().to_string()),
         }
     }

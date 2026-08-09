@@ -18,8 +18,8 @@
 - **v0.7.0 已发布** — 跨模块统一搜索 `everyday search`（[S001–S006](./docs/adr/S001-search-architecture.md)）。
 - **v0.6.x 已发布** — Mail Cache 落地（[M002–M005](./docs/adr/M002-imap-connection-pool.md)）+ timeline `--from` 显式报错（[L013](./docs/adr/L013-from-explicit-error.md)）+ Rust 1.97 clippy 注释 lint 修复。
 - **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline` / `memory` / `config` / `search`（10 个，走 Executor trait）。
-- **本地 provider 默认**：[note](./docs/adr/N001-notion-note-module.md) / [todo](./docs/adr/T001-notion-todo-module.md) / [bookmark](./docs/adr/B001-bookmark-dual-provider.md) 三模块默认本地 SQLite，Notion 显式声明。
-- **Timeline**：append-only event log + ops-log AOP 统一 6 source 事件捕获（[L001–L013](./docs/adr/L001-append-only-event-log.md)）。
+- **本地 provider 唯一**：`note` / `todo` / `bookmark` 三模块仅本地 SQLite（Notion provider 已移除，[R019](./docs/adr/R019-remove-notion-provider.md)，v0.13.0）。
+- **Timeline**：append-only event log 统一 6 source 事件捕获（[L001–L013](./docs/adr/L001-append-only-event-log.md)）。
 - **质量门禁**：`cargo build` / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` / `cargo fmt --check` 全绿；CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
 
 ## ADR 时间序索引

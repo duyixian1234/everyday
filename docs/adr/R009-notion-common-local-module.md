@@ -1,9 +1,11 @@
-# ADR R009: Common `local` module for shared Notion abstractions (`login_flow`, `parse_tags`, `set_module_database_id`)
+# ADR R009: Common `local` module for shared abstractions (`login_flow`, `parse_tags`, `set_module_database_id`)
 
-**Status:** Accepted
+**Status:** Accepted (revised 2026-08-09 by [R019](R019-remove-notion-provider.md) — `set_module_database_id` removed)
 **Date:** 2026-07-11
 
 > **Update (2026-07-12):** The `login_flow` helper described here moved into the top-level `auth` module; per-module `login` is removed. The `parse_tags` / `set_module_database_id` helpers remain in `local`. See [R013](R013-auth-module-consolidation.md).
+>
+> **Update (2026-08-09):** With the Notion provider removed ([R019](R019-remove-notion-provider.md)), `login_flow` and `set_module_database_id` no longer exist (no notion token login; `init-db` writeback removed). `parse_tags` survives in `local` — it serves the local `bookmark` tag path. The title is updated; the "shared Notion abstractions" framing of the original text is historical.
 
 ## Context
 

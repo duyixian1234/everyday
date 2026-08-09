@@ -1,6 +1,6 @@
 # ADR F004: Shared Notion client SDK with 429 backoff retry
 
-**Status:** Accepted
+**Status:** Superseded by [R019](R019-remove-notion-provider.md) (2026-08-09, Notion provider removed)
 **Date:** 2026-07-10
 
 ## Context

@@ -128,7 +128,7 @@ pub struct Config {
     #[serde(default)]
     pub note: NoteConfig,
 
-    /// Todo module configuration (Notion-backed).
+    /// Todo module configuration (local SQLite).
     #[serde(default)]
     pub todo: TodoConfig,
 
@@ -253,23 +253,18 @@ pub struct NoteConfig {
 
 /// A single note account.
 ///
-/// The `provider` field accepts `local`/`sqlite` (local SQLite, **default**)
-/// and `notion` (remote Notion). Reserved for future backends
-/// (e.g. `obsidian` local dir, `feishu` docs).
-/// Credentials (Notion Integration Token) are never stored in the config
-/// file — they live in the keyring (service = `everyday/note/<account>`).
-/// See [F005](../../docs/adr/F005-default-provider-local.md).
+/// The `provider` field accepts `local`/`sqlite` (local SQLite). The remote
+/// `notion` provider was removed in v0.13.0
+/// ([R019](../../docs/adr/R019-remove-notion-provider.md)); existing configs
+/// declaring it fail validation with a migration hint.
+/// Credentials are never stored in the config file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteAccount {
     /// Account name (e.g. `personal`, `work`).
     pub name: String,
-    /// Backend provider: `local`/`sqlite` (local SQLite, default) or
-    /// `notion` (remote Notion).
+    /// Backend provider: `local`/`sqlite` (local SQLite, default).
     #[serde(default = "default_provider")]
     pub provider: String,
-    /// Default database ID: used when `note create` omits `--db`.
-    #[serde(default)]
-    pub default_database_id: Option<String>,
     /// Default page ID: used when `note append`/`note read` omit page_id.
     #[serde(default)]
     pub default_page_id: Option<String>,
@@ -285,7 +280,7 @@ fn default_provider() -> String {
 
 // ---- Todo ----
 
-/// Todo module configuration (Notion-backed task database).
+/// Todo module configuration (local SQLite task database).
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TodoConfig {
     /// Named account list.
@@ -293,30 +288,22 @@ pub struct TodoConfig {
     pub accounts: Vec<TodoAccount>,
 }
 
-/// Shared fields for a Notion + local provider account.
+/// Shared fields for a local-provider account.
 ///
 /// `TodoAccount` and `BookmarkAccount` used to be byte-for-byte copies
 /// (all 5 fields identical); this struct + type alias dedup them.
 /// `NoteAccount` stays a separate type because its `default_page_id`
-/// ("which page new notes go to") differs in meaning from the
-/// `parent_page_id` ("which page the DB is built under at init-db")
-/// used by todo/bookmark.
-/// See [R010](../../docs/adr/R010-notion-local-account.md).
+/// ("which page new notes go to") differs in meaning.
+/// The Notion fields (`parent_page_id` / `default_database_id`) were removed
+/// with the provider in v0.13.0
+/// ([R019](../../docs/adr/R019-remove-notion-provider.md)).
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NotionLocalAccount {
+pub struct LocalAccount {
     /// Account name (e.g. `personal`, `work`).
     pub name: String,
-    /// Backend provider: `local`/`sqlite` (local SQLite, default) or
-    /// `notion` (remote Notion).
+    /// Backend provider: `local`/`sqlite` (local SQLite, default).
     #[serde(default = "default_provider")]
     pub provider: String,
-    /// Parent page ID when creating the database (non-secret, on-disk).
-    #[serde(default)]
-    pub parent_page_id: Option<String>,
-    /// Default database ID (filled back after `init-db`; explicit
-    /// `--db` when absent).
-    #[serde(default)]
-    pub default_database_id: Option<String>,
     /// SQLite file path for the local provider (only `local`/`sqlite`).
     /// Defaults to `~/.config/everyday/<module>-<account>.db`.
     #[serde(default)]
@@ -325,10 +312,10 @@ pub struct NotionLocalAccount {
 
 /// A single todo account.
 ///
-/// Shares `NotionLocalAccount` fields; the type alias keeps
-/// backward compat (constructors using `TodoAccount { .. }` still
-/// work — zero fields are filled by the Default impl).
-pub type TodoAccount = NotionLocalAccount;
+/// Shares `LocalAccount` fields; the type alias keeps backward compat
+/// (constructors using `TodoAccount { .. }` still work — zero fields are
+/// filled by the Default impl).
+pub type TodoAccount = LocalAccount;
 
 // ---- Bookmark ----
 
@@ -342,9 +329,8 @@ pub struct BookmarkConfig {
 
 /// A single bookmark account.
 ///
-/// Shares `NotionLocalAccount` fields; the type alias keeps
-/// backward compat.
-pub type BookmarkAccount = NotionLocalAccount;
+/// Shares `LocalAccount` fields; the type alias keeps backward compat.
+pub type BookmarkAccount = LocalAccount;
 
 // ---- Module config subsets (P2b, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
 //
@@ -476,8 +462,7 @@ impl Config {
     /// failures, while the config is still fresh in the user's mind:
     /// - `[default_account]` names that reference undefined accounts
     /// - empty required fields (hosts, usernames, feed URLs)
-    /// - invalid `provider` values
-    /// - malformed Notion page/database IDs
+    /// - invalid `provider` values (including the removed `notion`)
     ///
     /// An empty or default config (no accounts) is valid — modules without
     /// accounts (rss) or with local-only defaults (note/todo/bookmark) must
@@ -528,10 +513,10 @@ impl Config {
             validate_note_account(a)?;
         }
         for a in &self.todo.accounts {
-            validate_notion_local_account("todo", a)?;
+            validate_local_account("todo", a)?;
         }
         for a in &self.bookmark.accounts {
-            validate_notion_local_account("bookmark", a)?;
+            validate_local_account("bookmark", a)?;
         }
         Ok(())
     }
@@ -585,45 +570,6 @@ impl Config {
             .resolve_account(override_name, self.default_account.calendar.as_deref())
     }
 
-    /// Resolve the note account: `override_name` > default > error.
-    pub fn note_account(&self, override_name: Option<&str>) -> Result<&NoteAccount> {
-        self.note
-            .resolve_account(override_name, self.default_account.note.as_deref())
-    }
-
-    /// Resolve the todo account: `override_name` > default > error.
-    pub fn todo_account(&self, override_name: Option<&str>) -> Result<&TodoAccount> {
-        self.todo
-            .resolve_account(override_name, self.default_account.todo.as_deref())
-    }
-
-    /// Resolve the bookmark account: `override_name` > default > error.
-    pub fn bookmark_account(&self, override_name: Option<&str>) -> Result<&BookmarkAccount> {
-        self.bookmark
-            .resolve_account(override_name, self.default_account.bookmark.as_deref())
-    }
-
-    /// Resolve the effective account **name** for a module by key
-    /// (`mail` / `cal` / `note` / `todo` / `bookmark`): `override_name` >
-    /// default > error. String-level entry point for code that only needs the
-    /// name (e.g. timeline / ops-log accounting).
-    pub fn resolve_account_name(
-        &self,
-        module: &str,
-        override_name: Option<&str>,
-    ) -> Result<String> {
-        match module {
-            "mail" => Ok(self.mail_account(override_name)?.name.clone()),
-            "calendar" | "cal" => Ok(self.calendar_account(override_name)?.name.clone()),
-            "note" => Ok(self.note_account(override_name)?.name.clone()),
-            "todo" => Ok(self.todo_account(override_name)?.name.clone()),
-            "bookmark" => Ok(self.bookmark_account(override_name)?.name.clone()),
-            other => Err(AgentError::InvalidArgument(format!(
-                "unknown account module '{other}'"
-            ))),
-        }
-    }
-
     /// keyring service-name convention: `everyday/<module>/<account>`.
     /// See [F002](../../docs/adr/F002-multi-account-keyring.md).
     pub fn keyring_service(module: &str, account: &str) -> String {
@@ -655,8 +601,8 @@ impl NamedAccount for NoteAccount {
     }
 }
 /// Covers both `TodoAccount` and `BookmarkAccount` (type aliases of
-/// `NotionLocalAccount`).
-impl NamedAccount for NotionLocalAccount {
+/// `LocalAccount`).
+impl NamedAccount for LocalAccount {
     fn name(&self) -> &str {
         &self.name
     }
@@ -687,69 +633,36 @@ fn require_nonempty(module: &str, value: &str, field: &str) -> Result<()> {
     Ok(())
 }
 
-/// Notion page/database IDs are 32 hex chars, optionally hyphenated
-/// (8-4-4-4-12 form). `local`/`sqlite` providers never require them.
-fn valid_notion_id(id: &str) -> bool {
-    let compact = id.replace('-', "");
-    compact.len() == 32 && compact.chars().all(|c| c.is_ascii_hexdigit())
-}
-
 /// Provider whitelist shared by note / todo / bookmark accounts.
+///
+/// `notion` was removed in v0.13.0 ([R019](../../docs/adr/R019-remove-notion-provider.md));
+/// an existing `provider = "notion"` fails with a migration hint rather than silently
+/// falling back to local (which would look like the user's data vanished while the CLI
+/// reads/writes an empty local DB).
 fn validate_provider_whitelist(module: &str, account: &str, provider: &str) -> Result<()> {
-    if !matches!(provider, "local" | "sqlite" | "notion") {
+    if matches!(provider, "local" | "sqlite") {
+        return Ok(());
+    }
+    if provider == "notion" {
         return Err(AgentError::Config(format!(
-            "{module} account '{account}': unknown provider '{provider}' (expected local|sqlite|notion)"
+            "{module} account '{account}': provider 'notion' is no longer supported (removed in v0.13.0). \
+             Migrate the account to the local provider: remove the provider field or set `provider = \"local\"`; \
+             your Notion data is untouched on notion.so."
         )));
     }
-    Ok(())
-}
-
-/// Notion-ID format check for a list of `(field, value)` pairs; only applied
-/// when the account's provider is notion.
-fn validate_notion_ids(module: &str, account: &str, ids: &[(&str, &Option<String>)]) -> Result<()> {
-    for (field, id) in ids {
-        if let Some(id) = id
-            && !valid_notion_id(id)
-        {
-            return Err(AgentError::Config(format!(
-                "{module} account '{account}': {field} '{}' is not a valid Notion ID (expected 32 hex chars)",
-                id
-            )));
-        }
-    }
-    Ok(())
+    Err(AgentError::Config(format!(
+        "{module} account '{account}': unknown provider '{provider}' (expected local|sqlite)"
+    )))
 }
 
 fn validate_note_account(a: &NoteAccount) -> Result<()> {
     require_nonempty("note", &a.name, "name")?;
-    validate_provider_whitelist("note", &a.name, &a.provider)?;
-    if a.provider == "notion" {
-        validate_notion_ids(
-            "note",
-            &a.name,
-            &[
-                ("default_database_id", &a.default_database_id),
-                ("default_page_id", &a.default_page_id),
-            ],
-        )?;
-    }
-    Ok(())
+    validate_provider_whitelist("note", &a.name, &a.provider)
 }
 
-fn validate_notion_local_account(module: &str, a: &NotionLocalAccount) -> Result<()> {
+fn validate_local_account(module: &str, a: &LocalAccount) -> Result<()> {
     require_nonempty(module, &a.name, "name")?;
-    validate_provider_whitelist(module, &a.name, &a.provider)?;
-    if a.provider == "notion" {
-        validate_notion_ids(
-            module,
-            &a.name,
-            &[
-                ("parent_page_id", &a.parent_page_id),
-                ("default_database_id", &a.default_database_id),
-            ],
-        )?;
-    }
-    Ok(())
+    validate_provider_whitelist(module, &a.name, &a.provider)
 }
 
 #[cfg(test)]
@@ -967,7 +880,9 @@ name = "x"
     }
 
     #[test]
-    fn validate_notion_id_malformed() {
+    fn validate_notion_provider_rejected() {
+        // The notion provider was removed (v0.13.0); `provider = "notion"` must fail
+        // with a migration hint.
         let cfg: Config = toml::from_str(
             r#"
 [[note.accounts]]
@@ -978,29 +893,15 @@ default_database_id = "not-a-notion-id"
         )
         .unwrap();
         let err = cfg.validate().unwrap_err();
+        let msg = err.message();
         assert!(
-            err.message().contains("default_database_id"),
-            "{}",
-            err.message()
+            msg.contains("notion") && msg.contains("no longer supported"),
+            "{msg}"
         );
     }
 
     #[test]
-    fn validate_notion_id_hyphenated_ok() {
-        let cfg: Config = toml::from_str(
-            r#"
-[[note.accounts]]
-name = "x"
-provider = "notion"
-default_database_id = "01234567-89ab-cdef-0123-456789abcdef"
-"#,
-        )
-        .unwrap();
-        cfg.validate().unwrap();
-    }
-
-    #[test]
-    fn validate_todo_notion_id_malformed() {
+    fn validate_todo_notion_provider_rejected() {
         let cfg: Config = toml::from_str(
             r#"
 [[todo.accounts]]
@@ -1125,22 +1026,9 @@ name = "b1"
     }
 
     #[test]
-    fn resolve_account_name_returns_string() {
-        let cfg: Config = toml::from_str(SAMPLE).unwrap();
-        assert_eq!(cfg.resolve_account_name("mail", None).unwrap(), "work");
-        // "cal" alias resolves the calendar module.
-        assert_eq!(cfg.resolve_account_name("cal", None).unwrap(), "personal");
-    }
-
-    #[test]
-    fn resolve_account_name_unknown_module_errors() {
-        let cfg = Config::default();
-        let err = cfg.resolve_account_name("bogus", None).unwrap_err();
-        assert_eq!(err.type_name(), "InvalidArgument");
-    }
-
-    #[test]
     fn parses_note_account_config() {
+        // Local-only account; legacy notion fields are ignored by serde
+        // (no deny_unknown_fields), so old configs still parse.
         let cfg: Config = toml::from_str(
             r#"
 [default_account]
@@ -1148,18 +1036,13 @@ note = "personal"
 
 [[note.accounts]]
 name = "personal"
-provider = "notion"
-default_database_id = "db_abc"
+provider = "local"
 default_page_id = "page_xyz"
 "#,
         )
         .unwrap();
         assert_eq!(cfg.note.accounts.len(), 1);
-        assert_eq!(cfg.note.accounts[0].provider, "notion");
-        assert_eq!(
-            cfg.note.accounts[0].default_database_id.as_deref(),
-            Some("db_abc")
-        );
+        assert_eq!(cfg.note.accounts[0].provider, "local");
         assert_eq!(
             cfg.note.accounts[0].default_page_id.as_deref(),
             Some("page_xyz")
@@ -1179,9 +1062,8 @@ name = "x"
     }
 
     #[test]
-    fn note_provider_explicit_notion_preserved() {
-        // Backward-compat: an explicit `provider = "notion"` must be
-        // preserved verbatim.
+    fn note_provider_explicit_notion_fails_validation() {
+        // An explicit `provider = "notion"` now fails load-time validation.
         let cfg: Config = toml::from_str(
             r#"
 [[note.accounts]]
@@ -1190,7 +1072,7 @@ provider = "notion"
 "#,
         )
         .unwrap();
-        assert_eq!(cfg.note.accounts[0].provider, "notion");
+        assert!(cfg.validate().is_err());
     }
 
     #[test]
@@ -1202,11 +1084,13 @@ note = "personal"
 
 [[note.accounts]]
 name = "personal"
-provider = "notion"
 "#,
         )
         .unwrap();
-        let acc = cfg.note_account(None).unwrap();
+        let acc = cfg
+            .note
+            .resolve_account(None, cfg.default_account.note.as_deref())
+            .unwrap();
         assert_eq!(acc.name, "personal");
     }
 
@@ -1219,21 +1103,16 @@ todo = "personal"
 
 [[todo.accounts]]
 name = "personal"
-provider = "notion"
-parent_page_id = "page_xyz"
-default_database_id = "db_abc"
+provider = "local"
+db_path = "C:/data/todo.db"
 "#,
         )
         .unwrap();
         assert_eq!(cfg.todo.accounts.len(), 1);
-        assert_eq!(cfg.todo.accounts[0].provider, "notion");
+        assert_eq!(cfg.todo.accounts[0].provider, "local");
         assert_eq!(
-            cfg.todo.accounts[0].parent_page_id.as_deref(),
-            Some("page_xyz")
-        );
-        assert_eq!(
-            cfg.todo.accounts[0].default_database_id.as_deref(),
-            Some("db_abc")
+            cfg.todo.accounts[0].db_path.as_deref(),
+            Some("C:/data/todo.db")
         );
     }
 
@@ -1250,9 +1129,7 @@ name = "x"
     }
 
     #[test]
-    fn todo_provider_explicit_notion_preserved() {
-        // Backward-compat: an explicit `provider = "notion"` must be
-        // preserved verbatim.
+    fn todo_provider_explicit_notion_fails_validation() {
         let cfg: Config = toml::from_str(
             r#"
 [[todo.accounts]]
@@ -1261,7 +1138,7 @@ provider = "notion"
 "#,
         )
         .unwrap();
-        assert_eq!(cfg.todo.accounts[0].provider, "notion");
+        assert!(cfg.validate().is_err());
     }
 
     #[test]
@@ -1273,11 +1150,13 @@ todo = "personal"
 
 [[todo.accounts]]
 name = "personal"
-provider = "notion"
 "#,
         )
         .unwrap();
-        let acc = cfg.todo_account(None).unwrap();
+        let acc = cfg
+            .todo
+            .resolve_account(None, cfg.default_account.todo.as_deref())
+            .unwrap();
         assert_eq!(acc.name, "personal");
     }
 
@@ -1290,22 +1169,12 @@ bookmark = "personal"
 
 [[bookmark.accounts]]
 name = "personal"
-provider = "notion"
-parent_page_id = "page_xyz"
-default_database_id = "db_abc"
+provider = "local"
 "#,
         )
         .unwrap();
         assert_eq!(cfg.bookmark.accounts.len(), 1);
-        assert_eq!(cfg.bookmark.accounts[0].provider, "notion");
-        assert_eq!(
-            cfg.bookmark.accounts[0].parent_page_id.as_deref(),
-            Some("page_xyz")
-        );
-        assert_eq!(
-            cfg.bookmark.accounts[0].default_database_id.as_deref(),
-            Some("db_abc")
-        );
+        assert_eq!(cfg.bookmark.accounts[0].provider, "local");
     }
 
     #[test]

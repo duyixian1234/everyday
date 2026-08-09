@@ -1,9 +1,9 @@
 //! Action-layer Backend trait + Dependency Inversion for the `note` module ([R016](../../../docs/adr/R016-action-backend-di.md)).
 //!
 //! `NoteBackend` decouples the high-level action dispatch in `note/mod.rs` from the
-//! low-level provider protocol. The module never names `NotionClient`, never branches on
-//! `account.provider`, and never touches the keyring — all of that lives in
-//! [`for_account`], the single construction seam.
+//! low-level provider protocol. The module never branches on `account.provider`,
+//! and never touches the keyring — all of that lives in [`for_account`], the
+//! single construction seam.
 //!
 //! Methods return **typed domain structs** (never `Output`); `note/mod.rs` owns rendering
 //! to text / `--json` ([R018](../../../docs/adr/R018-backend-domain-mocks.md)).
@@ -14,23 +14,17 @@ use serde_json::{Map, Value};
 
 use crate::config::NoteAccount;
 use crate::error::Result;
-use crate::modules::auth;
-use crate::modules::local::is_local_provider;
 use crate::modules::note::local::LocalNoteBackend;
-use crate::modules::note::notion::NotionNoteBackend;
-use crate::notion_client::NotionClient;
-use crate::shared::keyring_user::KEYRING_USER;
 
 // ============ Domain types (R018) ============
 
-/// A single search / list row. `kind` is the Notion object type (`page` / `database`);
-/// `properties` is `None` for `search` and `Some(..)` for `list`.
+/// A single search / list row. Local-only since v0.13.0
+/// ([R019](../../../docs/adr/R019-remove-notion-provider.md)) — the Notion
+/// object-type `kind` discriminator was removed.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteSummary {
     pub id: String,
-    pub kind: String,
     pub title: String,
-    pub url: Option<String>,
     pub updated: String,
 }
 
@@ -39,20 +33,16 @@ pub struct NoteSummary {
 pub struct NoteListEntry {
     pub id: String,
     pub title: String,
-    pub url: Option<String>,
     pub updated: String,
     pub properties: Map<String, Value>,
 }
 
-/// Result of `create`: `database_id` is `Some` for the Notion provider, `None` for local.
+/// Result of `create` (local note).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteCreated {
     pub id: String,
     pub title: String,
-    pub url: Option<String>,
-    pub database_id: Option<String>,
     pub prop_count: usize,
-    pub resource: &'static str,
 }
 
 /// Result of `read`: body aggregated into Markdown plus the simplified property map.
@@ -60,29 +50,22 @@ pub struct NoteCreated {
 pub struct NoteRead {
     pub id: String,
     pub title: String,
-    pub url: Option<String>,
     pub properties: Map<String, Value>,
     pub content: String,
 }
 
-/// Result of `append`: `unit` / `resource` discriminate block(s)/page (Notion) from
-/// line(s)/note (local) so the module can render an identical message shape.
+/// Result of `append` (local note: appended line count).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteAppended {
     pub id: String,
-    pub url: Option<String>,
     pub appended: usize,
-    pub resource: &'static str,
-    pub unit: &'static str,
 }
 
 /// Result of `update`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NoteUpdated {
     pub id: String,
-    pub url: Option<String>,
     pub updated_count: usize,
-    pub resource: &'static str,
 }
 
 // ============ Trait + factory (R016) ============
@@ -90,41 +73,26 @@ pub struct NoteUpdated {
 #[async_trait]
 pub trait NoteBackend: Send + Sync {
     async fn search(&self, query: &str, limit: usize) -> Result<Vec<NoteSummary>>;
-    async fn list(&self, db_id: Option<&str>, limit: usize) -> Result<Vec<NoteListEntry>>;
-    async fn create(
-        &self,
-        title: &str,
-        db_id: Option<&str>,
-        props: &[(String, String)],
-    ) -> Result<NoteCreated>;
+    async fn list(&self, limit: usize) -> Result<Vec<NoteListEntry>>;
+    async fn create(&self, title: &str, props: &[(String, String)]) -> Result<NoteCreated>;
     async fn read(&self, page_id: &str) -> Result<NoteRead>;
     async fn append(&self, page_id: &str, text: &str) -> Result<NoteAppended>;
     async fn update(&self, page_id: &str, props: &[(String, String)]) -> Result<NoteUpdated>;
 }
 
-/// Factory: centralizes provider selection + token fetch ([R016](../../../docs/adr/R016-action-backend-di.md)).
+/// Factory: single construction seam ([R016](../../../docs/adr/R016-action-backend-di.md)).
 ///
-/// The module's action code calls only this; it never names `NotionClient`, never
-/// branches on provider, never touches the keyring. The `NotionClient` is constructed
-/// exactly once here (not per action). Returns a `Box<dyn NoteBackend>` so the caller
-/// stays provider-agnostic.
-///
-/// Takes only the resolved `NoteAccount` (P2b, [F012](../../../docs/adr/F012-architecture-deepening-phase.md)):
-/// the module holds its config subset, not the full `Config`; Notion tokens are stored
-/// under the fixed `KEYRING_USER` keyring user.
+/// Since v0.13.0 ([R019](../../../docs/adr/R019-remove-notion-provider.md)) the
+/// module is local-only, so `for_account` has exactly one concrete backend and no
+/// keyring / provider branching. The signature is kept so the action layer stays
+/// backend-agnostic (and testable via `MockNoteBackend`).
 pub fn for_account(account: &NoteAccount) -> Result<Box<dyn NoteBackend>> {
-    if is_local_provider(&account.provider) {
-        Ok(Box::new(LocalNoteBackend::new(account.clone())))
-    } else {
-        let token = auth::get_credential_with_user("note", &account.name, KEYRING_USER)?;
-        let client = NotionClient::new(token)?;
-        Ok(Box::new(NotionNoteBackend::new(client)))
-    }
+    Ok(Box::new(LocalNoteBackend::new(account.clone())))
 }
 
 /// Test-only in-memory backend. Lives behind `#[cfg(test)]` so it never ships in the
 /// binary. It holds pre-seeded domain data and returns it verbatim, letting the action
-/// layer be exercised without a `NotionClient` or SQLite — the DI acceptance guard for
+/// layer be exercised without SQLite — the DI acceptance guard for
 /// [R016](../../../docs/adr/R016-action-backend-di.md) / [R018](../../../docs/adr/R018-backend-domain-mocks.md).
 #[cfg(test)]
 pub mod testkit {
@@ -150,23 +118,15 @@ pub mod testkit {
             Ok(self.summaries.clone())
         }
 
-        async fn list(&self, _db_id: Option<&str>, _limit: usize) -> Result<Vec<NoteListEntry>> {
+        async fn list(&self, _limit: usize) -> Result<Vec<NoteListEntry>> {
             Ok(self.entries.clone())
         }
 
-        async fn create(
-            &self,
-            title: &str,
-            _db_id: Option<&str>,
-            props: &[(String, String)],
-        ) -> Result<NoteCreated> {
+        async fn create(&self, title: &str, props: &[(String, String)]) -> Result<NoteCreated> {
             Ok(NoteCreated {
                 id: "mock-page".to_string(),
                 title: title.to_string(),
-                url: None,
-                database_id: None,
                 prop_count: props.len(),
-                resource: "note",
             })
         }
 
@@ -185,19 +145,14 @@ pub mod testkit {
                 .max(1);
             Ok(NoteAppended {
                 id: page_id.to_string(),
-                url: None,
                 appended,
-                resource: "note",
-                unit: "line",
             })
         }
 
         async fn update(&self, page_id: &str, props: &[(String, String)]) -> Result<NoteUpdated> {
             Ok(NoteUpdated {
                 id: page_id.to_string(),
-                url: None,
                 updated_count: props.len(),
-                resource: "note",
             })
         }
     }

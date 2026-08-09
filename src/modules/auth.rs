@@ -13,6 +13,8 @@
 //!
 //! The keyring service string `everyday/<module>/<account>` is frozen (F002);
 //! only the keyring *user* selection (account username vs `"token"`) is centralized here.
+//! The Notion `Token` strategy was removed in v0.13.0
+//! ([R019](../../docs/adr/R019-remove-notion-provider.md)).
 
 use std::sync::Arc;
 
@@ -25,8 +27,6 @@ use crate::error::{AgentError, Result};
 use crate::modules::calendar;
 use crate::modules::email;
 use crate::modules::{Executor, ModuleArgSpec, Output};
-use crate::shared::keyring_user::KEYRING_USER;
-use crate::shared::notion_client::NotionClient;
 use crate::util::args::parse_simple_args;
 
 /// Credential strategy for a (module, account) pair.
@@ -37,40 +37,21 @@ use crate::util::args::parse_simple_args;
 pub enum AuthStrategy {
     /// username/password (mail, cal). keyring user = account username.
     Password,
-    /// Notion Integration Token (note/todo/bookmark with provider = notion).
-    /// keyring user = `KEYRING_USER` ("token").
-    Token,
     /// No credential (note/todo/bookmark local/sqlite provider, rss).
     None,
 }
 
 /// Resolve the credential strategy for a (module, account) from `Config` only.
-pub fn resolve_strategy(config: &Config, module: &str, account: &str) -> Result<AuthStrategy> {
+///
+/// `config` is unused since v0.13.0 (no provider-based strategy remains); the
+/// parameter is kept for signature stability.
+pub fn resolve_strategy(_config: &Config, module: &str, _account: &str) -> Result<AuthStrategy> {
     match module {
         "mail" | "cal" => Ok(AuthStrategy::Password),
-        "note" | "todo" | "bookmark" => {
-            let provider = provider_of(config, module, account)?;
-            if crate::modules::local::is_local_provider(&provider) {
-                Ok(AuthStrategy::None)
-            } else {
-                Ok(AuthStrategy::Token)
-            }
-        }
+        "note" | "todo" | "bookmark" => Ok(AuthStrategy::None),
         "rss" => Ok(AuthStrategy::None),
         other => Err(AgentError::InvalidArgument(format!(
             "unknown module for auth: '{other}'"
-        ))),
-    }
-}
-
-/// Resolve the configured provider string for a Notion-family account.
-fn provider_of(config: &Config, module: &str, account: &str) -> Result<String> {
-    match module {
-        "note" => Ok(config.note_account(Some(account))?.provider.clone()),
-        "todo" => Ok(config.todo_account(Some(account))?.provider.clone()),
-        "bookmark" => Ok(config.bookmark_account(Some(account))?.provider.clone()),
-        _ => Err(AgentError::InvalidArgument(format!(
-            "module '{module}' has no notion provider"
         ))),
     }
 }
@@ -96,7 +77,6 @@ fn keyring_target(
     let service = Config::keyring_service(module, account);
     let user = match strategy {
         AuthStrategy::Password => username_for(config, module, account)?,
-        AuthStrategy::Token => KEYRING_USER.to_string(),
         AuthStrategy::None => {
             return Err(AgentError::Auth(format!(
                 "module '{module}' account '{account}' requires no credential (local/sqlite or rss)"
@@ -134,7 +114,7 @@ pub fn get_credential(config: &Config, module: &str, account: &str) -> Result<St
 ///
 /// Business modules that receive only their config **subset** (not the full
 /// `Config`) call this: they already know the keyring user from the resolved
-/// account (`username` for mail/cal, `KEYRING_USER` for Notion token modules).
+/// account (`username` for mail/cal).
 /// The keyring service name is a pure function of `(module, account)`.
 pub fn get_credential_with_user(module: &str, account: &str, user: &str) -> Result<String> {
     let service = Config::keyring_service(module, account);
@@ -313,7 +293,7 @@ impl ConfigAuthBackend {
     /// Read the stored credential and authenticate against the external service.
     ///
     /// Reuses the modules' existing connection primitives (R013): `email::imap_connect`,
-    /// `calendar::cal_verify`, `NotionClient`. The `None` strategy short-circuits.
+    /// `calendar::cal_verify`. The `None` strategy short-circuits.
     /// Internal helper — distinct from the trait's `verify` (which reports
     /// `VerifyOutcome`), so it is named `verify_credential`.
     async fn verify_credential(&self, module: &str, account: &str) -> Result<()> {
@@ -326,10 +306,6 @@ impl ConfigAuthBackend {
             "cal" => {
                 let acc = self.config.calendar_account(Some(account))?;
                 calendar::cal_verify(acc, &secret).await?;
-            }
-            "note" | "todo" | "bookmark" => {
-                let client = NotionClient::new(secret)?;
-                client.get::<Value>("/users/me").await?;
             }
             other => {
                 return Err(AgentError::InvalidArgument(format!(
@@ -370,16 +346,6 @@ impl AuthBackend for ConfigAuthBackend {
                 } else {
                     let username = username_for(&self.config, module, account)?;
                     prompt_secret(&format!("Password for {username}: ")).await?
-                }
-            }
-            AuthStrategy::Token => {
-                if let Some(t) = req.secret {
-                    t.to_string()
-                } else {
-                    prompt_secret(&format!(
-                        "Paste Notion Integration Token (ntn_...) for {module} account '{account}': "
-                    ))
-                    .await?
                 }
             }
         };
@@ -479,10 +445,7 @@ async fn dispatch(backend: &dyn AuthBackend, action: &str, args: &[String]) -> R
                 backend.resolve_account(&module, flags.get("account").map(String::as_str))?;
             match action {
                 "login" => {
-                    let secret = flags
-                        .get("password")
-                        .or_else(|| flags.get("token"))
-                        .map(String::as_str);
+                    let secret = flags.get("password").map(String::as_str);
                     let verify = flags.get("verify").map(|v| v == "true").unwrap_or(false);
                     let receipt = backend
                         .login(&AuthLoginRequest {
@@ -554,11 +517,10 @@ impl Executor for AuthModule {
             cli_action!(
                 "login",
                 "保存凭据到系统 keyring（默认只存；--verify 显式验证）",
-                "everyday auth login --module <mod> [--account NAME] [--password PWD | --token TOK] [--verify]",
+                "everyday auth login --module <mod> [--account NAME] [--password PWD] [--verify]",
                 &[
-                    flag!("module", "目标模块（mail/cal/note/todo/bookmark）"),
+                    flag!("module", "目标模块（mail/cal）"),
                     flag!("password", "密码（mail/cal，非交互）"),
-                    flag!("token", "Notion 集成令牌（note/todo/bookmark）"),
                     flag!("verify", "存后显式验证凭据", Bool),
                 ]
             ),
@@ -623,25 +585,13 @@ username = "me@example.com"
 name = "local1"
 provider = "local"
 
-[[note.accounts]]
-name = "remote1"
-provider = "notion"
-
 [[todo.accounts]]
 name = "local1"
 provider = "local"
 
-[[todo.accounts]]
-name = "remote1"
-provider = "notion"
-
 [[bookmark.accounts]]
 name = "local1"
 provider = "local"
-
-[[bookmark.accounts]]
-name = "remote1"
-provider = "notion"
 
 [[rss.feeds]]
 name = "hn"
@@ -660,23 +610,6 @@ url = "https://hnrss.org/frontpage"
         assert_eq!(
             resolve_strategy(&c, "cal", "m1").unwrap(),
             AuthStrategy::Password
-        );
-    }
-
-    #[test]
-    fn resolve_strategy_notion_token() {
-        let c = test_config();
-        assert_eq!(
-            resolve_strategy(&c, "note", "remote1").unwrap(),
-            AuthStrategy::Token
-        );
-        assert_eq!(
-            resolve_strategy(&c, "todo", "remote1").unwrap(),
-            AuthStrategy::Token
-        );
-        assert_eq!(
-            resolve_strategy(&c, "bookmark", "remote1").unwrap(),
-            AuthStrategy::Token
         );
     }
 
@@ -757,8 +690,8 @@ url = "https://hnrss.org/frontpage"
         assert_eq!(backend.resolve_account("note", None).unwrap(), "local1");
         // Explicit override wins.
         assert_eq!(
-            backend.resolve_account("note", Some("remote1")).unwrap(),
-            "remote1"
+            backend.resolve_account("todo", Some("local1")).unwrap(),
+            "local1"
         );
         // No default + no override → error.
         assert!(backend.resolve_account("bookmark", None).is_err());

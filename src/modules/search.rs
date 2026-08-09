@@ -18,7 +18,6 @@ use serde_json::{Value, json};
 use crate::config::Config;
 use crate::error::{AgentError, Result};
 use crate::modules::bookmark::local as bookmark_local;
-use crate::modules::local::is_local_provider;
 use crate::modules::memory;
 use crate::modules::note::local as note_local;
 use crate::modules::parse_simple_args;
@@ -78,30 +77,23 @@ pub struct ConfigSearchBackend {
 impl ConfigSearchBackend {
     /// Build the [`SearchRegistry`] for the current config.
     ///
-    /// Local provider accounts are registered one provider per account;
-    /// Notion-backed accounts are skipped in v1 (live-fetch-on-search was
-    /// rejected by [S005](../../docs/adr/S005-time-semantics-scope.md)).
+    /// One provider per local account of note/todo/bookmark (local-only since
+    /// v0.13.0, [R019](../../docs/adr/R019-remove-notion-provider.md)).
     /// RSS has no account concept, so a single `RssSearchProvider` is added
     /// when at least one feed is configured.
     pub fn build_registry(&self) -> SearchRegistry {
         let mut reg = SearchRegistry::new();
 
         for acc in &self.config.note.accounts {
-            if is_local_provider(&acc.provider) {
-                reg.register(Arc::new(note_local::NoteSearchProvider::new(acc.clone())));
-            }
+            reg.register(Arc::new(note_local::NoteSearchProvider::new(acc.clone())));
         }
         for acc in &self.config.todo.accounts {
-            if is_local_provider(&acc.provider) {
-                reg.register(Arc::new(todo_local::TodoSearchProvider::new(acc.clone())));
-            }
+            reg.register(Arc::new(todo_local::TodoSearchProvider::new(acc.clone())));
         }
         for acc in &self.config.bookmark.accounts {
-            if is_local_provider(&acc.provider) {
-                reg.register(Arc::new(bookmark_local::BookmarkSearchProvider::new(
-                    acc.clone(),
-                )));
-            }
+            reg.register(Arc::new(bookmark_local::BookmarkSearchProvider::new(
+                acc.clone(),
+            )));
         }
         for acc in &self.config.calendar.accounts {
             reg.register(Arc::new(calendar::CalSearchProvider::new(
@@ -347,15 +339,12 @@ mod tests {
         cfg.note.accounts.push(crate::config::NoteAccount {
             name: "personal".into(),
             provider: "local".into(),
-            default_database_id: None,
             default_page_id: None,
             db_path: None,
         });
         cfg.todo.accounts.push(crate::config::TodoAccount {
             name: "work".into(),
             provider: "local".into(),
-            parent_page_id: None,
-            default_database_id: None,
             db_path: None,
         });
         let backend = ConfigSearchBackend {
@@ -365,25 +354,6 @@ mod tests {
         let mods = reg.modules();
         assert!(mods.contains(&"note"));
         assert!(mods.contains(&"todo"));
-    }
-
-    /// Notion-backed accounts are intentionally skipped in v1.
-    #[test]
-    fn build_registry_skips_notion_accounts() {
-        let mut cfg = Config::default();
-        cfg.note.accounts.push(crate::config::NoteAccount {
-            name: "personal".into(),
-            provider: "notion".into(),
-            default_database_id: None,
-            default_page_id: None,
-            db_path: None,
-        });
-        let backend = ConfigSearchBackend {
-            config: Arc::new(cfg),
-        };
-        let reg = backend.build_registry();
-        // No note provider for notion accounts in v1.
-        assert!(!reg.modules().contains(&"note"));
     }
 
     /// RSS provider is registered when at least one feed is configured.

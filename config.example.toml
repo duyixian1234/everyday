@@ -62,20 +62,9 @@ name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/notes.db"   # 可选，覆盖默认路径
 
-# 如需改用 Notion：设 provider = "notion"，并通过
-# `everyday note login --account NAME` 把 Token（形如 ntn_...）存入系统 keyring，
-# service 名约定：everyday/note/<account>。
-# default_database_id / default_page_id 为常用目标预设，减少重复输入长字符串。
-# [[note.accounts]]
-# name = "notion"
-# provider = "notion"
-# default_database_id = "db_abc123..."   # 例如：阅读清单、灵感库
-# default_page_id = "page_xyz789..."     # 例如：每日速记本
-
 # ---- 待办账户（默认本地 SQLite；可多个）----
 # provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，任务存本地 .db 文件。
 # db_path 可选，缺省为 ~/.config/everyday/todo-<account>.db。用法：
-#   everyday todo init-db          # 建表（首次可选，各命令会自动建表）
 #   everyday todo add --title "任务" --due 2026-07-15 --priority P0
 #   everyday todo list
 #   everyday todo complete <id>
@@ -84,19 +73,9 @@ name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/todos.db"   # 可选，覆盖默认路径
 
-# 如需改用 Notion：设 provider = "notion"，通过
-# `everyday todo login --account NAME` 存入 keyring（service: everyday/todo/<account>），
-# parent_page_id 为创建任务数据库时的父级页面（init-db 需要），
-# default_database_id 由 `everyday todo init-db` 成功后自动回填。
-# [[todo.accounts]]
-# name = "notion"
-# provider = "notion"
-# parent_page_id = "page_parent_..."     # 例如：用于承载任务数据库的 Notion 页面
-
 # ---- 书签账户（默认本地 SQLite；可多个）----
 # provider 缺省为 "local"（别名 "sqlite"）：无需凭证/联网，数据存本地 .db 文件。
 # db_path 可选，缺省为 ~/.config/everyday/bookmark-<account>.db。用法：
-#   everyday bookmark init-db      # 建表（首次可选，各命令会自动建表）
 #   everyday bookmark add --url "https://..." --title "标题" --tags "rust,cli"
 #   everyday bookmark list --tag rust
 [[bookmark.accounts]]
@@ -104,11 +83,3 @@ name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/bookmarks.db"   # 可选，覆盖默认路径
 
-# 如需改用 Notion：设 provider = "notion"，通过
-# `everyday bookmark login --account NAME` 存入 keyring（service: everyday/bookmark/<account>），
-# parent_page_id 为创建书签数据库时的父级页面（init-db 需要），
-# default_database_id 由 `everyday bookmark init-db` 成功后自动回填。
-# [[bookmark.accounts]]
-# name = "notion"
-# provider = "notion"
-# parent_page_id = "page_parent_..."     # 例如：用于承载书签数据库的 Notion 页面

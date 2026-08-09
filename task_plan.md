@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.12.0 已发布；F012 三阶段（Phase 1–3）+ v0.12 P4 显式参数化 RequestContext（[F013](./docs/adr/F013-request-context-explicit-parameter.md)，破坏性）落地。
+**当前状态：** v0.13.0 已发布；Notion provider 已移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）。本文档历史阶段的 Notion 描述仅作决策记录，不代表当前能力。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。

@@ -9,7 +9,7 @@
 - Unit tests: `#[cfg(test)] mod tests` at the **bottom** of the source file they
   test. Keeps the test next to its code without exporting anything.
 - Integration tests (cross-module or binary entry-point): the `tests/` directory.
-- Skip-net tests (mock IMAP, mock CalDAV, mock Notion): gated behind
+- Skip-net tests (mock IMAP, mock CalDAV): gated behind
   `#[ignore]` or behind a `#[cfg(feature = "integration-tests")]` flag. CI does
   not run them by default.
 
@@ -29,7 +29,7 @@ The following have no exceptions — every module must cover them:
 
 ## Mocking policy
 
-- Network calls (IMAP, SMTP, CalDAV, Notion, RSS fetcher): wrapped behind a trait
+- Network calls (IMAP, SMTP, CalDAV, RSS fetcher): wrapped behind a trait
   so tests inject a fake. Fakes live next to the trait definition.
 - Time-dependent code: take a `Clock: Fn() -> DateTime<Utc>` (or use
   `tokio::time::pause()`).

@@ -8,7 +8,8 @@
 //! Design basis: `docs/adr/0011` (envelope storage) + `0012` (UID watermark +
 //! UIDVALIDITY) + `0013` (staleness).
 //!
-//! Fully independent from `timeline.db` / `ops-log.db`.
+//! Fully independent from `timeline.db` (the `ops-log.db` was removed with the
+//! Notion provider, v0.13.0 — [R019](../../docs/adr/R019-remove-notion-provider.md)).
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;

@@ -73,18 +73,18 @@ everyday cal calendars --json           # list calendar collections (get hrefs)
 everyday cal delete --id "/cal/ev.ics"  # delete by href from `cal list`
 ```
 
-## Notes (Notion)
+## Notes (local SQLite)
 
-**Search / list pages (JSON):**
+**Search / list notes (JSON):**
 
 ```bash
 everyday note search --query "工作" --json
-# → [{"id":"...","type":"page","title":"2026年工作计划","last_edited":"...","url":"..."}]
-everyday note list --json                       # pages in default_database_id
-everyday note list --db "db_abc123" --limit 20  # pages in a specific database
+# → [{"id":"...","title":"2026年工作计划","last_edited":"..."}]
+everyday note list --json                       # list notes
+everyday note list --limit 20                   # limit rows
 ```
 
-**Create a record in a Notion database (with properties):**
+**Create a note (with properties):**
 
 ```bash
 everyday note create \
@@ -92,10 +92,10 @@ everyday note create \
   --prop "类型:文章" --prop "状态:未读" --prop "URL:https://..."
 ```
 
-**Read a page as Markdown** (JSON returns aggregated `{id,title,url,properties,content}`):
+**Read a note as Markdown** (JSON returns aggregated `{id,title,properties,content}`):
 
 ```bash
-everyday note read <page_id> --json
+everyday note read <note_id> --json
 ```
 
 **Append a flash note** (text arg, or pipe via stdin):
@@ -103,34 +103,33 @@ everyday note read <page_id> --json
 ```bash
 everyday note append --text "### AI 自动捕获
 发现竞品链接：https://..."
-echo "批量捕获内容" | everyday note append <page_id>
+echo "批量捕获内容" | everyday note append <note_id>
 ```
 
-**Update page properties:**
+**Update note properties:**
 
 ```bash
-everyday note update <page_id> --prop "状态:已读"
+everyday note update <note_id> --prop "状态:已读"
 ```
 
-**First-time Notion setup:** store the `ntn_...` integration token via `everyday auth login --module note` (service `everyday/note/<account>`). The target page/database must be shared with the integration in Notion. `--db` / page id default to `default_database_id` / `default_page_id` from config when omitted.
+Notes are stored in a local SQLite database per account (`~/.config/everyday/note-<account>.db`); no credentials or setup needed.
 
-## Todos (Notion task database)
+## Todos (local SQLite)
 
-Built on the shared `notion-client`. **First-time setup:** store the token via `everyday auth login --module todo` (service `everyday/todo/<account>`), add `[[todo.accounts]]` with `parent_page_id`, run `everyday todo init-db` (the integration must be granted access to the parent page). `--db` defaults to the `default_database_id` written by `init-db`.
+Todos are stored in a local SQLite database per account (`~/.config/everyday/todo-<account>.db`); no credentials or setup needed.
 
 ```bash
-everyday todo init-db --parent "<page_id>"     # create the task database; writes database_id back to config
 everyday todo list --json                      # incomplete todos, sorted by due
 everyday todo list --all --json                # include Done
 everyday todo add --title "写周报" --due 2026-07-15 --priority P1
-everyday todo start <page_id>                  # → In Progress
-everyday todo complete <page_id>               # → Done
-everyday todo delete <page_id>                 # archive (Notion) / physical delete (local)
+everyday todo start <todo_id>                  # → In Progress
+everyday todo complete <todo_id>               # → Done
+everyday todo delete <todo_id>                 # physical delete (local)
 ```
 
 ## Timeline (unified activity log)
 
-Aggregates mail + cal + rss + Notion writes (`note` / `todo` / `bookmark`).
+Aggregates mail + cal + rss + local note / todo / bookmark activity.
 
 ```bash
 # All events in the last 24 hours, top sources

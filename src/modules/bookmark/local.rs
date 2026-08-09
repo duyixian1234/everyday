@@ -1,22 +1,16 @@
-//! Local SQLite provider for the `bookmark` module [B001](../../../docs/adr/B001-bookmark-dual-provider.md).
+//! Local SQLite provider for the `bookmark` module.
 //!
 //! `LocalBookmarkBackend` implements [`BookmarkBackend`] ([R016](../../../docs/adr/R016-action-backend-di.md)),
-//! a parity implementation of `init-db` / `add` / `list` alongside the Notion provider
-//! [B001](../../../docs/adr/B001-bookmark-dual-provider.md), with data persisted in the
-//! account's local SQLite file. The local provider needs no credentials (credentials are
-//! owned by the `auth` module), and `init-db` only creates the table and reports the path.
-//!
-//! Output shape (column names / JSON keys) is deliberately kept in sync with the Notion
-//! version in `notion.rs`: `id` / `title` / `url` / `tags`.
+//! with data persisted in the account's local SQLite file. The local provider needs no
+//! credentials; the tables are created lazily on first use. The Notion provider was
+//! removed in v0.13.0 ([R019](../../../docs/adr/R019-remove-notion-provider.md)).
 
 use async_trait::async_trait;
 use sqlx::Row;
 
 use crate::config::{BookmarkAccount, Config};
 use crate::error::Result;
-use crate::modules::bookmark::backend::{
-    BookmarkAdded, BookmarkBackend, BookmarkInitDb, BookmarkItem,
-};
+use crate::modules::bookmark::backend::{BookmarkAdded, BookmarkBackend, BookmarkItem};
 use crate::modules::local::{connect, resolve_db_path};
 use crate::search::{Hit, SearchQuery, Searchable};
 
@@ -61,32 +55,8 @@ impl LocalBookmarkBackend {
 
 #[async_trait]
 impl BookmarkBackend for LocalBookmarkBackend {
-    /// `init-db` (local): create the table and report the database path.
-    async fn init_db(&self, _parent: Option<&str>) -> Result<BookmarkInitDb> {
-        let path = resolve_db_path(
-            "bookmark",
-            &self.account.name,
-            self.account.db_path.as_deref(),
-        )?;
-        let _ = open(&self.account).await?;
-        let path_str = path.to_string_lossy().to_string();
-        Ok(BookmarkInitDb {
-            account: self.account.name.clone(),
-            provider: "local",
-            db_path: Some(path_str),
-            database_id: None,
-            url: None,
-        })
-    }
-
     /// `add --url U --title T [--tags a,b]` (local): collect a bookmark.
-    async fn add(
-        &self,
-        url: &str,
-        title: &str,
-        tags: &[String],
-        _db_id: Option<&str>,
-    ) -> Result<BookmarkAdded> {
+    async fn add(&self, url: &str, title: &str, tags: &[String]) -> Result<BookmarkAdded> {
         let pool = open(&self.account).await?;
         let id = gen_id();
         let created_at = chrono::Utc::now().to_rfc3339();
@@ -112,12 +82,11 @@ impl BookmarkBackend for LocalBookmarkBackend {
             url: url.to_string(),
             title: title.to_string(),
             tags: tags.to_vec(),
-            database_id: None,
         })
     }
 
     /// `list [--tag TAG]` (local): list bookmarks, optionally filtered by tag.
-    async fn list(&self, tag: Option<&str>, _db_id: Option<&str>) -> Result<Vec<BookmarkItem>> {
+    async fn list(&self, tag: Option<&str>) -> Result<Vec<BookmarkItem>> {
         let pool = open(&self.account).await?;
 
         // Base query: JOIN bookmark_tags when filtering by tag, otherwise take all.
@@ -222,7 +191,7 @@ const SEARCH_PER_MODULE_CAP: usize = 50;
 /// `ts` is `created_at` (UTC, RFC3339) — the module's primary time
 /// ([S005](../../../docs/adr/S005-time-semantics-scope.md)).
 ///
-/// Notion accounts are skipped in v1 (live-fetch-on-search rejected by
+/// Search covers the account's local SQLite store (live-fetch-on-search rejected by
 /// [S005](../../../docs/adr/S005-time-semantics-scope.md)).
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub async fn search_for_search(account: &BookmarkAccount, q: &SearchQuery) -> Result<Vec<Hit>> {
@@ -338,8 +307,6 @@ mod tests {
         BookmarkAccount {
             name: "test".into(),
             provider: "local".into(),
-            parent_page_id: None,
-            default_database_id: None,
             db_path: Some(file.to_string_lossy().to_string()),
         }
     }
@@ -367,7 +334,6 @@ mod tests {
                 "https://www.rust-lang.org",
                 "Rust 官网",
                 &["rust".into(), "lang".into()],
-                None,
             )
             .await
             .unwrap();
@@ -376,7 +342,6 @@ mod tests {
                 "https://doc.rust-lang.org",
                 "Rust 文档",
                 &["rust".into(), "doc".into()],
-                None,
             )
             .await
             .unwrap();
@@ -397,7 +362,7 @@ mod tests {
         assert_eq!(count_tag(&pool, "lang").await, 1);
 
         // list output shape is correct (Records in text mode, array in JSON mode).
-        let items = backend.list(Some("doc"), None).await.unwrap();
+        let items = backend.list(Some("doc")).await.unwrap();
         assert_eq!(items.len(), 1);
         assert_eq!(items[0].title, "Rust 文档");
 
@@ -424,7 +389,6 @@ mod tests {
                 "https://www.rust-lang.org",
                 "Rust 官网",
                 &["rust".into(), "lang".into()],
-                None,
             )
             .await
             .unwrap();
@@ -433,7 +397,6 @@ mod tests {
                 "https://example.org",
                 "Some page",
                 &["python".into(), "docs".into()],
-                None,
             )
             .await
             .unwrap();

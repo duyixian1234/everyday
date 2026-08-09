@@ -55,7 +55,8 @@
 - Prefer `rustls-tls` over `native-tls` to avoid OpenSSL chains.
 - Avoid `default-features = true` — list the features you need.
 - Record the reason for every new dep in your scratch buffer **only if** the
-  choice is a decision (e.g. "shared Notion client SDK vs module-local HTTP") —
+  choice is a decision (e.g. "shared HTTP client for the mail/cal modules vs
+  per-module clients") —
   then migrate it to an ADR per [01-workflow.md](01-workflow.md) §"ADR extraction
   step". Otherwise it lives in [07-dependency-pitfalls.md](07-dependency-pitfalls.md)
   as a footnote.
@@ -66,8 +67,8 @@
 
 - Production code uses `?` + `map_err` + context. `unwrap()` / `expect()` are
   allowed only inside `#[cfg(test)]` modules.
-- Constructor `Result` returns are preferred over `expect` (e.g. `NotionClient::new`
-  returns `Result` rather than `expect`-ing).
+- Constructor `Result` returns are preferred over `expect` (e.g. `keyring::Entry::new`
+  returns `Result`, callers use `?`).
 
 ## Parse / arg conventions
 

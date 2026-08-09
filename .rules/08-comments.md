@@ -16,7 +16,7 @@ Source-code comments are **English only**. Anything else is a typo or a TODO.
 | CLI help string literal in `description` / `usage` / `help` of `ActionArgSpec` / `ArgSpec` | **Keep in Chinese** — user-facing UI |
 | JSON fixture string value in `#[cfg(test)]` (e.g. `"写文档"`, `"买咖啡"`) | **Keep** — legitimate test data |
 | Example decode data inside a comment (base64 byte streams, UTF-16BE encoded mailbox names) | **Keep** — legitimate example content |
-| URL string literal containing Chinese (`https://app.notion.com/p/写周报-...`) | **Keep** — legitimate business data |
+| URL string literal containing Chinese (e.g. `https://some-host/pages/写周报-39a961`) | **Keep** — legitimate business data |
 
 The four "keep" rows are not comments; they are string literals. The rule for
 comments is the first row.
@@ -54,7 +54,7 @@ it to English breaks the UX contract.
 
 Concrete markers:
 
-- `description: "保存 Notion 凭证到系统 keyring"` inside `ActionArgSpec { ... }`
+- `description: "保存邮箱凭证到系统 keyring"` inside `ActionArgSpec { ... }`
 - `usage: "everyday todo login [--account NAME]"` in the same struct
 - `help: "数据库 ID"` inside `ArgSpec { ... }`
 
@@ -66,13 +66,13 @@ Three sub-categories of string literals that look like Chinese but are not
 comments:
 
 - **JSON fixture in `#[cfg(test)]`** — the title in `TimelineEvent::new("todo",
-  Some("personal"), "created", now, "买咖啡", ...)` is the test's notion of
+  Some("personal"), "created", now, "买咖啡", ...)` is the test's concept of
   "user-typed Chinese content". Translating it loses test realism.
 - **Example decode data** — `email.rs` documents `=?UTF-8?B?5L2g5aW9?` decoding
   to `"你好"`. The Chinese is the *expected decoded value* of the example, not a
   comment about the code.
-- **URL string literals** — `https://app.notion.com/p/写周报-39a961...` is a
-  real Notion page URL captured by the ops-log fixture. The Chinese is the page
+- **URL string literals** — a URL whose slug embeds a Chinese title (e.g.
+  `https://some-host/pages/写周报-39a961...`) is business data. The Chinese is the
   title baked into the URL.
 
 When unsure, ask: "is this a Rust comment (`//` / `///` / `//!`)?". If no, leave

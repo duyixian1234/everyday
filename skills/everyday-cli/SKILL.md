@@ -1,12 +1,12 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite by default / optional Notion, add, list, tag-filter), Notion note/knowledge-base and todo tasks (search, list, create, read, append, update, init-db, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), structured agent memory notebook (memory add / get / relation / list / delete / graph / history), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos to Notion, persist structured facts to the agent's own memory, query an aggregated timeline of recent activity, search across all integrations in one shot, manage credentials, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite, add, list, tag-filter), notes and todo tasks (search, list, create, read, append, update, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), structured agent memory notebook (memory add / get / relation / list / delete / graph / history), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos, persist structured facts to the agent's own memory, query an aggregated timeline of recent activity, search across all integrations in one shot, manage credentials, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
 # everyday CLI
 
-`everyday` is a Rust CLI on the local machine that gives an agent hands-on access to the user's email (IMAP/SMTP), calendar (CalDAV), RSS feeds, bookmarks, Notion notes/todos, an aggregated activity timeline, and a structured agent-memory notebook. Binary: `everyday` (on PATH).
+`everyday` is a Rust CLI on the local machine that gives an agent hands-on access to the user's email (IMAP/SMTP), calendar (CalDAV), RSS feeds, bookmarks, notes/todos, an aggregated activity timeline, and a structured agent-memory notebook. Binary: `everyday` (on PATH).
 
 ## Install
 
@@ -48,7 +48,7 @@ everyday config set default_account.mail work
 everyday auth login --module mail --account work   # prompts for password, saved to keyring
 ```
 
-After this, `mail` commands work without re-entering credentials. Notion-backed modules (`note` / `todo` / `bookmark`) have their own setup — see [references/TASKS.md](references/TASKS.md).
+After this, `mail` commands work without re-entering credentials.
 
 ## Common tasks
 

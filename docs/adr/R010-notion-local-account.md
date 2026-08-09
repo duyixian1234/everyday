@@ -1,6 +1,6 @@
 # ADR R010: `NotionLocalAccount` merge + type alias (TodoAccount / BookmarkAccount)
 
-**Status:** Accepted
+**Status:** Superseded by [R019](R019-remove-notion-provider.md) (2026-08-09, `NotionLocalAccount` renamed to `LocalAccount`)
 **Date:** 2026-07-11
 
 ## Context

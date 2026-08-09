@@ -1,6 +1,6 @@
 # everyday — Getting Started for Agent Users
 
-`everyday` is a local CLI toolkit written in Rust that acts as the "digital hands" of an AI Agent. It offers a unified command structure covering external-integration scenarios: email (IMAP/SMTP), calendar (CalDAV), RSS feeds, notes (local SQLite / optional Notion), to-dos (local SQLite / optional Notion), bookmarks (local SQLite / optional Notion), and an aggregated **timeline** event log that unifies them.
+`everyday` is a local CLI toolkit written in Rust that acts as the "digital hands" of an AI Agent. It offers a unified command structure covering external-integration scenarios: email (IMAP/SMTP), calendar (CalDAV), RSS feeds, notes (local SQLite), to-dos (local SQLite), bookmarks (local SQLite), and an aggregated **timeline** event log that unifies them.
 
 ```
 everyday <module> <action> [options] [--json] [--account NAME]

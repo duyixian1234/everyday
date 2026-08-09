@@ -20,7 +20,7 @@ JSON 为 AI 交互主模式。
 ## 何时使用本仓库
 
 引用 [F003](./docs/adr/F003-module-scope-external-integration.md)：Everyday 只
-封装**外部集成协议 / 状态 / 凭证**——IMAP、SMTP、CalDAV、RSS、Notion、bookmark
+封装**外部集成协议 / 状态 / 凭证**——IMAP、SMTP、CalDAV、RSS、note/todo/bookmark
 本地 DB、Timeline 事件层——不封装 `fs` / `net` / `sys` / 剪贴板等通用能力（代理
 用 shell / `curl` / `fd` / `rg` 即可直接完成）。模块提案必须先回答"封装了什么
 shell 做不到的事"。
@@ -32,9 +32,9 @@ shell 做不到的事"。
 | `mail` | IMAP 列表 / 读 / 搜索；SMTP 发送；envelope 缓存 | [M001](./docs/adr/M001-imap-stack.md) – [M005](./docs/adr/M005-staleness-auto-sync.md) |
 | `cal` | CalDAV 日历：列出 / 创建 / 删除 | [C001](./docs/adr/C001-caldav-stack.md) – [C003](./docs/adr/C003-cal-provider-window-filter.md) |
 | `rss` | RSS / Atom 订阅聚合 | [F008](./docs/adr/F008-rss-module.md) |
-| `note` | Notion 笔记；本地 SQLite provider 默认 | [N001](./docs/adr/N001-notion-note-module.md)，[F005](./docs/adr/F005-default-provider-local.md) |
-| `todo` | Notion 待办（add / start / complete / delete） | [T001](./docs/adr/T001-notion-todo-module.md), [T002](./docs/adr/T002-todo-delete-action.md) |
-| `bookmark` | 书签：本地 SQLite 默认，Notion 备选 | [B001](./docs/adr/B001-bookmark-dual-provider.md) |
+| `note` | 笔记 / 知识库（本地 SQLite） | [R019](./docs/adr/R019-remove-notion-provider.md)；前身 [N001](./docs/adr/N001-notion-note-module.md)（已废弃） |
+| `todo` | 待办：add / start / complete / delete（本地 SQLite） | [R019](./docs/adr/R019-remove-notion-provider.md)；[T002](./docs/adr/T002-todo-delete-action.md) |
+| `bookmark` | 书签：add / list（本地 SQLite） | [R019](./docs/adr/R019-remove-notion-provider.md)；前身 [B001](./docs/adr/B001-bookmark-dual-provider.md)（已废弃） |
 | `timeline` | 跨模块统一事件层（append-only log） | [L001](./docs/adr/L001-append-only-event-log.md) – [L013](./docs/adr/L013-from-explicit-error.md) |
 | `config` | 配置查看 / 修改；走 Executor trait | [R012](./docs/adr/R012-config-executor-trait.md) |
 | `memory` | Agent 结构化事实笔记本（append-only 三元组） | [K001](./docs/adr/K001-memory-module.md) – [K004](./docs/adr/K004-memory-single-instance.md) |

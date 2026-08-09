@@ -4,7 +4,7 @@
 
 **语言 / Language：** [English](README.md) · **简体中文**
 
-`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（默认本地 SQLite / 可选 Notion）、待办（默认本地 SQLite / 可选 Notion）、书签（默认本地 SQLite / 可选 Notion）、以及 Agent 自身的结构化记忆笔记本等场景，支持 Text / JSON 双输出模式。
+`everyday` 是一款高性能、内存安全的本地 CLI 工具集，用 Rust 编写。它作为 AI Agent 的"数字双手"，统一命令结构，覆盖邮件、日历、RSS 订阅、笔记（本地 SQLite）、待办（本地 SQLite）、书签（本地 SQLite）、以及 Agent 自身的结构化记忆笔记本等场景，支持 Text / JSON 双输出模式。
 
 ## 特性
 
@@ -200,15 +200,15 @@ everyday config set default_account.mail personal
 | `list` | 列出订阅源 | ✅ 可用 | `everyday rss list` |
 | `digest` | 聚合近期内容 | ✅ 可用 | `everyday rss digest [--limit N]` |
 
-### note — 笔记与知识库（默认本地 SQLite / 可选 Notion）
+### note — 笔记与知识库（本地 SQLite）
 
-**默认使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，数据存于 `~/.config/everyday/note-<account>.db`，开箱即用。也可设 `provider = "notion"` 改用 Notion API，屏蔽繁琐的 Block 嵌套，向 Agent 暴露**纯文本 / Markdown 追加**与**简化属性操作**两个高层能力（Notion Integration Token 仅存系统密钥环，绝不落盘）。命令用法在两种 provider 下一致。
+**使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，数据存于 `~/.config/everyday/note-<account>.db`，开箱即用。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
 | `search` | 按标题搜索页面 / 数据库 | `everyday note search --query Q [--limit N]` |
-| `list` | 列出指定数据库下的页面 | `everyday note list [--db ID] [--limit N]` |
-| `create` | 在数据库中新建页面（记录） | `everyday note create --title T [--db ID] [--prop K:V ...]` |
+| `list` | 列出指定数据库下的页面 | `everyday note list [--limit N]` |
+| `create` | 在数据库中新建页面（记录） | `everyday note create --title T [--prop K:V ...]` |
 | `read` | 读取页面正文，聚合成 Markdown | `everyday note read <page_id>` |
 | `append` | 向页面末尾追加文本区块 | `everyday note append [page_id] --text TEXT` |
 | `update` | 修改页面属性（Meta 信息） | `everyday note update <page_id> --prop K:V ...` |
@@ -219,23 +219,20 @@ everyday config set default_account.mail personal
 |------|----------|------|
 | `--account NAME` | 全部 | 指定账户 |
 | `--query Q` | `search` | 关键词搜索（页面 / 数据库标题） |
-| `--db ID` | `create` / `list` | 目标数据库 ID；未指定则读取配置 `default_database_id` |
 | `--prop K:V` | `create` / `update` | 简化属性设置，可多次指定；按数据库 schema 精确编码（标题 / 文本 / 数字 / Checkbox / Select 等），值可含冒号 |
 | `--text TEXT` | `append` | 要追加的文本；不带此参数时从管道 `stdin` 读取（仅非终端模式） |
 | `--limit N` | `search` / `list` | 限制条数（`search` 默认 10，`list` 默认 50，上限 100；`--limit 0` 表示不限制） |
 
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday note create` / `append` 即可，数据库文件自动创建。
-> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → 通过 `everyday auth login --module note` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `default_database_id` / `default_page_id` → 在 Notion 把目标页面 / 数据库**分享给该 integration**。
 
-### todo — 待办任务（默认本地 SQLite / 可选 Notion）
+### todo — 待办任务（本地 SQLite）
 
-**默认使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，任务存于 `~/.config/everyday/todo-<account>.db`，各命令自动建表，开箱即用。也可设 `provider = "notion"` 改用 Notion 数据库：底层 HTTP / Token 注入 / 429 限流重试由共享 `notion-client` 统一处理，本模块把干净的领域模型 `TodoItem`（id / title / status / due / priority）与 Notion 原始属性做强类型映射（Token 仅存系统密钥环 `everyday/todo/<account>`，`database_id` 等非机密元数据可落盘 config）。命令用法在两种 provider 下一致。
+**使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，任务存于 `~/.config/everyday/todo-<account>.db`，各命令自动建表，开箱即用。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `init-db` | 建表：本地 provider 建 SQLite 表，Notion provider 创建任务数据库（需 `parent_page_id`）并回填 `database_id` | `everyday todo init-db [--account NAME] [--parent PAGE_ID]` |
-| `list` | 列出未完成任务（按 Due 升序） | `everyday todo list [--db ID] [--all]` |
-| `add` | 新增任务 | `everyday todo add --title T [--due DATE] [--priority P] [--db ID]` |
+| `list` | 列出未完成任务（按 Due 升序） | `everyday todo list [--all]` |
+| `add` | 新增任务 | `everyday todo add --title T [--due DATE] [--priority P]` |
 | `start` | 标记任务为 In Progress | `everyday todo start <page_id>` |
 | `complete` | 标记任务为 Done | `everyday todo complete <page_id>` |
 
@@ -244,33 +241,27 @@ everyday config set default_account.mail personal
 | 选项 | 适用命令 | 说明 |
 |------|----------|------|
 | `--account NAME` | 全部 | 指定账户 |
-| `--parent PAGE_ID` | `init-db` | 创建数据库时的父级页面；未指定则读取配置 `parent_page_id` |
-| `--db ID` | `list` / `add` | 目标数据库 ID；未指定则读取配置 `default_database_id`（`init-db` 后自动回填） |
 | `--all` | `list` | 列出全部任务（含已完成的 Done） |
 | `--title T` | `add` | 任务标题（必填） |
 | `--due DATE` | `add` | 截止日期（ISO 8601，如 `2026-07-15`） |
 | `--priority P` | `add` | 优先级（Select：P0 / P1 / P2） |
 
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday todo add` / `list` 即可，数据库文件与表自动创建。
-> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → 通过 `everyday auth login --module todo` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday todo init-db` 创建任务数据库并授权该 integration 访问父级页面。之后 `list` / `add` / `start` / `complete` 即可使用。
 
-### bookmark — 书签（默认本地 SQLite / 可选 Notion）
+### bookmark — 书签（本地 SQLite）
 
-**默认使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，书签存于 `~/.config/everyday/bookmark-<account>.db`（主表 `bookmarks` + 关联表 `bookmark_tags`，支持按标签精确过滤），各命令自动建表，开箱即用。也可设 `provider = "notion"` 改用 Notion 数据库：底层 HTTP / Token 注入 / 429 限流重试由共享 `notion-client` 统一处理，本模块把干净的领域模型 `BookmarkItem`（id / url / title / tags）与 Notion 原始属性（Title / URL / Tags）做强类型映射（Token 仅存系统密钥环 `everyday/bookmark/<account>`，`database_id` 等非机密元数据可落盘 config）。命令用法在两种 provider 下一致。
+**使用本地 SQLite provider（`provider = "local"`，别名 `sqlite`）**：无需凭证、无需联网，书签存于 `~/.config/everyday/bookmark-<account>.db`（主表 `bookmarks` + 关联表 `bookmark_tags`，支持按标签精确过滤），各命令自动建表，开箱即用。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
-| `init-db` | 初始化存储：本地 provider 建 SQLite 表；Notion provider 创建书签数据库（需 `parent_page_id`）并回填 `database_id` | `everyday bookmark init-db [--account NAME] [--parent PAGE_ID]` |
-| `list` | 列出书签（`--tag` 按单个标签过滤） | `everyday bookmark list [--tag TAG] [--db ID]` |
-| `add` | 新增书签 | `everyday bookmark add --url U --title T [--tags a,b] [--db ID]` |
+| `list` | 列出书签（`--tag` 按单个标签过滤） | `everyday bookmark list [--tag TAG]` |
+| `add` | 新增书签 | `everyday bookmark add --url U --title T [--tags a,b]` |
 
 **选项说明**：
 
 | 选项 | 适用命令 | 说明 |
 |------|----------|------|
 | `--account NAME` | 全部 | 指定账户 |
-| `--parent PAGE_ID` | `init-db` | 创建数据库时的父级页面；未指定则读取配置 `parent_page_id` |
-| `--db ID` | `list` / `add` | 目标数据库 ID（仅 Notion）；未指定则读取配置 `default_database_id`（`init-db` 后自动回填） |
 | `--tag TAG` | `list` | 按单个标签过滤（精确匹配）；不指定则列出全部 |
 | `--url U` | `add` | 书签 URL（必填） |
 | `--title T` | `add` | 书签标题（必填） |
@@ -279,11 +270,10 @@ everyday config set default_account.mail personal
 **标签解析**：`--tags "rust, cli , web"` 按逗号拆分、去空白、丢弃空项 → `["rust", "cli", "web"]`。
 
 > **本地 provider（默认）**：无需任何前置步骤，直接 `everyday bookmark add` / `list` 即可，数据库文件与表自动创建。
-> **Notion provider**：在 Notion 创建 integration 拿到 `ntn_...` token → 通过 `everyday auth login --module bookmark` 存入密钥环 → 在 config 把该账户设为 `provider = "notion"` 并填好 `parent_page_id` → `everyday bookmark init-db` 创建书签数据库并授权该 integration 访问父级页面。之后 `list` / `add` 即可使用。
 
 ### auth — 凭证生命周期（v0.8.0 新增）
 
-全模块统一的凭证管理。各模块内部通过 `auth::get_credential` 读取已存凭证；你只需用这些命令在系统密钥环中管理凭证。密码凭证（mail/cal）使用 `--password`；Notion Token 凭证（note/todo/bookmark 在 `provider=notion` 时）使用 `--token`。若省略该 flag，则回退到交互式提示。密码 / Token 绝不落盘。
+全模块统一的凭证管理。各模块内部通过 `auth::get_credential` 读取已存凭证；你只需用这些命令在系统密钥环中管理凭证。密码凭证（mail/cal）使用 `--password`。若省略该 flag，则回退到交互式提示。密码绝不落盘。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
@@ -294,7 +284,7 @@ everyday config set default_account.mail personal
 
 ### timeline — 统一事件流（v0.5.0 新增）
 
-将 **mail · cal · rss** 三类网络 provider 以及 Notion 账户 `note` / `todo` / `bookmark` 写操作（通过 `ops-log` AOP 审计）聚合到一个 append-only 事件流。每个 source 对应一个 `TimelineProvider` adapter，sync 在 source 间并行、在 source 内串行（对 rate-limit 友好）。存储为独立 SQLite：`~/.config/everyday/timeline.db`。
+将 **mail · cal · rss · note · todo · bookmark** 各 provider 的本地事件聚合到一个 append-only 事件流。每个 source 对应一个 `TimelineProvider` adapter，sync 在 source 间并行、在 source 内串行（对 rate-limit 友好）。存储为独立 SQLite：`~/.config/everyday/timeline.db`。
 
 **为什么需要**：避免 Agent 分别轮询 7 个模块，单条 query 就拿到跨全部集成的时间有序事件流。
 
@@ -324,11 +314,9 @@ everyday timeline today --json | jq '.[].title'
 everyday timeline sync --source mail,cal
 everyday timeline week --json
 
-# 最近 30 分钟内事件(sub-day 精度)
+# 最近 30 分钟内事件（sub-day 精度）
 everyday timeline today --since 30m --json
 
-# Notion 端的 todo/note/bookmark 写操作通过 ops-log 自动投影,
-# 每次 add/update/delete 后 timeline 自动可见
 everyday timeline today --source todo --json
 ```
 
@@ -336,8 +324,7 @@ everyday timeline today --source todo --json
 
 - **Append-only**：事件以自然键 `(source, account, ref_id, event_type, timestamp)` 唯一（`INSERT OR IGNORE`），重跑 sync 安全。
 - **UTC 存储 + 本地显示**：时间戳在 DB 内统一 UTC，渲染时按本地时区。
-- **Cal 是窗口刷新**：除 mail / rss / ops-log 是 append-only，cal 在每次 sync 时重写自己的窗口 `[last_sync, now+7d]`，这样取消的事件会真正消失。
-- **Notion 走 ops-log，不走 API**：见 `CONTEXT.md` 用户隐私立场，Agent 不主动扫描 Notion 工作区,只显示 AOP 记录的写入。本地 provider（如有）走自己的 `TimelineProvider`。
+- **Cal 是窗口刷新**：除 mail / rss 是 append-only，cal 在每次 sync 时重写自己的窗口 `[last_sync, now+7d]`，这样取消的事件会真正消失。
 
 完整设计依据见 `docs/CONTEXT.md` 与 `docs/adr/0001`–`0009`。
 
@@ -349,7 +336,7 @@ everyday timeline today --source todo --json
 |------|------|------|
 | `query` | 在所有可搜索模块上跑自由文本查询 | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
 
-**模块范围**：`note` / `todo` / `bookmark`（本地 SQLite，GLOB 命中 title + content/url/tag），`rss`（本地条目缓存表 `~/.config/everyday/rss-items.db`，由 `rss digest` / `rss fetch` 同步写入），`cal`（全量拉取 + 内存 GLOB 命中 summary / location / start），`mail`（本地 envelope 缓存，[S007]，v0.9.0 起），`memory`（当前态视图上 subject/predicate/object 三字段 GLOB，[K003]，v0.10.0 起）。Notion-backed 账户 v1 不参与搜索（live-fetch-on-search 被 ADR S005 拒绝，理由：慢 / rate-limit）。
+**模块范围**：`note` / `todo` / `bookmark`（本地 SQLite，GLOB 命中 title + content/url/tag），`rss`（本地条目缓存表 `~/.config/everyday/rss-items.db`，由 `rss digest` / `rss fetch` 同步写入），`cal`（全量拉取 + 内存 GLOB 命中 summary / location / start），`mail`（本地 envelope 缓存，[S007]，v0.9.0 起），`memory`（当前态视图上 subject/predicate/object 三字段 GLOB，[K003]，v0.10.0 起）。
 
 **查询语义**：空白切 token、多词 **OR**、大小写不敏感 GLOB 子串（`lower(col) GLOB '*token*'`）。每模块硬上限 50；全局默认 20（可由 `--limit` 覆盖）。全局 `ts desc` 排序；各模块的主时间即 `ts`（note: updated_at，todo: updated_at，bookmark: created_at，rss: published，cal: event_start，mail: envelope date，memory: created_at）。
 
@@ -534,14 +521,6 @@ provider = "local"
 name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/bookmarks.db"   # 可选，缺省 ~/.config/everyday/bookmark-personal.db
-
-# 如需 Notion：把对应账户改为 provider = "notion"，并按各模块「前置」说明配置
-# [[note.accounts]]
-# name = "notion"
-# provider = "notion"
-# default_database_id = "db_abc123..."   # 值以实际 Notion ID 为准
-# default_page_id = "page_xyz789..."
-# Notion Integration Token (ntn_...) 不在此处填写，由 `everyday auth login --module note` 存入密钥环
 ```
 
 ### 凭证安全
@@ -610,15 +589,11 @@ everyday config get mail.accounts.0.smtp_port
 ### 笔记（默认本地 SQLite）
 
 ```bash
-# 本地 provider 无需登录；仅 provider = "notion" 时才需交互式存入 Token（仅密钥环，不落盘）
-everyday auth login --module note
-
 # 搜索页面 / 数据库（JSON）
 everyday note search --query "工作" --json
 
-# 列出某数据库下的页面（缺省取配置 default_database_id）
+# 列出页面
 everyday note list --json
-everyday note list --db "db_abc123" --limit 20
 
 # 在数据库中新建一条记录，含多项属性
 everyday note create \
@@ -630,7 +605,7 @@ everyday note create \
 # 读取页面正文（聚合成 Markdown）
 everyday note read <page_id> --json
 
-# 向默认速记页面追加一条闪念（也可不带 page_id 自动寻址 default_page_id）
+# 向默认速记页面追加一条闪念（page_id 可选）
 everyday note append --text "### AI 自动捕获
 在 12345 号邮件发现竞品链接：https://..."
 
@@ -644,10 +619,7 @@ everyday note update <page_id> --prop "状态:已读"
 ### 待办（默认本地 SQLite）
 
 ```bash
-# 本地 provider 无需登录，直接 add / list 即可（表自动创建）；
-# 仅 provider = "notion" 时才需以下一次性配置：存 Token、创建任务数据库
-everyday auth login --module todo
-everyday todo init-db --parent "<page_id>"     # 需在 Notion 把父页面授权给该 integration
+# 本地 provider 无需登录，直接 add / list 即可（表自动创建）
 
 # 列出未完成任务（按 Due 升序）
 everyday todo list --json
@@ -666,10 +638,7 @@ everyday todo complete <page_id>
 ### 书签（默认本地 SQLite）
 
 ```bash
-# 本地 provider 无需登录，直接 add / list 即可（表自动创建）；
-# 仅 provider = "notion" 时才需以下一次性配置：存 Token、创建书签数据库
-everyday auth login --module bookmark
-everyday bookmark init-db --parent "<page_id>"   # 仅 Notion：需在 Notion 把父页面授权给该 integration
+# 本地 provider 无需登录，直接 add / list 即可（表自动创建）
 
 # 新增带标签的书签
 everyday bookmark add \
@@ -694,15 +663,14 @@ everyday/
 │   ├── config.rs        # 配置加载与多账户管理
 │   ├── error.rs         # 统一错误类型 AgentError
 │   ├── output.rs        # Output（Text/Json/Records 渲染）
-│   ├── notion_client.rs # 底层共享 Notion API 客户端（HTTP/限流/反序列化）
 │   └── modules/
 │       ├── mod.rs       # Executor trait + ModuleRegistry
 │       ├── email.rs     # 邮件（IMAP/SMTP）
 │       ├── calendar.rs  # 日历（CalDAV）
 │       ├── rss.rs       # RSS/Atom
-│       ├── note.rs      # 笔记与知识库（Notion API）
-│       ├── todo.rs      # 待办任务（Notion，基于 notion_client）
-│       └── bookmark.rs  # 书签（Notion，基于 notion_client）
+│       ├── note.rs      # 笔记与知识库（本地 SQLite）
+│       ├── todo.rs      # 待办任务（本地 SQLite）
+│       └── bookmark.rs  # 书签（本地 SQLite）
 ├── skills/
 │   ├── README.md              # 面向 Agent 用户的精简项目介绍
 │   └── everyday-cli/
@@ -760,9 +728,9 @@ pub trait Executor: Send + Sync {
 | `mail` | ✅ 完整可用 | IMAP 收件 + SMTP 发件 + keyring 凭证 |
 | `cal` | ✅ 完整可用 | CalDAV calendars / list / add / delete |
 | `rss` | ✅ 完整可用 | follow / list / unfollow / digest / fetch |
-| `note` | ✅ 完整可用 | search / list / create / read / append / update（默认本地 SQLite，可选 Notion API） |
-| `todo` | ✅ 完整可用 | init-db / list / add / start / complete（默认本地 SQLite，可选 Notion API） |
-| `bookmark` | ✅ 完整可用 | init-db / list / add（默认本地 SQLite，可选 Notion API） |
+| `note` | ✅ 完整可用 | search / list / create / read / append / update（本地 SQLite） |
+| `todo` | ✅ 完整可用 | list / add / start / complete（本地 SQLite） |
+| `bookmark` | ✅ 完整可用 | list / add（本地 SQLite） |
 | `auth` | ✅ 完整可用（v0.8.0 新增） | login / logout / verify / list — 全模块统一的凭证生命周期管理 |
 | `timeline` | ✅ 完整可用 | 统一事件流：today / yesterday / week / month / sync |
 | `search` | ✅ 完整可用（v0.7.0 新增） | 跨模块统一搜索：query |

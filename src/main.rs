@@ -10,14 +10,13 @@
 
 mod cli;
 mod modules;
-mod ops_log;
 mod search;
 mod shared;
 mod util;
 
 // Keep a stable `crate::X` path for shared facilities even though they live
 // physically under `shared/` — transparent to upper layers.
-pub(crate) use shared::{config, error, notion_client, output};
+pub(crate) use shared::{config, error, output};
 
 use std::sync::Arc;
 
@@ -159,35 +158,6 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         &args,
     )
     .await;
-
-    // Ops-log AOP hook: after a successful execution that is a Notion-account
-    // write, record it to the ops-log. Failure does not block the user command,
-    // but an ops-log write failure must not be silent — route it by mode to
-    // stderr / JSON (see [L007](../docs/adr/L007-notion-ops-log.md),
-    // [R001](../docs/adr/R001-thread-local-json-mode.md)).
-    if let Ok(ref output) = result
-        && let Err(e) = ops_log::maybe_log_op(
-            module_name,
-            action_name,
-            matches.get_one::<String>("account").map(|s| s.as_str()),
-            &config,
-            output,
-        )
-        .await
-    {
-        match mode {
-            RenderMode::Json => {
-                eprintln!(
-                    "{{\"_warning\":\"ops_log_failed\",\"module\":\"{}\",\"message\":\"{}\"}}",
-                    module_name,
-                    e.message().replace('"', "'")
-                );
-            }
-            RenderMode::Text => {
-                eprintln!("warning: ops-log write failed: {}", e.message());
-            }
-        }
-    }
 
     // Lifecycle (P3): graceful shutdown after the action completes.
     registry.shutdown_all();

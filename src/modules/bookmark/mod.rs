@@ -1,22 +1,17 @@
-//! Bookmark module: save / browse web bookmarks. Defaults to the local SQLite provider (`local`),
-//! but can switch to Notion (`provider = "notion"`) [B001](../../../docs/adr/B001-bookmark-dual-provider.md).
+//! Bookmark module: save / browse web bookmarks, local SQLite only
+//! (Notion provider removed in v0.13.0 — [R019](../../../docs/adr/R019-remove-notion-provider.md)).
 //!
 //! Action dispatch is dependency-inverted: `execute` resolves the account, builds a
 //! `Box<dyn BookmarkBackend>` via [`for_account`], calls the corresponding trait method, and
 //! renders the returned domain struct ([R016](../../../docs/adr/R016-action-backend-di.md)
-//! / [R018](../../../docs/adr/R018-backend-domain-mocks.md)). The module never names
-//! `NotionClient`, never branches on provider, and never touches the keyring — all of that
-//! lives in the `for_account` factory and the provider implementations.
+//! / [R018](../../../docs/adr/R018-backend-domain-mocks.md)).
 //!
 //! Supported `action`s:
-//! - `auth login` stores the Notion Integration Token in the keyring (notion provider only)
-//! - `init-db`  create the local table / create the bookmark database in Notion (needs `parent_page_id`)
 //! - `add`      collect a bookmark (`--url` required, `--title` required, `--tags` optional comma-separated)
-//! - `list`     list bookmarks, `--tag <TAG>` filters by tag (`--db` selects the Notion database)
+//! - `list`     list bookmarks, `--tag <TAG>` filters by tag
 
 pub mod backend;
 pub mod local;
-pub mod notion;
 
 use std::collections::HashMap;
 
@@ -26,7 +21,7 @@ use serde_json::{Value, json};
 use crate::config::BookmarkModuleConfig;
 use crate::error::{AgentError, Result};
 use crate::modules::bookmark::backend::{
-    BookmarkAdded, BookmarkBackend, BookmarkInitDb, BookmarkItem, for_account,
+    BookmarkAdded, BookmarkBackend, BookmarkItem, for_account,
 };
 use crate::modules::local::parse_tags;
 use crate::modules::{Executor, parse_simple_args};
@@ -53,34 +48,27 @@ impl BookmarkModule {
 #[async_trait]
 impl Executor for BookmarkModule {
     fn description(&self) -> &'static str {
-        "Bookmarks (Notion or local sqlite): init-db, add, list."
+        "Bookmarks (local sqlite): add, list."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
         use crate::modules::{ActionArgSpec, ModuleArgSpec};
         static ACTIONS: &[ActionArgSpec] = &[
             cli_action!(
-                "init-db",
-                "初始化书签数据库（local 建表 / Notion 建库）",
-                "everyday bookmark init-db [--parent PAGE_ID] [--account NAME]",
-                &[flag!("parent", "父页面 ID（默认账户父页）")]
-            ),
-            cli_action!(
                 "add",
                 "新增书签",
-                "everyday bookmark add --url U --title T [--tags a,b] [--db ID] [--account NAME]",
+                "everyday bookmark add --url U --title T [--tags a,b] [--account NAME]",
                 &[
                     flag!("url", "书签 URL"),
                     flag!("title", "标题"),
                     flag!("tags", "标签，逗号分隔（如 rust,cli）"),
-                    flag!("db", "数据库 ID"),
                 ]
             ),
             cli_action!(
                 "list",
                 "列出书签",
-                "everyday bookmark list [--tag TAG] [--db ID] [--account NAME]",
-                &[flag!("tag", "按标签精确过滤"), flag!("db", "数据库 ID"),]
+                "everyday bookmark list [--tag TAG] [--account NAME]",
+                &[flag!("tag", "按标签精确过滤"),]
             ),
         ];
         ModuleArgSpec {
@@ -101,35 +89,15 @@ impl Executor for BookmarkModule {
             .config
             .resolve_account(flags.get("account").map(|s| s.as_str()))?;
 
-        // DI seam: the module never names `NotionClient`, never branches on provider,
-        // never touches the keyring — all of that lives in `for_account`.
+        // DI seam: the module never branches on provider or touches the keyring —
+        // all of that lives in `for_account`.
         let backend = for_account(account)?;
         dispatch(&*backend, action, &flags).await
     }
 
-    /// P3 health: for a notion account, the keyring token must exist; local
-    /// accounts need no credential. No Notion network probe (health = local).
+    /// P3 health: local-only since v0.13.0 — no credentials to check.
     async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
-        use crate::modules::HealthStatus;
-        match self.config.resolve_account(None) {
-            Ok(account) => {
-                let token_ok = crate::modules::auth::get_credential_with_user(
-                    "bookmark",
-                    &account.name,
-                    crate::shared::keyring_user::KEYRING_USER,
-                )
-                .is_ok();
-                if crate::modules::local::is_local_provider(&account.provider) || token_ok {
-                    Ok(HealthStatus::healthy())
-                } else {
-                    Ok(HealthStatus::degraded(format!(
-                        "account '{}': no notion token in keyring (run `everyday auth login --module bookmark --account {}`)",
-                        account.name, account.name
-                    )))
-                }
-            }
-            Err(_) => Ok(HealthStatus::healthy()), // no account → nothing to check
-        }
+        Ok(crate::modules::HealthStatus::healthy())
     }
 }
 
@@ -141,11 +109,6 @@ pub(crate) async fn dispatch(
     flags: &HashMap<String, String>,
 ) -> Result<Output> {
     match action {
-        "init-db" => {
-            let parent = flags.get("parent").map(|s| s.as_str());
-            let r = backend.init_db(parent).await?;
-            Ok(render_init_db(r))
-        }
         "add" => {
             let url = flags
                 .get("url")
@@ -154,14 +117,12 @@ pub(crate) async fn dispatch(
                 AgentError::InvalidArgument("add requires --title <title>".into())
             })?;
             let tags = parse_tags(flags.get("tags"));
-            let db_id = flags.get("db").map(|s| s.as_str());
-            let r = backend.add(url, title, &tags, db_id).await?;
+            let r = backend.add(url, title, &tags).await?;
             Ok(render_add(r))
         }
         "list" => {
             let tag = flags.get("tag").map(|s| s.as_str());
-            let db_id = flags.get("db").map(|s| s.as_str());
-            let items = backend.list(tag, db_id).await?;
+            let items = backend.list(tag).await?;
             Ok(render_list(items))
         }
         other => Err(AgentError::UnknownAction(format!("bookmark {other}"))),
@@ -169,30 +130,6 @@ pub(crate) async fn dispatch(
 }
 
 // ============ Rendering (R018) ============
-
-/// Render `init-db` result. Text mode names the provider and prints the location
-/// (local db path or Notion url); JSON mode emits all populated fields.
-fn render_init_db(r: BookmarkInitDb) -> Output {
-    if mode_json() {
-        return Output::Json(json!({
-            "account": r.account,
-            "provider": r.provider,
-            "db_path": r.db_path,
-            "database_id": r.database_id,
-            "url": r.url,
-        }));
-    }
-    let location = r.db_path.or(r.url).unwrap_or_default();
-    let verb = if r.provider == "local" {
-        "initialized local"
-    } else {
-        "created"
-    };
-    Output::text(format!(
-        "{verb} bookmark database for account '{}'\n{}",
-        r.account, location
-    ))
-}
 
 /// Render `add` result.
 fn render_add(r: BookmarkAdded) -> Output {
@@ -202,7 +139,6 @@ fn render_add(r: BookmarkAdded) -> Output {
             "url": r.url,
             "title": r.title,
             "tags": r.tags,
-            "database_id": r.database_id,
         }));
     }
     Output::text(format!(
@@ -211,7 +147,7 @@ fn render_add(r: BookmarkAdded) -> Output {
     ))
 }
 
-/// Render `list` result: a Records table (text) or a JSON array (both provider shapes identical).
+/// Render `list` result: a Records table (text) or a JSON array.
 fn render_list(items: Vec<BookmarkItem>) -> Output {
     if mode_json() {
         let arr: Vec<Value> = items
@@ -265,10 +201,10 @@ mod tests {
     }
 
     /// (a) The full action path — parse → backend → render — runs end-to-end against a
-    /// `MockBookmarkBackend` that holds no `NotionClient` and no SQLite. This proves the DI
-    /// seam removes `NotionClient` / provider branches / keyring reads from the action layer.
+    /// `MockBookmarkBackend` with no SQLite. This proves the DI seam keeps provider /
+    /// keyring concerns out of the action layer.
     #[tokio::test]
-    async fn dispatch_with_mock_runs_action_path_without_notion_client() {
+    async fn dispatch_with_mock_runs_action_path() {
         let backend = MockBookmarkBackend {
             items: vec![sample_item()],
             ..Default::default()
@@ -289,7 +225,7 @@ mod tests {
     }
 
     /// (b) The render layer is provider-agnostic: the same domain data renders identically
-    /// whether it originated from Notion or the local backend. We render directly with
+    /// regardless of the source backend. We render directly with
     /// MockBookmarkBackend-supplied data and assert both text (Records) and JSON shapes.
     #[test]
     fn render_is_provider_agnostic_for_same_domain_data() {

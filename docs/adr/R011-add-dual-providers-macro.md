@@ -1,6 +1,6 @@
 # ADR R011: `add_dual_providers!` macro for `build_providers` (todo/note/bookmark)
 
-**Status:** Accepted
+**Status:** Superseded by [R019](R019-remove-notion-provider.md) (2026-08-09, dual-provider macro removed)
 **Date:** 2026-07-11
 
 ## Context

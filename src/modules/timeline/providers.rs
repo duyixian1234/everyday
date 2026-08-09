@@ -416,66 +416,6 @@ impl TimelineProvider for BookmarkProvider {
     }
 }
 
-// ============ Ops-log Provider ============
-
-/// Project a module's rows in ops-log.db into TimelineEvent.
-///
-/// Written by the todo/note/bookmark write paths of Notion accounts (AOP hook) -> ops-log.
-/// Here ops-log is turned into timeline events so these operations become visible in
-/// `timeline list`.
-///
-/// Per ADR [L007](../../../docs/adr/L007-notion-ops-log.md) we do not query the Notion API;
-/// the timeline views the local ops-log through this provider
-/// [L010](../../../docs/adr/L010-ops-log-provider.md).
-pub struct OpsLogProvider {
-    module: &'static str,
-}
-
-impl OpsLogProvider {
-    pub fn new(module: &'static str) -> Self {
-        debug_assert!(
-            matches!(module, "todo" | "note" | "bookmark"),
-            "OpsLogProvider only supports logged modules"
-        );
-        Self { module }
-    }
-}
-
-#[async_trait]
-impl TimelineProvider for OpsLogProvider {
-    fn source(&self) -> &'static str {
-        self.module
-    }
-    fn account(&self) -> Option<&str> {
-        // The single ops-log provider covers all accounts of this module,
-        // distinguished by the event's own `account` field; the sync_state row has account = "".
-        None
-    }
-
-    async fn sync(&self, window: &TimeWindow) -> Result<(Vec<TimelineEvent>, SyncMode)> {
-        let entries =
-            crate::ops_log::fetch_ops_log_for_timeline(self.module, window.from, Some(window.to))
-                .await?;
-        let events: Vec<TimelineEvent> = entries
-            .iter()
-            .filter_map(|e| {
-                let timestamp = parse_rfc3339(&e.occurred_at)?;
-                Some(TimelineEvent::new(
-                    self.module,
-                    Some(&e.account),
-                    &e.action,
-                    timestamp,
-                    &e.title,
-                    "",
-                    &e.ref_id,
-                    e.metadata.clone(),
-                ))
-            })
-            .collect();
-        Ok((events, SyncMode::Append))
-    }
-}
-
 // ============ helpers ============
 
 /// Parse an RFC3339 time string.
@@ -485,39 +425,14 @@ fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
 
 // ============ Provider Registry ============
 
-/// Macro: register a local/notion dual-provider module (shared by todo/note/bookmark).
-///
-/// Pattern:
-/// 1. Push one local Provider for each local account.
-/// 2. If a Notion account exists, push a single [`OpsLogProvider`].
-///
-/// The `local_providers` expression must evaluate to `&[Account]`, and `provider_for`
-/// is a constructor expression like `TodoProvider::new(acc.clone())`.
-macro_rules! add_dual_providers {
-    ($providers:expr, $module:literal, $local_providers:expr, $provider_for:expr) => {{
-        let local_providers: &[_] = $local_providers;
-        let mut has_notion = false;
-        for acc in local_providers {
-            if crate::modules::local::is_local_provider(&acc.provider) {
-                $providers.push(Box::new($provider_for(acc.clone())));
-            } else {
-                has_notion = true;
-            }
-        }
-        if has_notion {
-            $providers.push(Box::new(OpsLogProvider::new($module)));
-        }
-    }};
-}
-
 /// Build the TimelineProvider list (iterating over all configured accounts in config).
 ///
 /// - Mail: one MailProvider per mail account.
 /// - Cal: one CalProvider per calendar account.
 /// - RSS: a single RssProvider (no account concept).
-/// - Todo/Note/Bookmark: local accounts use the local provider; Notion accounts share a
-///   single [`OpsLogProvider`] (projecting ops-log.db)
-///   [L010](../../../docs/adr/L010-ops-log-provider.md). The two can coexist.
+/// - Todo/Note/Bookmark: one local provider per account (local-only since
+///   v0.13.0 — the Notion `OpsLogProvider` and the `add_dual_providers!`
+///   macro were removed with the provider, [R019](../../../docs/adr/R019-remove-notion-provider.md)).
 pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
     let mut providers: Vec<Box<dyn TimelineProvider>> = Vec::new();
 
@@ -540,15 +455,16 @@ pub fn build_providers(config: &Arc<Config>) -> Vec<Box<dyn TimelineProvider>> {
         providers.push(Box::new(RssProvider::new(config.clone())));
     }
 
-    // Todo / Note / Bookmark: local/notion dual-provider pattern.
-    add_dual_providers!(providers, "todo", &config.todo.accounts, TodoProvider::new);
-    add_dual_providers!(providers, "note", &config.note.accounts, NoteProvider::new);
-    add_dual_providers!(
-        providers,
-        "bookmark",
-        &config.bookmark.accounts,
-        BookmarkProvider::new
-    );
+    // Todo / Note / Bookmark (local only)
+    for acc in &config.todo.accounts {
+        providers.push(Box::new(TodoProvider::new(acc.clone())));
+    }
+    for acc in &config.note.accounts {
+        providers.push(Box::new(NoteProvider::new(acc.clone())));
+    }
+    for acc in &config.bookmark.accounts {
+        providers.push(Box::new(BookmarkProvider::new(acc.clone())));
+    }
 
     providers
 }

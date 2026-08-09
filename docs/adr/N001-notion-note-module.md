@@ -1,6 +1,6 @@
 # ADR N001: Note module — Notion API integration that shields block nesting
 
-**Status:** Accepted
+**Status:** Superseded by [R019](R019-remove-notion-provider.md) (2026-08-09, Notion provider removed)
 **Date:** 2026-07-10
 
 > **Update (2026-07-12):** Credential & `login` logic consolidated into the top-level `auth` module. This module's `login` subcommand is removed; `note` now calls `auth::get_credential`. See [R013](R013-auth-module-consolidation.md) (and [R014](R014-auth-verify-opt-in.md) / [R015](R015-auth-credential-io.md)).

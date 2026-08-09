@@ -1,12 +1,12 @@
 //! Local SQLite provider for the note module. See [N001](../../../docs/adr/N001-notion-note-module.md) / [F005](../../../docs/adr/F005-default-provider-local.md).
 //!
-//! Mirrors the Notion provider's `search` / `list` / `create` / `read` / `append`
-//! / `update` semantics; data lives in the account's configured local SQLite file.
+//! Implements the `search` / `list` / `create` / `read` / `append` / `update`
+//! actions; data lives in the account's configured local SQLite file.
 //! The local provider needs no credentials (credentials are owned by the `auth` module).
 //!
-//! This file implements [`LocalNoteBackend`], one of the two `NoteBackend` backends
-//! ([R016](../../../docs/adr/R016-action-backend-di.md)); it returns the same domain
-//! structs as the Notion backend so the module's render layer is provider-agnostic
+//! This file implements [`LocalNoteBackend`]
+//! ([R016](../../../docs/adr/R016-action-backend-di.md)); it returns domain
+//! structs so the module's render layer is backend-agnostic
 //! ([R018](../../../docs/adr/R018-backend-domain-mocks.md)).
 
 use async_trait::async_trait;
@@ -87,9 +87,7 @@ pub async fn search(account: &NoteAccount, query: &str, limit: usize) -> Result<
     for r in &rows {
         out.push(NoteSummary {
             id: r.get::<String, _>("id"),
-            kind: "page".to_string(),
             title: r.get::<String, _>("title"),
-            url: None,
             updated: r.get::<String, _>("updated_at"),
         });
     }
@@ -114,7 +112,6 @@ pub async fn list(account: &NoteAccount, limit: usize) -> Result<Vec<NoteListEnt
         out.push(NoteListEntry {
             id,
             title: r.get::<String, _>("title"),
-            url: None,
             updated: r.get::<String, _>("updated_at"),
             properties: props,
         });
@@ -150,10 +147,7 @@ pub async fn create(
     Ok(NoteCreated {
         id,
         title: title.to_string(),
-        url: None,
-        database_id: None,
         prop_count: count,
-        resource: "note",
     })
 }
 
@@ -175,7 +169,6 @@ pub async fn read(account: &NoteAccount, page_id: &str) -> Result<NoteRead> {
     Ok(NoteRead {
         id: page_id.to_string(),
         title,
-        url: None,
         properties: props,
         content,
     })
@@ -214,10 +207,7 @@ pub async fn append(account: &NoteAccount, page_id: &str, text: &str) -> Result<
     let appended = text.lines().filter(|l| !l.trim().is_empty()).count().max(1);
     Ok(NoteAppended {
         id: page_id.to_string(),
-        url: None,
         appended,
-        resource: "note",
-        unit: "line",
     })
 }
 
@@ -259,9 +249,7 @@ pub async fn update(
 
     Ok(NoteUpdated {
         id: page_id.to_string(),
-        url: None,
         updated_count: count,
-        resource: "note",
     })
 }
 
@@ -285,16 +273,11 @@ impl NoteBackend for LocalNoteBackend {
         search(&self.account, query, limit).await
     }
 
-    async fn list(&self, _db_id: Option<&str>, limit: usize) -> Result<Vec<NoteListEntry>> {
+    async fn list(&self, limit: usize) -> Result<Vec<NoteListEntry>> {
         list(&self.account, limit).await
     }
 
-    async fn create(
-        &self,
-        title: &str,
-        _db_id: Option<&str>,
-        props: &[(String, String)],
-    ) -> Result<NoteCreated> {
+    async fn create(&self, title: &str, props: &[(String, String)]) -> Result<NoteCreated> {
         create(&self.account, title, props).await
     }
 
@@ -483,9 +466,9 @@ fn snippet_from_content(content: &str, max_chars: usize) -> String {
 
 /// Provider adapter: implements [`Searchable`] for one local note account.
 ///
-/// One provider per local account. Notion accounts are not searchable in
-/// v1 (consistent with [S005](../../../docs/adr/S005-time-semantics-scope.md):
-/// live-fetch-on-search rejected; local cache only).
+/// One provider per local account, searching the local SQLite store.
+/// Live-fetch-on-search is rejected (consistent with
+/// [S005](../../../docs/adr/S005-time-semantics-scope.md): local cache only).
 #[allow(dead_code)] // public API: wired into SearchRegistry in a later commit.
 pub struct NoteSearchProvider {
     account: NoteAccount,
@@ -524,7 +507,6 @@ mod tests {
         NoteAccount {
             name: "test".into(),
             provider: "local".into(),
-            default_database_id: None,
             default_page_id: None,
             db_path: Some(file.to_string_lossy().to_string()),
         }

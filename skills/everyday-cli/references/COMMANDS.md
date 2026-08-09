@@ -20,13 +20,13 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `mail` | ✅ Complete (v0.6.1) | IMAP receive + SMTP send + keyring credentials + local envelope cache (`mail list` reads from `~/.config/everyday/mail_cache.db`, auto-syncs if stale > 15min, `--sync` to force) |
 | `cal` | ✅ Complete | CalDAV calendars / list / add / delete |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
-| `note` | ✅ Complete | Notion: search / list / create / read / append / update |
-| `todo` | ✅ Complete | Notion/local tasks (shared `notion-client` SDK for notion): init-db / list / add / start / complete / **delete** |
-| `bookmark` | ✅ Complete | Notion/local bookmarks (shared `notion-client` SDK for notion): init-db / list / add |
+| `note` | ✅ Complete | Local SQLite: search / list / create / read / append / update |
+| `todo` | ✅ Complete | Local SQLite tasks: list / add / start / complete / **delete** |
+| `bookmark` | ✅ Complete | Local SQLite bookmarks: add / list |
 | `auth` | ✅ Complete (v0.8.0) | login / logout / verify / list — consolidated credential lifecycle for all modules |
-| `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + ops-log AOP trace. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`). v0.6.1 修复 `--from` 单独给定被静默回退 preset 的问题 |
+| `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + local note / todo / bookmark activity. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`). v0.6.1 修复 `--from` 单独给定被静默回退 preset 的问题 |
 | `memory` | ✅ Complete (v0.10.0) | Single-instance append-only `(subject, predicate, object)` triple notebook with `--confidence` / `--source` metadata; soft delete + full version history; forward-only BFS graph (depth 1..=5); participates in `everyday search`. No `account` column, no `auth` module touch. Storage at `~/.config/everyday/memory.db` |
-| `search` | ✅ Complete (v0.7.0; v0.9.0 +mail, v0.10.0 +memory) | Cross-module unified search fan-out: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`. Modules: `note` / `todo` / `bookmark` / `rss` / `cal` / `mail` (local envelope cache) / `memory` (current-state view). Notion-backed accounts skipped in v1 |
+| `search` | ✅ Complete (v0.7.0; v0.9.0 +mail, v0.10.0 +memory) | Cross-module unified search fan-out: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`. Modules: `note` / `todo` / `bookmark` / `rss` / `cal` / `mail` (local envelope cache) / `memory` (current-state view) |
 | `health` | ✅ Complete (v0.11.0) | Root-level ops command (not a module): runs every module's local-only `health_check`, one row per module. Exit 0 when all healthy, 1 when any degraded. JSON = array of `{module, healthy, detail}` |
 
 ---
@@ -59,7 +59,7 @@ Config file: `~/.config/everyday/config.toml` (resolved cross-platform via `dirs
 
 ## auth — credential lifecycle ✅
 
-Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring (default: store only; `--verify` also verifies). Password strategy (mail/cal) uses `--password`; Notion token strategy (note/todo/bookmark when `provider=notion`) uses `--token`. If the flag is omitted, it falls back to an interactive prompt. Passwords/tokens never touch disk.
+Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring (default: store only; `--verify` also verifies). Password strategy (mail/cal) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
 
 | Command | Description | Example |
 |---------|-------------|---------|
@@ -75,7 +75,6 @@ Consolidated credential management for all modules. Modules read stored credenti
 | `--module <MOD>` | all | Target module (`mail` / `cal` / `note` / `todo` / `bookmark`) |
 | `--account NAME` | all | Specify account (override default) |
 | `--password PWD` | `login` | Password (mail/cal); falls back to interactive prompt |
-| `--token TOK` | `login` | Notion token (note/todo/bookmark); falls back to interactive prompt |
 | `--verify` | `login` | Also verify the credential against the server after storing |
 
 ---
@@ -180,42 +179,36 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → creden
 
 ---
 
-## note — Notion notes & knowledge base ✅
+## note — notes & knowledge base (local SQLite) ✅
 
-Credentials: config holds account metadata (`provider`, `default_database_id`, `default_page_id`) → the Notion Integration Token (`ntn_...`) is stored via `everyday auth login --module note [--account NAME]` into the OS keyring → other commands read it automatically via `auth::get_credential`. The token never touches disk. Design goal: hide Notion's nested Block model behind plain-text/Markdown append and simplified property ops.
-
-**Setup:** create a Notion integration to get the `ntn_...` token, store it via `everyday auth login --module note`, set `[[note.accounts]]` in config, then **share the target page/database with the integration** in Notion.
+Notes are stored in a local SQLite database per account (`~/.config/everyday/note-<account>.db`); no credentials or network needed — data lives entirely on the local machine. Plain-text/Markdown append and simplified property ops.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `note search` | Search pages/databases by title | `everyday note search --query "工作" --limit 10 --json` |
-| `note list` | List pages in a database (`--db` or `default_database_id`) | `everyday note list --db "db_abc" --limit 20 --json` |
-| `note create` | Create a page (record) in a database, with properties | `everyday note create --title T --db ID --prop "状态:未读" --json` |
-| `note read` | Read a page; render its content as aggregated Markdown | `everyday note read <page_id> --json` |
-| `note append` | Append text/markdown blocks to a page (or pipe via stdin) | `everyday note append <page_id> --text "内容"` |
-| `note update` | Update a page's properties (metadata) | `everyday note update <page_id> --prop "状态:已读" --json` |
+| `note search` | Search notes by title | `everyday note search --query "工作" --limit 10 --json` |
+| `note list` | List notes | `everyday note list --limit 20 --json` |
+| `note create` | Create a note with properties | `everyday note create --title T --prop "状态:未读" --json` |
+| `note read` | Read a note; render its content as aggregated Markdown | `everyday note read <note_id> --json` |
+| `note append` | Append text/markdown to a note (or pipe via stdin) | `everyday note append <note_id> --text "内容"` |
+| `note update` | Update a note's properties (metadata) | `everyday note update <note_id> --prop "状态:已读" --json` |
 
-## todo — Notion task database ✅
+## todo — task management (local SQLite) ✅
 
-Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `TodoItem` (id / title / status / due / priority) to/from Notion page properties. Credentials: the Notion Integration Token (`ntn_...`) is stored via `everyday auth login --module todo [--account NAME]` into the OS keyring (service `everyday/todo/<account>`); the token never touches disk.
-
-**Setup:** create a Notion integration → store the token via `everyday auth login --module todo` → add `[[todo.accounts]]` with `parent_page_id` → `everyday todo init-db` (creates the Task/Status/Due/Priority database and writes `database_id` back to config; the integration must be granted access to the parent page).
+Todos are stored in a local SQLite database per account (`~/.config/everyday/todo-<account>.db`); no credentials or network needed. A clean `TodoItem` (id / title / status / due / priority) is mapped to/from local rows.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `todo init-db` | Create the todo database in Notion (needs `parent_page_id`); writes `database_id` back to config | `everyday todo init-db --parent "page_xyz"` |
-| `todo list` | List incomplete todos, sorted by due (`--all` includes Done) | `everyday todo list --db "db_abc" --json` |
+| `todo list` | List incomplete todos, sorted by due (`--all` includes Done) | `everyday todo list --json` |
 | `todo add` | Add a todo (`--title` required; `--due` / `--priority` optional) | `everyday todo add --title "写周报" --due 2026-07-15 --priority P1 --json` |
-| `todo start` | Mark a todo as In Progress | `everyday todo start <page_id>` |
-| `todo complete` | Mark a todo as Done | `everyday todo complete <page_id>` |
+| `todo start` | Mark a todo as In Progress | `everyday todo start <todo_id>` |
+| `todo complete` | Mark a todo as Done | `everyday todo complete <todo_id>` |
+| `todo delete` | Delete a todo | `everyday todo delete <todo_id> --json` |
 
 ### todo options
 
 | Flag | Applies to | Description |
 |------|-----------|-------------|
 | `--account NAME` | all | Specify account (override default) |
-| `--parent PAGE_ID` | `init-db` | Parent page for the new database; falls back to config `parent_page_id` |
-| `--db ID` | `list` / `add` | Target database; falls back to config `default_database_id` (written by `init-db`) |
 | `--all` | `list` | Include completed (Done) todos |
 | `--title T` | `add` | Task title (required) |
 | `--due DATE` | `add` | Due date (ISO 8601, e.g. `2026-07-15`) |
@@ -227,10 +220,16 @@ Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate
 [{"id":"page_abc","title":"写周报","status":"Todo","due":"2026-07-15","priority":"P1"}]
 ```
 
-### todo add / start / complete / init-db — JSON output (object)
+### todo add — JSON output (object)
 
 ```json
-{"id":"page_abc","url":"https://www.notion.so/...","title":"写周报","database_id":"db_xyz"}
+{"id":"todo_abc","url":"","title":"写周报"}
+```
+
+### todo start / complete — JSON output (object)
+
+```json
+{"id":"todo_abc","status":"In Progress","url":""}
 ```
 
 ### note options
@@ -238,59 +237,55 @@ Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate
 | Flag | Applies to | Description |
 |------|-----------|-------------|
 | `--account NAME` | all | Specify account (override default) |
-| `--query Q` | `search` | Keyword matched against page/database titles (required) |
-| `--db ID` | `create` / `list` | Target database id; defaults to `default_database_id` when omitted |
-| `--prop K:V` | `create` / `update` | Property setter, repeatable. Encoded by db schema (title/rich_text/number/checkbox/select…); value may contain `:`. |
+| `--query Q` | `search` | Keyword matched against note titles (required) |
+| `--prop K:V` | `create` / `update` | Property setter, repeatable. Value may contain `:`. |
 | `--text TEXT` | `append` | Text/markdown to append. If omitted, reads from `stdin` (non-TTY only) |
 | `--limit N` | `search` / `list` | Max rows (`search` default 10, `list` default 50, cap 100; `0` = unlimited) |
 
 ### note search — JSON output (array of objects)
 
 ```json
-[{"id":"abc123_x","type":"page","title":"2026年工作计划","last_edited":"2026-07-09 18:00","url":"https://www.notion.so/..."}]
+[{"id":"abc123_x","title":"2026年工作计划","last_edited":"2026-07-09 18:00","url":""}]
 ```
 
 ### note list — JSON output (array of objects, properties simplified to strings)
 
 ```json
-[{"id":"...","title":"Quick Note","url":"https://www.notion.so/...","last_edited":"2026-07-10T07:01:00.000Z","properties":{"名称":"Quick Note"}}]
+[{"id":"...","title":"Quick Note","url":"","last_edited":"2026-07-10T07:01:00.000Z","properties":{"名称":"Quick Note"}}]
 ```
 
 ### note create — JSON output (object)
 
 ```json
-{"id":"...","url":"https://www.notion.so/...","title":"Rust 异步运行时深入浅出","database_id":"db_abc123"}
+{"id":"...","title":"Rust 异步运行时深入浅出","properties":{"状态":"未读"}}
 ```
 
 ### note read — JSON output (object with aggregated Markdown)
 
 ```json
-{"id":"abc123_x","title":"2026年工作计划","url":"https://www.notion.so/...","properties":{"Status":"In Progress"},"content":"# 2026年工作计划\n\n## 核心目标\n- 完成 everyday CLI 稳定版发布。"}
+{"id":"abc123_x","title":"2026年工作计划","url":"","properties":{"Status":"In Progress"},"content":"# 2026年工作计划\n\n## 核心目标\n- 完成 everyday CLI 稳定版发布。"}
 ```
 
 ### note append — JSON output (object)
 
 ```json
-{"id":"...","url":"https://www.notion.so/...","appended":3}
+{"id":"...","url":"","appended":3}
 ```
 
 ### note update — JSON output (object)
 
 ```json
-{"id":"...","url":"https://www.notion.so/...","updated":1}
+{"id":"...","url":"","updated":1}
 ```
 
 ---
 
-## bookmark — bookmarks (local SQLite by default / optional Notion)
+## bookmark — bookmarks (local SQLite) ✅
 
-Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate-limit retry). Maps a clean `BookmarkItem` (id / url / title / tags) to/from Notion page properties (Title / URL / Tags). Credentials: the Notion Integration Token (`ntn_...`) is stored via `everyday auth login --module bookmark [--account NAME]` into the OS keyring (service `everyday/bookmark/<account>`); the token never touches disk. The **local SQLite provider is the default** (`provider = "local"`, alias `sqlite`): no credentials, no network, bookmarks stored at `~/.config/everyday/bookmark-<account>.db`. Command usage is identical across both providers.
-
-**Setup (Notion only):** create a Notion integration → store the token via `everyday auth login --module bookmark` → add `[[bookmark.accounts]]` with `parent_page_id` → `everyday bookmark init-db` (creates the Title/URL/Tags database and writes `database_id` back to config; the integration must be granted access to the parent page).
+Bookmarks are stored in a local SQLite database per account (`~/.config/everyday/bookmark-<account>.db`); no credentials, no network. A clean `BookmarkItem` (id / url / title / tags) is mapped to/from local rows.
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `bookmark init-db` | Create the bookmark database (Notion needs `parent_page_id`); writes `database_id` back to config | `everyday bookmark init-db --parent "page_xyz"` |
 | `bookmark list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list --tag rust --json` |
 | `bookmark add` | Add a bookmark (`--url` and `--title` required; `--tags` optional, comma-separated) | `everyday bookmark add --url "https://..." --title "Rust" --tags "rust,cli" --json` |
 
@@ -299,8 +294,6 @@ Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate
 | Flag | Applies to | Description |
 |------|-----------|-------------|
 | `--account NAME` | all | Specify account (override default) |
-| `--parent PAGE_ID` | `init-db` | Parent page for the new database; falls back to config `parent_page_id` |
-| `--db ID` | `list` / `add` | Target database; falls back to config `default_database_id` (written by `init-db`, Notion only) |
 | `--tag TAG` | `list` | Filter by a single tag (exact match); omit to list all |
 | `--url U` | `add` | Bookmark URL (required) |
 | `--title T` | `add` | Bookmark title (required) |
@@ -322,7 +315,7 @@ Built on the shared `notion-client` SDK (handles HTTP, token injection, 429 rate
 
 ## timeline — unified event log ✅ (v0.5.0)
 
-Append-only event log aggregating `mail` / `cal` / `rss` + the `ops-log` AOP trace of Notion-backed `note` / `todo` / `bookmark` writes. Storage is a separate SQLite at `~/.config/everyday/timeline.db` (does not touch provider DBs).
+Append-only event log aggregating `mail` / `cal` / `rss` + local `note` / `todo` / `bookmark` activity. Events come from the local providers (`mail` / `cal` / `rss` pulled during `sync`; `note` / `todo` / `bookmark` projected from their local SQLite tables). Storage is a separate SQLite at `~/.config/everyday/timeline.db` (does not touch provider DBs).
 
 ### timeline actions
 
@@ -390,7 +383,7 @@ Append-only event log aggregating `mail` / `cal` / `rss` + the `ops-log` AOP tra
 
 `source` values:
 - `mail` / `cal` / `rss` — pulled from the network providers during `sync`.
-- `todo` / `note` / `bookmark` — projected from `~/.config/everyday/ops-log.db` via `OpsLogProvider` (the result of AOP records of CLI writes).
+- `todo` / `note` / `bookmark` — projected from their local SQLite tables (current-state projection).
 - `*_local` suffix is **not** produced; local providers are projected under their module name (`todo`, `note`, `bookmark`).
 
 `timestamp` is RFC3339 UTC. Display formatting is the consumer's job (the CLI's Text renderer formats it in the user's local timezone).
@@ -400,7 +393,7 @@ Append-only event log aggregating `mail` / `cal` / `rss` + the `ops-log` AOP tra
 - **Append-only.** Re-running `sync` does not duplicate rows — natural key `(source, account, ref_id, event_type, timestamp)` is upserted with `INSERT OR IGNORE`.
 - **Cal is the only window-refresh provider.** Each `sync` rewrites the cal window `[last_sync, now+7d]`, so cancelled events disappear. Other providers are purely append.
 - **No `--from` / `--to` and no `--since` together.** `--from` / `--to` win; `--since` wins over preset; preset is the fallback. The combinations `today + --since 2026-07-09` widen `from` while keeping `to` at `now()` (useful for "today's window expanded to start earlier").
-- **Notion writes never hit the Notion API during sync.** They are inferred from `~/.config/everyday/ops-log.db`. Add `--sync` to ensure a recent write has been AOP-recorded (writes are recorded synchronously by the CLI, so this is rarely needed, but it helps when scripting).
+- **Local note/todo/bookmark events are projected from their SQLite tables during `sync`.** Each `sync` re-projects current state, upserted by the natural key above.
 
 ---
 
@@ -496,24 +489,15 @@ category = "tech"
 
 [[note.accounts]]
 name = "personal"
-provider = "notion"
-default_database_id = "db_abc123..."
-default_page_id = "page_xyz789..."
-# Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/note/personal"
+provider = "local"   # alias "sqlite"; `provider = "notion"` is no longer supported (validation error)
 
 [[todo.accounts]]
 name = "personal"
-provider = "notion"
-parent_page_id = "page_parent_..."     # init-db needs this
-# default_database_id is written back here automatically by `everyday todo init-db`
-# Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/todo/personal"
+provider = "local"
 
 [[bookmark.accounts]]
 name = "personal"
-provider = "notion"
-parent_page_id = "page_parent_..."     # init-db needs this
-# default_database_id is written back here automatically by `everyday bookmark init-db`
-# Notion Integration Token (ntn_...) is NOT stored here; it lives in keyring service="everyday/bookmark/personal"
+provider = "local"
 ```
 
 **Keyring service-name convention:** `everyday/<module>/<account>` (e.g. `everyday/mail/work`, `everyday/note/personal`, `everyday/todo/personal`, `everyday/bookmark/personal`).

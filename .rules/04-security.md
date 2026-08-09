@@ -21,8 +21,6 @@
   reads, 10s for sends (see [F009](../docs/adr/F009-performance-budget.md)).
 - ❌ No use of `tokio::net::TcpStream` without a `tokio::time::timeout` wrapper.
 - ❌ No retry loop on `Auth` / `InvalidArgument` — these are terminal.
-- ✅ On 429 (Notion): back off using the `Retry-After` header (default 1s), once
-  only. See the [Notion shared client decision](../docs/adr/F004-shared-notion-client.md).
 
 ## Local file operations
 

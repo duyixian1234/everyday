@@ -4,7 +4,7 @@
 
 **语言 / Language:** **English** · [简体中文](README_ZH.md)
 
-`everyday` is a high-performance, memory-safe local CLI toolkit written in Rust. It acts as the "digital hands" of an AI Agent, offering a unified command structure that covers external-integration scenarios — email, calendar, RSS feeds, notes (local SQLite by default / optional Notion), to-dos (local SQLite by default / optional Notion), bookmarks (local SQLite by default / optional Notion), and a structured agent memory notebook — with dual Text / JSON output modes.
+`everyday` is a high-performance, memory-safe local CLI toolkit written in Rust. It acts as the "digital hands" of an AI Agent, offering a unified command structure that covers external-integration scenarios — email, calendar, RSS feeds, notes (local SQLite), to-dos (local SQLite), bookmarks (local SQLite), and a structured agent memory notebook — with dual Text / JSON output modes.
 
 ## What everyday is for
 
@@ -222,15 +222,15 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `list` | List feeds | ✅ Available | `everyday rss list` |
 | `digest` | Aggregate recent items | ✅ Available | `everyday rss digest [--limit N]` |
 
-### note — notes & knowledge base (local SQLite by default / optional Notion)
+### note — notes & knowledge base (local SQLite)
 
-**Uses the local SQLite provider by default (`provider = "local"`, alias `sqlite`)**: no credentials, no network, data stored at `~/.config/everyday/note-<account>.db`, works out of the box. You can also set `provider = "notion"` to use the Notion API, which hides the tedious block nesting and exposes two high-level capabilities to the Agent — **plain-text / Markdown append** and **simplified property operations** (the Notion integration token lives only in the system keyring, never on disk). Command usage is identical across both providers.
+**Uses the local SQLite provider (`provider = "local"`, alias `sqlite`)**: no credentials, no network, data stored at `~/.config/everyday/note-<account>.db`, works out of the box.
 
 | Command | Description | Usage |
 |------|------|------|
 | `search` | Search pages / databases by title | `everyday note search --query Q [--limit N]` |
-| `list` | List pages in a database | `everyday note list [--db ID] [--limit N]` |
-| `create` | Create a new page (record) in a database | `everyday note create --title T [--db ID] [--prop K:V ...]` |
+| `list` | List pages in a database | `everyday note list [--limit N]` |
+| `create` | Create a new page (record) in a database | `everyday note create --title T [--prop K:V ...]` |
 | `read` | Read a page body, aggregated into Markdown | `everyday note read <page_id>` |
 | `append` | Append a text block to the end of a page | `everyday note append [page_id] --text TEXT` |
 | `update` | Modify page properties (meta) | `everyday note update <page_id> --prop K:V ...` |
@@ -241,23 +241,20 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 |------|----------|------|
 | `--account NAME` | all | Specify the account |
 | `--query Q` | `search` | Keyword search (page / database title) |
-| `--db ID` | `create` / `list` | Target database ID; falls back to config `default_database_id` |
 | `--prop K:V` | `create` / `update` | Simplified property setting, repeatable; encoded precisely against the database schema (title / text / number / checkbox / select, etc.), values may contain colons |
 | `--text TEXT` | `append` | Text to append; when omitted, read from piped `stdin` (non-terminal mode only) |
 | `--limit N` | `search` / `list` | Limit the count (`search` default 10, `list` default 50, cap 100; `--limit 0` means unlimited) |
 
 > **Local provider (default)**: no setup needed — just run `everyday note create` / `append`; the database file is created automatically.
-> **Notion provider**: create an integration in Notion to get an `ntn_...` token → store it via `everyday auth login --module note` in the keyring → set that account to `provider = "notion"` in the config and fill in `default_database_id` / `default_page_id` → **share** the target page / database with the integration in Notion.
 
-### todo — to-do tasks (local SQLite by default / optional Notion)
+### todo — to-do tasks (local SQLite)
 
-**Uses the local SQLite provider by default (`provider = "local"`, alias `sqlite`)**: no credentials, no network, tasks stored at `~/.config/everyday/todo-<account>.db`, tables auto-created per command, works out of the box. You can also set `provider = "notion"` to use a Notion database: low-level HTTP / token injection / 429 rate-limit retries are handled uniformly by the shared `notion-client`, while this module maps the clean domain model `TodoItem` (id / title / status / due / priority) to Notion's raw properties with strong typing (the token lives only in the system keyring `everyday/todo/<account>`; non-secret metadata such as `database_id` may be stored in the config). Command usage is identical across both providers.
+**Uses the local SQLite provider (`provider = "local"`, alias `sqlite`)**: no credentials, no network, tasks stored at `~/.config/everyday/todo-<account>.db`, tables auto-created per command, works out of the box.
 
 | Command | Description | Usage |
 |------|------|------|
-| `init-db` | Init tables: local provider creates the SQLite table; Notion provider creates the task database (requires `parent_page_id`) and back-fills `database_id` | `everyday todo init-db [--account NAME] [--parent PAGE_ID]` |
-| `list` | List unfinished tasks (by Due ascending) | `everyday todo list [--db ID] [--all]` |
-| `add` | Add a task | `everyday todo add --title T [--due DATE] [--priority P] [--db ID]` |
+| `list` | List unfinished tasks (by Due ascending) | `everyday todo list [--all]` |
+| `add` | Add a task | `everyday todo add --title T [--due DATE] [--priority P]` |
 | `start` | Mark a task as In Progress | `everyday todo start <page_id>` |
 | `complete` | Mark a task as Done | `everyday todo complete <page_id>` |
 
@@ -266,33 +263,27 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | Option | Applies to | Description |
 |------|----------|------|
 | `--account NAME` | all | Specify the account |
-| `--parent PAGE_ID` | `init-db` | Parent page when creating the database; falls back to config `parent_page_id` |
-| `--db ID` | `list` / `add` | Target database ID; falls back to config `default_database_id` (auto-filled after `init-db`) |
 | `--all` | `list` | List all tasks (including Done) |
 | `--title T` | `add` | Task title (required) |
 | `--due DATE` | `add` | Due date (ISO 8601, e.g. `2026-07-15`) |
 | `--priority P` | `add` | Priority (select: P0 / P1 / P2) |
 
 > **Local provider (default)**: no setup needed — just run `everyday todo add` / `list`; the database file and tables are created automatically.
-> **Notion provider**: create an integration in Notion to get an `ntn_...` token → store it via `everyday auth login --module todo` in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday todo init-db` to create the task database and authorize the integration to access the parent page. Then `list` / `add` / `start` / `complete` are ready to use.
 
-### bookmark — bookmarks (local SQLite by default / optional Notion)
+### bookmark — bookmarks (local SQLite)
 
-**Uses the local SQLite provider by default (`provider = "local"`, alias `sqlite`)**: no credentials, no network, bookmarks stored at `~/.config/everyday/bookmark-<account>.db` (a `bookmarks` table plus a `bookmark_tags` relation table enabling precise per-tag filtering), tables auto-created per command, works out of the box. You can also set `provider = "notion"` to use a Notion database: low-level HTTP / token injection / 429 rate-limit retries are handled uniformly by the shared `notion-client`, while this module maps the clean domain model `BookmarkItem` (id / url / title / tags) to Notion's raw properties (Title / URL / Tags) with strong typing (the token lives only in the system keyring `everyday/bookmark/<account>`; non-secret metadata such as `database_id` may be stored in the config). Command usage is identical across both providers.
+**Uses the local SQLite provider (`provider = "local"`, alias `sqlite`)**: no credentials, no network, bookmarks stored at `~/.config/everyday/bookmark-<account>.db` (a `bookmarks` table plus a `bookmark_tags` relation table enabling precise per-tag filtering), tables auto-created per command, works out of the box.
 
 | Command | Description | Usage |
 |------|------|------|
-| `init-db` | Init storage: local provider creates the SQLite tables; Notion provider creates the bookmark database (requires `parent_page_id`) and back-fills `database_id` | `everyday bookmark init-db [--account NAME] [--parent PAGE_ID]` |
-| `list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list [--tag TAG] [--db ID]` |
-| `add` | Add a bookmark | `everyday bookmark add --url U --title T [--tags a,b] [--db ID]` |
+| `list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list [--tag TAG]` |
+| `add` | Add a bookmark | `everyday bookmark add --url U --title T [--tags a,b]` |
 
 **Option details**:
 
 | Option | Applies to | Description |
 |------|----------|------|
 | `--account NAME` | all | Specify the account |
-| `--parent PAGE_ID` | `init-db` | Parent page when creating the database; falls back to config `parent_page_id` |
-| `--db ID` | `list` / `add` | Target database ID (Notion only); falls back to config `default_database_id` (auto-filled after `init-db`) |
 | `--tag TAG` | `list` | Filter by a single tag (exact match); omit to list all |
 | `--url U` | `add` | Bookmark URL (required) |
 | `--title T` | `add` | Bookmark title (required) |
@@ -301,11 +292,10 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 **Tag parsing**: `--tags "rust, cli , web"` is split on commas, trimmed, and empty entries dropped → `["rust", "cli", "web"]`.
 
 > **Local provider (default)**: no setup needed — just run `everyday bookmark add` / `list`; the database file and tables are created automatically.
-> **Notion provider**: create an integration in Notion to get an `ntn_...` token → store it via `everyday auth login --module bookmark` in the keyring → set that account to `provider = "notion"` in the config and fill in `parent_page_id` → `everyday bookmark init-db` to create the bookmark database and authorize the integration to access the parent page. Then `list` / `add` are ready to use.
 
 ### auth — credential lifecycle (NEW in v0.8.0)
 
-Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring. Password strategy (mail/cal) uses `--password`; Notion token strategy (note/todo/bookmark when `provider=notion`) uses `--token`. If the flag is omitted, it falls back to an interactive prompt. Passwords/tokens never touch disk.
+Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring. Password strategy (mail/cal) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
 
 | Command | Description | Usage |
 |------|------|------|
@@ -316,7 +306,7 @@ Consolidated credential management for all modules. Modules read stored credenti
 
 ### timeline — unified event timeline (NEW in v0.5.0)
 
-A single, append-only event log that aggregates events from **mail · cal · rss** plus the `ops-log` audit trail of Notion-backed `note` / `todo` / `bookmark` writes. Each source has a `TimelineProvider` adapter; sync is parallel across sources but serial within a source (rate-limit friendly). Storage is SQLite at `~/.config/everyday/timeline.db` (separate from the provider DBs).
+A single, append-only event log that aggregates local events from **mail · cal · rss · note · todo · bookmark**. Each source has a `TimelineProvider` adapter; sync is parallel across sources but serial within a source (rate-limit friendly). Storage is SQLite at `~/.config/everyday/timeline.db` (separate from the provider DBs).
 
 **Why**: instead of polling each module separately, the agent issues one query and gets a unified, time-ordered feed across all integrations.
 
@@ -349,8 +339,6 @@ everyday timeline week --json
 # Anything since 30 minutes ago (sub-day precision)
 everyday timeline today --since 30m --json
 
-# Notion todo / note / bookmark writes are visible via the ops-log provider,
-# so deltas show up automatically after each `add` / `update` / `delete`.
 everyday timeline today --source todo --json
 ```
 
@@ -362,7 +350,7 @@ One query, all modules. A single `everyday search` call fans out concurrently to
 |------|------|------|
 | `query` | Run a free-text query across every searchable module | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
 
-**Module scope**: `note` / `todo` / `bookmark` (local SQLite, GLOB over title + content/url/tag), `rss` (a local item cache table at `~/.config/everyday/rss-items.db` populated by `rss digest` / `rss fetch`), `cal` (full-pull + in-memory GLOB over summary / location / start), `mail` (local envelope cache via [S007], since v0.9.0), `memory` (current-state view GLOB over subject/predicate/object, since v0.10.0). Notion-backed accounts are skipped in v1 (live-fetch-on-search was rejected for being slow / rate-limit prone).
+**Module scope**: `note` / `todo` / `bookmark` (local SQLite, GLOB over title + content/url/tag), `rss` (a local item cache table at `~/.config/everyday/rss-items.db` populated by `rss digest` / `rss fetch`), `cal` (full-pull + in-memory GLOB over summary / location / start), `mail` (local envelope cache via [S007], since v0.9.0), `memory` (current-state view GLOB over subject/predicate/object, since v0.10.0).
 
 **Query semantics**: whitespace-tokenized, OR over tokens, case-insensitive GLOB substring (`lower(col) GLOB '*token*'`). Per-module hard cap = 50; global cap = 20 (default). `ts desc` ordering; each module's primary time is its `ts` (note: updated_at; todo: updated_at; bookmark: created_at; rss: published; cal: event start).
 
@@ -383,8 +371,7 @@ everyday search query "release" --limit 5
 
 - **Append-only**: events have a natural unique key `(source, account, ref_id, event_type, timestamp)` (`INSERT OR IGNORE`), so re-running `sync` is safe.
 - **UTC storage, local display**: timestamps are stored in UTC and rendered in the local timezone.
-- **Cal is window-refresh**: unlike the append-only mail / rss / ops-log providers, `cal` rewrites its window (`[last_sync, now+7d]`) so cancelled events actually disappear.
-- **Notion via ops-log, not via Notion API**: respect the user privacy posture in `CONTEXT.md`; the agent never programmatically browses the Notion workspace — only AOP-recorded writes show up. Local providers, when used, still go through their own `TimelineProvider`.
+- **Cal is window-refresh**: unlike the append-only mail / rss providers, `cal` rewrites its window (`[last_sync, now+7d]`) so cancelled events actually disappear.
 
 See `docs/CONTEXT.md` + `docs/adr/0001`–`0009` for the full design rationale.
 
@@ -555,14 +542,6 @@ provider = "local"
 name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/bookmarks.db"   # optional, defaults to ~/.config/everyday/bookmark-personal.db
-
-# For Notion: switch the account to provider = "notion" and configure it per each module's "prerequisites"
-# [[note.accounts]]
-# name = "notion"
-# provider = "notion"
-# default_database_id = "db_abc123..."   # use your real Notion ID
-# default_page_id = "page_xyz789..."
-# The Notion integration token (ntn_...) is NOT written here; store it via `everyday auth login --module note`
 ```
 
 ### Credential safety
@@ -631,15 +610,11 @@ everyday config get mail.accounts.0.smtp_port
 ### Notes (local SQLite by default)
 
 ```bash
-# The local provider needs no login; only provider = "notion" requires interactively storing a token (keyring only, never on disk)
-everyday auth login --module note
-
 # Search pages / databases (JSON)
 everyday note search --query "work" --json
 
-# List pages in a database (falls back to config default_database_id)
+# List pages
 everyday note list --json
-everyday note list --db "db_abc123" --limit 20
 
 # Create a record in a database with multiple properties
 everyday note create \
@@ -651,7 +626,7 @@ everyday note create \
 # Read a page body (aggregated into Markdown)
 everyday note read <page_id> --json
 
-# Append a quick note to the default scratch page (page_id optional — auto-resolves default_page_id)
+# Append a quick note to the default scratch page (page_id optional)
 everyday note append --text "### Auto-captured by AI
 Found a competitor link in message 12345: https://..."
 
@@ -665,10 +640,7 @@ everyday note update <page_id> --prop "Status:Read"
 ### To-dos (local SQLite by default)
 
 ```bash
-# The local provider needs no login — just add / list (tables auto-created);
-# only provider = "notion" requires this one-time setup: store the token, create the task database
-everyday auth login --module todo
-everyday todo init-db --parent "<page_id>"     # authorize the integration to access the parent page in Notion
+# The local provider needs no login — just add / list (tables auto-created)
 
 # List unfinished tasks (by Due ascending)
 everyday todo list --json
@@ -687,10 +659,7 @@ everyday todo complete <page_id>
 ### Bookmarks (local SQLite by default)
 
 ```bash
-# The local provider needs no login — just add / list (tables auto-created);
-# only provider = "notion" requires this one-time setup: store the token, create the bookmark database
-everyday auth login --module bookmark
-everyday bookmark init-db --parent "<page_id>"   # Notion only: authorize the integration to access the parent page
+# The local provider needs no login — just add / list (tables auto-created)
 
 # Add a bookmark with tags
 everyday bookmark add \
@@ -715,15 +684,14 @@ everyday/
 │   ├── config.rs        # Config loading & multi-account management
 │   ├── error.rs         # Unified error type AgentError
 │   ├── output.rs        # Output (Text/Json/Records rendering)
-│   ├── notion_client.rs # Shared low-level Notion API client (HTTP/rate-limit/deserialization)
 │   └── modules/
 │       ├── mod.rs       # Executor trait + ModuleRegistry
 │       ├── email.rs     # Email (IMAP/SMTP)
 │       ├── calendar.rs  # Calendar (CalDAV)
 │       ├── rss.rs       # RSS/Atom
-│       ├── note.rs      # Notes & knowledge base (Notion API)
-│       ├── todo.rs      # To-do tasks (Notion, based on notion_client)
-│       ├── bookmark.rs  # Bookmarks (Notion, based on notion_client)
+│       ├── note.rs      # Notes & knowledge base (local SQLite)
+│       ├── todo.rs      # To-do tasks (local SQLite)
+│       ├── bookmark.rs  # Bookmarks (local SQLite)
 ├── skills/
 │   ├── README.md              # Concise project intro for Agent users
 │   └── everyday-cli/
@@ -781,9 +749,9 @@ Adding a module only takes: create a file + implement the trait + register one l
 | `mail` | ✅ Fully available | IMAP receiving + SMTP sending + keyring credentials |
 | `cal` | ✅ Fully available | CalDAV calendars / list / add / delete |
 | `rss` | ✅ Fully available | follow / list / unfollow / digest / fetch |
-| `note` | ✅ Fully available | search / list / create / read / append / update (local SQLite by default, optional Notion API) |
-| `todo` | ✅ Fully available | init-db / list / add / start / complete (local SQLite by default, optional Notion API) |
-| `bookmark` | ✅ Fully available | init-db / list / add (local SQLite by default, optional Notion API) |
+| `note` | ✅ Fully available | search / list / create / read / append / update (local SQLite) |
+| `todo` | ✅ Fully available | list / add / start / complete (local SQLite) |
+| `bookmark` | ✅ Fully available | list / add (local SQLite) |
 | `auth` | ✅ Fully available (v0.8.0) | login / logout / verify / list — consolidated credential lifecycle for all modules |
 | `timeline` | ✅ Fully available | unified event log: today / yesterday / week / month / sync |
 | `search` | ✅ Fully available (NEW in v0.7.0) | cross-module unified search: query all modules in one shot |

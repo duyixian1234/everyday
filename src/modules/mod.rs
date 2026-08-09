@@ -381,7 +381,7 @@ impl ModuleRegistry {
 //
 // note / todo / bookmark are directory modules (Phase 13, ADR R016/R017):
 // each exposes `mod.rs` (Executor) + `backend.rs` (trait + factory) +
-// `notion.rs` (Notion*Backend) + `local.rs` (Local*Backend, was `*_local.rs`).
+// `local.rs` (Local*Backend, was `*_local.rs`).
 pub mod auth;
 pub mod bookmark;
 pub mod calendar;
