@@ -28,6 +28,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-09 | R | [R019](./docs/adr/R019-remove-notion-provider.md) | 移除 Notion provider：note/todo/bookmark 仅本地 SQLite；`provider="notion"` 加载即报错；ops-log/AOP 钩子/OpsLogProvider/共享客户端/令牌流全删；JSON 核心键保持稳定（v0.13.0 破坏性） |
 | 2026-08-05 | F | [F013](./docs/adr/F013-request-context-explicit-parameter.md) | P4 显式参数化 RequestContext：`Executor::execute` / middleware 钩子加 `&RequestContext`，thread-local 移除，破坏性（迁移指南内置） |
 | 2026-08-05 | F | [F012](./docs/adr/F012-architecture-deepening-phase.md) | 架构深化阶段：Phase 1（P6 TypedValue / P2c Config 校验 / P2a AccountProvider）+ Phase 2（P1 CLI/business 分离 + P2b config 子集）+ Phase 3（P3 lifecycle + P4 request context + P5 middleware）全部落地 |
 | 2026-07-14 | K | [K001–K004](./docs/adr/K001-memory-module.md) | Memory 模块设计完成（append-only 三元组 / 当前态视图 / graph / Searchable / 单实例） |
