@@ -67,6 +67,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.13.0** | `v0.13.0` | Notion provider 移除（note/todo/bookmark 仅本地 SQLite，破坏性）+ **WebDAV 设备同步**：`everyday sync` 双向文件级同步（4 用户 DB + config.toml，VACUUM INTO 快照 + SHA-256 变更检测，LWW 冲突副本），`auth --module webdav`，写命令后 opt-in auto_sync（D003）；单动作模块（sync/search）可省略 action | [R019](./docs/adr/R019-remove-notion-provider.md), [D001–D003](./docs/adr/D001-webdav-file-sync.md) |
 | **v0.12.0** | `v0.12.0` | P4 显式参数化 RequestContext：`Executor::execute` / middleware 钩子加 `&RequestContext`，thread-local 移除（破坏性，迁移指南内置） | [F013](./docs/adr/F013-request-context-explicit-parameter.md) |
 | **v0.11.0-rc** | `v0.11.0-rc` | 架构深化三阶段：P6 TypedValue / P2c Config 校验 / P2a AccountProvider / P1 CLI/business 分离 / P2b config 子集 / P3 lifecycle（`everyday health`）/ P4 RequestContext / P5 Middleware | [F012](./docs/adr/F012-architecture-deepening-phase.md) |
 | **v0.10.0** | `v0.10.0` | Memory 模块落地：append-only `(subject, predicate, object)` 三元组 + 当前态视图 + graph + Searchable | [K001–K004](./docs/adr/K001-memory-module.md) |
