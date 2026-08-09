@@ -6,6 +6,28 @@
 
 `everyday` is a high-performance, memory-safe local CLI toolkit written in Rust. It acts as the "digital hands" of an AI Agent, offering a unified command structure that covers external-integration scenarios — email, calendar, RSS feeds, notes (local SQLite by default / optional Notion), to-dos (local SQLite by default / optional Notion), bookmarks (local SQLite by default / optional Notion), and a structured agent memory notebook — with dual Text / JSON output modes.
 
+## What everyday is for
+
+Everyday is a **personal information infrastructure for AI Agents**: a single, local-first command surface through which any agent (or human) can read, write and remember personal data across services, without handing credentials to any third party.
+
+A complete agent task loop looks like this:
+
+```bash
+# 1. Agent aggregates the day across mail / calendar / RSS / todos
+everyday timeline today --json
+
+# 2. Agent answers questions across every module in one query
+everyday search query "project roadmap" --json
+
+# 3. Agent records long-term facts it learned about the user
+everyday memory add user prefers rust --json
+
+# 4. Agent turns decisions into tracked todos
+everyday todo add --title "prepare demo" --priority P1 --json
+```
+
+Every command accepts `--json`, so an agent consumes structured output directly — this is an **agent-first CLI**, not a human-first CLI with a JSON escape hatch. Credentials live in the OS keyring (never on disk), data stays in local SQLite, and the whole binary cold-starts in under 100ms.
+
 ## Features
 
 - **Unified command structure**: `everyday <module> <action> [options]`, low learning curve
