@@ -1,8 +1,22 @@
+## [0.15.0] - 2026-08-09
+
+### 🚀 Features
+
+- *(mcp)* Expose everyday capabilities as an MCP server over stdio (F014)
+
+### 🐛 Bug Fixes
+
+- *(id)* Gen_id unique across processes via PID segment
+- *(id)* Relax gen_id_embeds_pid test to not pin the seq suffix
 ## [0.14.0] - 2026-08-09
 
 ### 🚀 Features
 
 - *(auth)* Opt-in env-credential fallback when keyring is unavailable (R020)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.14.0
 ## [0.13.1] - 2026-08-09
 
 ### 🐛 Bug Fixes
