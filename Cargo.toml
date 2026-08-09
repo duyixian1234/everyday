@@ -77,3 +77,6 @@ httpdate = "1"
 
 [dev-dependencies]
 tokio-test = "0.4"
+
+# CLI contract tests (tests/cli_contract.rs) — assert_cmd drives the built binary
+assert_cmd = "2"
