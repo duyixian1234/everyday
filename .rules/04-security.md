@@ -6,7 +6,7 @@
 
 ## Credentials
 
-- ❌ **Never** store passwords or tokens in `config.toml`, env vars, command line,
+- ❌ **Never** store passwords or tokens in `config.toml`, command line,
   or logs.
 - ✅ Secrets only via [`keyring`](https://crates.io/crates/keyring) under service
   name `everyday/<module>/<account>` (see [F002](../docs/adr/F002-multi-account-keyring.md)).
@@ -14,6 +14,12 @@
 - ✅ On a headless box with no keyring backend: surface
   `AgentError::KeyringUnavailable` and offer the interactive prompt as
   fallback (already implemented in modules).
+- ⚠️ **Env-credential fallback (opt-in, [R020](../docs/adr/R020-env-credential-fallback.md)):**
+  reading secrets from environment variables is an **exception** to the
+  never-in-env rule — allowed only when the user explicitly opts in
+  (`[auth] env_credentials = true` or `EVERYDAY_ENV_CREDENTIALS=1`), for
+  headless environments with no keyring backend. Never read secrets from env
+  by default.
 
 ## Network calls
 

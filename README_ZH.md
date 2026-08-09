@@ -278,12 +278,14 @@ everyday config set default_account.mail personal
 
 全模块统一的凭证管理。各模块内部通过 `auth::get_credential` 读取已存凭证；你只需用这些命令在系统密钥环中管理凭证。密码凭证（mail/cal/webdav）使用 `--password`。若省略该 flag，则回退到交互式提示。密码绝不落盘。
 
+**环境变量回退（可选，R020）**：系统无 keyring 后端（headless 服务器 / CI / 沙箱）时，可开启 `[auth] env_credentials = true`（或 `EVERYDAY_ENV_CREDENTIALS=1`）改从环境变量读取凭据，变量名 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`（如 `EVERYDAY_MAIL_WORK_PASSWORD`）。读取链：keyring → env → 报错。env 来源的密码对每个子进程可见，仅在确无 keyring 的环境使用。
+
 | 命令 | 说明 | 用法 |
 |------|------|------|
 | `login` | 将凭证存入系统密钥环（加 `--verify` 可同时校验）。`--module` 必填；`--account` 缺省为模块默认账户 | `everyday auth login --module mail --account work --password PWD` |
-| `logout` | 从密钥环删除已存凭证 | `everyday auth logout --module mail --account work` |
-| `verify` | 读取已存凭证并向服务端校验（不重新提示）；local/sqlite 或 rss 返回 `not_required` | `everyday auth verify --module note` |
-| `list` | 列出已配置账户及其密钥环状态（stored / missing / not_required） | `everyday auth list --module todo` |
+| `logout` | 从密钥环删除已存凭证；凭证来自环境变量时提示 `unset` | `everyday auth logout --module mail --account work` |
+| `verify` | 读取已存凭证（keyring → env）并向服务端校验（不重新提示）；local/sqlite 或 rss 返回 `not_required` | `everyday auth verify --module note` |
+| `list` | 列出已配置账户及其凭证状态（stored / env / missing / not_required） | `everyday auth list --module todo` |
 
 WebDAV 设备同步请存**应用密码**（非登录密码）：`everyday auth login --module webdav --account personal`（keyring 键 `everyday/webdav/personal`）。
 
@@ -556,6 +558,7 @@ provider = "local"
 - **keyring 服务名约定**：`everyday/<module>/<account>`（如 `everyday/mail/work`）
 - **存储凭证**：`everyday auth login --module mail --account work`（交互式输入，存入密钥环）
 - **读取凭证**：模块通过 `auth::get_credential` 自动从密钥环读取，无需手动指定
+- **环境变量回退（可选，R020）**：headless 环境（无 keyring 后端）开启 `[auth] env_credentials = true` 或 `EVERYDAY_ENV_CREDENTIALS=1` 后，可 export `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` 提供凭据；读取链 keyring → env → 报错
 
 ### 多账户
 

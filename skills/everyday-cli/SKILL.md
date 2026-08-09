@@ -30,7 +30,7 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline
 
 1. **Always pass `--json`.** The agent parses structured output, never human tables.
 2. **Never put secrets in commands.** Passwords live in the OS keyring; never pass them as arguments or print them.
-3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`).
+3. **Credentials live in the keyring, not the config file.** Config holds only account metadata. Keyring service name is `everyday/<module>/<account>` (e.g. `everyday/mail/work`). **Headless exception (opt-in, R020):** when no keyring backend exists (headless server / CI / sandbox), enable `[auth] env_credentials = true` or `EVERYDAY_ENV_CREDENTIALS=1` and export `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` (e.g. `EVERYDAY_MAIL_WORK_PASSWORD`). Read chain: keyring → env → error. Env-sourced secrets are visible to every child process — use only when the keyring is truly unavailable.
 4. **Verify per action before assuming.** Modules are implemented but feature sets differ — the exact actions, options, and output schemas are in [references/COMMANDS.md](references/COMMANDS.md).
 5. **`everyday health --json`** runs a local-only health probe of every module (cache DB openable, keyring credential present — never network). Exit code 1 + `"healthy": false` rows identify degraded modules. Use it to diagnose before deeper debugging. Dispatch logs (`_log` lines, request ids) go to stderr and are safe to ignore unless debugging.
 6. **`timeline today --json` is the aggregated activity snapshot.** Prefer it over per-module polling unless the user explicitly asks for a specific module.

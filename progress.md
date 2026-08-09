@@ -11,6 +11,7 @@
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
 - **v0.13.1 已发布** — 工程质量工具栈批 1 + 批 2 落地（[G001](./docs/adr/G001-quality-tools-suite.md)）：CI 测试换 nextest（junit 报告）、typos/git-cliff/cargo-deny 门禁、CLI contract 测试层；sync 并行 tmp 目录竞争修复（Unix 可见、Windows 掩盖）；release 流水线换 cargo-dist（installer 脚本 + Sigstore attestation）。无新功能、无破坏。
+- **未发版 — env 凭据回退（[R020](./docs/adr/R020-env-credential-fallback.md)）**：为 R015 开受控例外——keyring 后端不可用（headless/CI/沙箱）时，opt-in 后可从环境变量读凭据。`[auth] env_credentials = true` 或 `EVERYDAY_ENV_CREDENTIALS=1` 双通道开关；变量 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`；读取链 keyring → env → 报错；`auth list` 新增第四态 `env`；`logout` 对 env 来源凭据提示 `unset`；login 始终写 keyring。默认行为不变（R015 仍生效）。
 - **v0.13.0 已发布** — Notion provider 移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）；**WebDAV 设备同步上线**（[D001–D003](./docs/adr/D001-webdav-file-sync.md)）：`everyday sync` 双向文件级同步（4 个用户 DB + config.toml，LWW 冲突副本），`auth` 支持 `--module webdav`，写命令后可选 auto_sync（D003，默认关）。
 - **v0.12.0 已发布** — F012 P4 显式参数化 RequestContext（[F013](./docs/adr/F013-request-context-explicit-parameter.md)）：`Executor::execute` + middleware 钩子加 `&RequestContext`，thread-local 移除；破坏性（自定义 Executor 迁移指南见 F013）。
 - **v0.11.0-rc 已发布** — 架构深化三阶段落地（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：Phase 1（P6 TypedValue / P2c Config 校验 / P2a AccountProvider）+ Phase 2（P1 CLI/business 分离 + P2b config 子集）+ Phase 3（P3 lifecycle `everyday health` / P4 RequestContext / P5 Middleware）。
@@ -32,6 +33,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-09 | R | [R020](./docs/adr/R020-env-credential-fallback.md) | env 凭据回退（opt-in）：keyring 不可用时从 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` 读凭据；双通道开关（config `[auth] env_credentials` / `EVERYDAY_ENV_CREDENTIALS=1`）；读取链 keyring→env→报错；`auth list` 第四态 `env`；logout 对 env 凭据提示 unset；login 仍写 keyring；R015 默认行为不变 |
 | 2026-08-09 | G | [G001](./docs/adr/G001-quality-tools-suite.md) | 工程质量工具栈：nextest(CI)/typos/git-cliff/cargo-deny + CLI contract 测试；semver-checks 因纯 bin 被否；4 unmaintained 依赖显式接受（G001 记录理由）；cargo-dist/sccache 留批 2 |
 | 2026-08-09 | D | [D001–D003](./docs/adr/D001-webdav-file-sync.md) | WebDAV 设备同步：D001 同步模型/范围/冲突（文件级 LWW + 冲突副本）/ D002 快照 + hash 状态（sync-state.json）/ D003 auto_sync CLI 边界（写命令 best-effort push，查询永不触发） |
 | 2026-08-09 | R | [R019](./docs/adr/R019-remove-notion-provider.md) | 移除 Notion provider：note/todo/bookmark 仅本地 SQLite；`provider="notion"` 加载即报错；ops-log/AOP 钩子/OpsLogProvider/共享客户端/令牌流全删；JSON 核心键保持稳定（v0.13.0 破坏性） |

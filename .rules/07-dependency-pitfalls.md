@@ -45,6 +45,11 @@
 - Empty-password outcome is a normal `Auth` — never panic.
 - Missing backend (headless box without Secret Service) surfaces as
   `KeyringUnavailable`; modules then offer an interactive prompt as fallback.
+- **Env-credential fallback (opt-in, [R020](../docs/adr/R020-env-credential-fallback.md)):**
+  when the backend is unavailable, credentials may instead come from
+  `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` **if** the user opted in
+  (`[auth] env_credentials = true` or `EVERYDAY_ENV_CREDENTIALS=1`). Reads go
+  keyring → env → error; `login` still always writes the keyring.
 
 ## `toml`
 

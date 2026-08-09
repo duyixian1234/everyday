@@ -245,24 +245,31 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 
 ## Auth
 
-> 凭据与认证层。设计决策见 `docs/adr/R013` `R014` `R015`。
+> 凭据与认证层。设计决策见 `docs/adr/R013` `R014` `R015` `R020`。
 
 ### Credential（凭据）
-用于向外部服务认证某账户的秘密（密码或 API token）。只存于 OS keyring，永不写入配置文件或日志。
+用于向外部服务认证某账户的秘密（密码或 API token）。默认只存于 OS keyring，永不写入配置文件或日志。**例外（R020，显式 opt-in）**：当 keyring 后端不可用时，凭据可改从环境变量读取——需开启 `[auth] env_credentials = true` 或 `EVERYDAY_ENV_CREDENTIALS=1`，变量名 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`。环境变量来源的凭据对每个子进程可见，属已知风险。
+
+### Env fallback（环境变量回退）
+keyring 后端不可用（headless 服务器 / CI / 沙箱）时的受控例外。**读取链 `keyring → env → 报错`**：keyring 命中永远优先；keyring 缺失或不可用且回退已开启时才查 env。仅影响**读取**——`login` 永远写 keyring，`logout` 永远删 keyring，env 变量只能由用户自行 export / unset。
 
 ### AuthStrategy（认证策略）
 按 (module, account) 派生出的凭据分类，决定如何存储与验证：
-- `Password`：`mail` / `cal`。keyring user = `account.username`；验证走 IMAP / CalDAV 真实登录。
+- `Password`：`mail` / `cal` / `webdav`。keyring user = `account.username`；验证走 IMAP / CalDAV / WebDAV 真实登录；env 回退适用于此类。
 - `None`：`note` / `todo` / `bookmark`（local/sqlite）与 `rss`。无凭据，无需存储或验证。
 
 ### auth 模块
-顶层命令 + 共享模块，独占凭据的完整生命周期（store / get / delete / verify）。各模块改调 `auth::get_credential` 而非自行读 keyring。
+顶层命令 + 共享模块，独占凭据的完整生命周期（store / get / delete / verify）。各模块改调 `auth::get_credential` 或 `auth::get_credential_with_user` 而非自行读 keyring。
 
 ### verify（认证）
-证明已存凭据有效的行为——连接外部服务（IMAP/CalDAV 登录）。与"凭据存储"正交：`auth login` 默认只存，`verify` 是显式可选步骤（`--verify` flag 或独立 `auth verify` 动作）。
+证明已存凭据有效的行为——连接外部服务（IMAP/CalDAV 登录）。与"凭据存储"正交：`auth login` 默认只存，`verify` 是显式可选步骤（`--verify` flag 或独立 `auth verify` 动作）。verify 走同一读取链，env 来源的凭据同样可验证。
 
-### not_required
-`verify` / `list` 的一种状态，表示该账户 provider 无需凭据（local/sqlite、rss），故无可存、无可验。
+### credential status（凭据状态）
+`auth list` 为每个 (module, account) 报告的状态，四态：
+- `stored` — keyring 命中。
+- `env` — keyring 无条目但 env 回退开启且变量存在。
+- `missing` — 两者皆无。
+- `not_required` — 该账户 provider 无需凭据（local/sqlite、rss），无可存、无可验。
 
 ---
 

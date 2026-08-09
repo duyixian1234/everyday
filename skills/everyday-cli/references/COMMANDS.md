@@ -85,12 +85,14 @@ Config file: `~/.config/everyday/config.toml` (resolved cross-platform via `dirs
 
 Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring (default: store only; `--verify` also verifies). Password strategy (mail/cal/webdav) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
 
+**Env fallback (opt-in, R020):** when the OS keyring backend is unavailable (headless server / CI / sandbox), credentials may be read from environment variables instead — enable via `[auth] env_credentials = true` in `config.toml` **or** `EVERYDAY_ENV_CREDENTIALS=1`. Variable name: `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` (e.g. `EVERYDAY_MAIL_WORK_PASSWORD`, account name uppercased, non-`[A-Z0-9]` → `_`). Read chain: keyring → env → error. `login` always writes the keyring; `logout` cannot delete an env-sourced credential (it tells you to `unset` the variable).
+
 | Command | Description | Example |
 |---------|-------------|---------|
 | `auth login` | Store a credential in the OS keyring (optionally verify). `--module` required; `--account` defaults to the module's default account | `everyday auth login --module mail --account work --password PWD` |
-| `auth logout` | Delete the stored credential from the keyring | `everyday auth logout --module mail --account work` |
-| `auth verify` | Read the stored credential and verify it against the server (no re-prompt); reports `not_required` for local/sqlite or rss | `everyday auth verify --module note` |
-| `auth list` | List configured accounts and their keyring state (stored / missing / not_required) | `everyday auth list --module todo` |
+| `auth logout` | Delete the stored credential from the keyring; errors with an `unset` hint if the credential comes from the environment | `everyday auth logout --module mail --account work` |
+| `auth verify` | Read the stored credential (keyring → env) and verify it against the server (no re-prompt); reports `not_required` for local/sqlite or rss | `everyday auth verify --module note` |
+| `auth list` | List configured accounts and their credential state: stored / env / missing / not_required | `everyday auth list --module todo` |
 
 ### auth options
 

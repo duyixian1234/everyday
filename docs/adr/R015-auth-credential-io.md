@@ -3,6 +3,8 @@
 **Status:** Accepted
 **Date:** 2026-07-12
 
+> **Update (2026-08-09):** Revised by [R020](R020-env-credential-fallback.md). The "never read from environment" rule gains a **controlled, opt-in exception**: when the OS keyring backend is unavailable, credentials may be read from environment variables (`[auth] env_credentials = true` or `EVERYDAY_ENV_CREDENTIALS=1`). The default below (no env) remains authoritative unless the user opts in.
+
 ## Context
 
 Everyday is the AI agent's "hands" — it is invoked programmatically, frequently without a TTY. The legacy `login` used `rpassword`, an **interactive** prompt, which blocks automation (the agent would have to inject keystrokes into a pseudo-terminal — fragile and insecure).

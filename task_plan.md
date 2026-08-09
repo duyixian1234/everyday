@@ -81,6 +81,9 @@
 ### Phase 19: v0.12 — P4 显式参数化 RequestContext（breaking）[complete]
 按 ADR [F013](./docs/adr/F013-request-context-explicit-parameter.md) 落地 F012 P4 的 v0.12 breaking 半程：`RequestContext` 改为显式参数贯穿 `Executor::execute` 与 middleware 栈，thread-local 传播整体移除。**破坏性**：自定义 `Executor` 实现者需加 `ctx: &RequestContext` 参数；迁移指南见 F013 §Migration guide。
 
+### Phase 20: env 凭据回退（R020，opt-in）[complete]
+按 ADR [R020](./docs/adr/R020-env-credential-fallback.md) 为 R015 开受控例外：系统无 keyring 后端时允许 opt-in 从环境变量读凭据（`[auth] env_credentials = true` 或 `EVERYDAY_ENV_CREDENTIALS=1` 双通道开关；`EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` 命名；读取链 keyring→env→报错；`auth list` 第四态 `env`；login 仍写 keyring、logout 对 env 凭据提示 unset）。默认行为不变。
+
 ---
 
 ## 关键设计决策
@@ -160,6 +163,6 @@ username = "me"
 
 ## Phase 状态汇总
 
-- Phase 1–14 全部 complete；详见上文「阶段规划」。
-- 当前最新发布：v0.9.0（Phase 14）。
+- Phase 1–18 全部 complete；Phase 19–20 已并入 v0.13 系列（Phase 20 = R020 env 凭据回退）。详见上文「阶段规划」。
+- 当前最新发布：v0.13.1（Phase 20 未发版，见 [progress.md](./progress.md)）。
 - 历史发版一览见 [progress.md](./progress.md) §发版流水。

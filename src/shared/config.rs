@@ -122,6 +122,10 @@ pub struct Config {
     #[serde(default)]
     pub default_account: DefaultAccount,
 
+    /// Auth module configuration (credential lifecycle).
+    #[serde(default)]
+    pub auth: AuthConfig,
+
     /// Mail module configuration.
     #[serde(default)]
     pub mail: MailConfig,
@@ -176,6 +180,20 @@ pub struct DefaultAccount {
     /// Default webdav sync account name.
     #[serde(default)]
     pub webdav: Option<String>,
+}
+
+/// Auth module configuration (credential lifecycle).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AuthConfig {
+    /// Allow credentials to be read from environment variables when the OS
+    /// keyring backend is unavailable (R020). **Default off — opt-in only.**
+    ///
+    /// When enabled, the read chain becomes `keyring → env → error` with
+    /// variable names `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`. The equivalent
+    /// environment switch `EVERYDAY_ENV_CREDENTIALS=1` also activates the
+    /// fallback for call sites that hold no `Config` (P2b config subsets).
+    #[serde(default)]
+    pub env_credentials: bool,
 }
 
 // ---- Mail ----
@@ -844,6 +862,27 @@ url = "https://hnrss.org/frontpage"
             Config::keyring_service("mail", "work"),
             "everyday/mail/work"
         );
+    }
+
+    // ---- Auth config (R020 env fallback) ----
+
+    #[test]
+    fn auth_env_credentials_defaults_false() {
+        // Opt-in only: absent `[auth] env_credentials` must be false.
+        let cfg: Config = toml::from_str(SAMPLE).unwrap();
+        assert!(!cfg.auth.env_credentials);
+    }
+
+    #[test]
+    fn auth_env_credentials_parses_true() {
+        let cfg: Config = toml::from_str(
+            r#"
+[auth]
+env_credentials = true
+"#,
+        )
+        .unwrap();
+        assert!(cfg.auth.env_credentials);
     }
 
     // ---- P2c: load-time semantic validation (F012) ----

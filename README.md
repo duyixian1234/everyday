@@ -300,12 +300,14 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring. Password strategy (mail/cal/webdav) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
 
+**Env fallback (opt-in, R020):** when no OS keyring backend exists (headless server / CI / sandbox), enable `[auth] env_credentials = true` (or `EVERYDAY_ENV_CREDENTIALS=1`) and export `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` (e.g. `EVERYDAY_MAIL_WORK_PASSWORD`). Read chain: keyring → env → error. Env-sourced secrets are visible to every child process — use only when the keyring is truly unavailable.
+
 | Command | Description | Usage |
 |------|------|------|
 | `login` | Store a credential in the OS keyring (optionally verify with `--verify`). `--module` required; `--account` defaults to the module's default account | `everyday auth login --module mail --account work --password PWD` |
-| `logout` | Delete the stored credential from the keyring | `everyday auth logout --module mail --account work` |
-| `verify` | Read the stored credential and verify it against the server (no re-prompt); reports `not_required` for local/sqlite or rss | `everyday auth verify --module note` |
-| `list` | List configured accounts and their keyring state (stored / missing / not_required) | `everyday auth list --module todo` |
+| `logout` | Delete the stored credential from the keyring; errors with an `unset` hint if the credential comes from the environment | `everyday auth logout --module mail --account work` |
+| `verify` | Read the stored credential (keyring → env) and verify it against the server (no re-prompt); reports `not_required` for local/sqlite or rss | `everyday auth verify --module note` |
+| `list` | List configured accounts and their credential state: stored / env / missing / not_required | `everyday auth list --module todo` |
 
 For WebDAV device sync, store the **application password** (not the login password): `everyday auth login --module webdav --account personal` (keyring `everyday/webdav/personal`).
 
@@ -577,6 +579,7 @@ Passwords are **never** stored in the config file; they are managed through the 
 - **keyring service naming**: `everyday/<module>/<account>` (e.g. `everyday/mail/work`)
 - **Store a credential**: `everyday auth login --module mail --account work` (interactive input; password stored in the keyring)
 - **Read a credential**: the module reads it from the keyring automatically via `auth::get_credential` — no manual step needed
+- **Env fallback (opt-in, R020)**: on headless systems (no keyring backend), enable `[auth] env_credentials = true` or `EVERYDAY_ENV_CREDENTIALS=1` and export `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`; read chain keyring → env → error
 
 ### Multiple accounts
 
