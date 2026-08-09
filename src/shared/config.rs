@@ -105,6 +105,16 @@ impl AccountProvider for BookmarkConfig {
     }
 }
 
+impl AccountProvider for WebdavConfig {
+    type Account = WebdavAccount;
+    fn module_name(&self) -> &'static str {
+        "webdav"
+    }
+    fn account_list(&self) -> &[WebdavAccount] {
+        &self.accounts
+    }
+}
+
 /// Top-level configuration.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct Config {
@@ -135,6 +145,10 @@ pub struct Config {
     /// Bookmark module configuration.
     #[serde(default)]
     pub bookmark: BookmarkConfig,
+
+    /// WebDAV device-sync configuration (cross-device file sync, ADR D001–D003).
+    #[serde(default)]
+    pub webdav: WebdavConfig,
 }
 
 /// Per-module default account names.
@@ -158,6 +172,10 @@ pub struct DefaultAccount {
     /// Default bookmark account name.
     #[serde(default)]
     pub bookmark: Option<String>,
+
+    /// Default webdav sync account name.
+    #[serde(default)]
+    pub webdav: Option<String>,
 }
 
 // ---- Mail ----
@@ -332,6 +350,35 @@ pub struct BookmarkConfig {
 /// Shares `LocalAccount` fields; the type alias keeps backward compat.
 pub type BookmarkAccount = LocalAccount;
 
+// ---- WebDAV ----
+
+/// WebDAV device-sync configuration (ADR D001).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct WebdavConfig {
+    /// Named account list (each account is one sync namespace).
+    #[serde(default)]
+    pub accounts: Vec<WebdavAccount>,
+}
+
+/// A single WebDAV sync account.
+///
+/// The application password (not the login password) lives in the OS keyring
+/// under `everyday/webdav/<name>` — never in the config file ([F002]).
+/// `url` is the remote directory (e.g. `https://dav.jianguoyun.com/dav/everyday`);
+/// synced files are PUT/GET under `{url}/{name}`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebdavAccount {
+    /// Account name (e.g. `personal`).
+    pub name: String,
+    /// WebDAV remote directory URL (RFC 4918).
+    pub url: String,
+    /// WebDAV username (e.g. your Jianguoyun email).
+    pub username: String,
+    /// Best-effort push after write commands (opt-in, default off — D003).
+    #[serde(default)]
+    pub auto_sync: bool,
+}
+
 // ---- Module config subsets (P2b, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
 //
 // Each business module receives only its own config section at construction,
@@ -493,6 +540,11 @@ impl Config {
             self.default_account.bookmark.as_deref(),
             &self.bookmark.accounts,
         )?;
+        validate_default_account(
+            "webdav",
+            self.default_account.webdav.as_deref(),
+            &self.webdav.accounts,
+        )?;
 
         for a in &self.mail.accounts {
             require_nonempty("mail", &a.name, "name")?;
@@ -517,6 +569,11 @@ impl Config {
         }
         for a in &self.bookmark.accounts {
             validate_local_account("bookmark", a)?;
+        }
+        for a in &self.webdav.accounts {
+            require_nonempty("webdav", &a.name, "name")?;
+            require_nonempty("webdav", &a.url, "url")?;
+            require_nonempty("webdav", &a.username, "username")?;
         }
         Ok(())
     }
@@ -570,6 +627,12 @@ impl Config {
             .resolve_account(override_name, self.default_account.calendar.as_deref())
     }
 
+    /// Resolve the webdav sync account: `override_name` > default > error.
+    pub fn webdav_account(&self, override_name: Option<&str>) -> Result<&WebdavAccount> {
+        self.webdav
+            .resolve_account(override_name, self.default_account.webdav.as_deref())
+    }
+
     /// keyring service-name convention: `everyday/<module>/<account>`.
     /// See [F002](../../docs/adr/F002-multi-account-keyring.md).
     pub fn keyring_service(module: &str, account: &str) -> String {
@@ -603,6 +666,11 @@ impl NamedAccount for NoteAccount {
 /// Covers both `TodoAccount` and `BookmarkAccount` (type aliases of
 /// `LocalAccount`).
 impl NamedAccount for LocalAccount {
+    fn name(&self) -> &str {
+        &self.name
+    }
+}
+impl NamedAccount for WebdavAccount {
     fn name(&self) -> &str {
         &self.name
     }
@@ -1187,5 +1255,129 @@ name = "x"
         )
         .unwrap();
         assert_eq!(cfg.bookmark.accounts[0].provider, "local");
+    }
+
+    // ---- WebDAV device sync (ADR D001) ----
+
+    #[test]
+    fn parses_webdav_account() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+webdav = "personal"
+
+[[webdav.accounts]]
+name = "personal"
+url = "https://dav.jianguoyun.com/dav/everyday"
+username = "me@example.com"
+"#,
+        )
+        .unwrap();
+        assert_eq!(cfg.webdav.accounts.len(), 1);
+        assert_eq!(
+            cfg.webdav.accounts[0].url,
+            "https://dav.jianguoyun.com/dav/everyday"
+        );
+        assert_eq!(cfg.webdav.accounts[0].username, "me@example.com");
+        // auto_sync defaults to off (opt-in, D003).
+        assert!(!cfg.webdav.accounts[0].auto_sync);
+        assert_eq!(cfg.default_account.webdav.as_deref(), Some("personal"));
+    }
+
+    #[test]
+    fn parses_webdav_auto_sync_true() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[webdav.accounts]]
+name = "p"
+url = "https://dav.example.com/x"
+username = "u"
+auto_sync = true
+"#,
+        )
+        .unwrap();
+        assert!(cfg.webdav.accounts[0].auto_sync);
+    }
+
+    #[test]
+    fn webdav_default_has_no_accounts() {
+        let cfg = Config::default();
+        assert!(cfg.webdav.accounts.is_empty());
+        assert!(cfg.default_account.webdav.is_none());
+    }
+
+    #[test]
+    fn resolves_default_webdav_account() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+webdav = "personal"
+
+[[webdav.accounts]]
+name = "personal"
+url = "https://dav.example.com/x"
+username = "u"
+"#,
+        )
+        .unwrap();
+        let acc = cfg.webdav_account(None).unwrap();
+        assert_eq!(acc.name, "personal");
+    }
+
+    #[test]
+    fn resolves_overridden_webdav_account() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[webdav.accounts]]
+name = "a"
+url = "https://dav.example.com/a"
+username = "u1"
+
+[[webdav.accounts]]
+name = "b"
+url = "https://dav.example.com/b"
+username = "u2"
+"#,
+        )
+        .unwrap();
+        let acc = cfg.webdav_account(Some("b")).unwrap();
+        assert_eq!(acc.username, "u2");
+    }
+
+    #[test]
+    fn missing_webdav_account_errors() {
+        let cfg = Config::default();
+        let err = cfg.webdav_account(None).unwrap_err();
+        assert_eq!(err.type_name(), "AccountNotFound");
+    }
+
+    #[test]
+    fn validate_webdav_required_fields() {
+        let cfg: Config = toml::from_str(
+            r#"
+[[webdav.accounts]]
+name = "x"
+url = ""
+username = "u"
+"#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.type_name(), "ConfigError");
+        assert!(err.message().contains("url"), "{}", err.message());
+    }
+
+    #[test]
+    fn validate_webdav_default_account_must_exist() {
+        let cfg: Config = toml::from_str(
+            r#"
+[default_account]
+webdav = "ghost"
+"#,
+        )
+        .unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.type_name(), "ConfigError");
+        assert!(err.message().contains("webdav"), "{}", err.message());
     }
 }

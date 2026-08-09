@@ -47,7 +47,7 @@ pub enum AuthStrategy {
 /// parameter is kept for signature stability.
 pub fn resolve_strategy(_config: &Config, module: &str, _account: &str) -> Result<AuthStrategy> {
     match module {
-        "mail" | "cal" => Ok(AuthStrategy::Password),
+        "mail" | "cal" | "webdav" => Ok(AuthStrategy::Password),
         "note" | "todo" | "bookmark" => Ok(AuthStrategy::None),
         "rss" => Ok(AuthStrategy::None),
         other => Err(AgentError::InvalidArgument(format!(
@@ -61,6 +61,7 @@ fn username_for(config: &Config, module: &str, account: &str) -> Result<String> 
     match module {
         "mail" => Ok(config.mail_account(Some(account))?.username.clone()),
         "cal" => Ok(config.calendar_account(Some(account))?.username.clone()),
+        "webdav" => Ok(config.webdav_account(Some(account))?.username.clone()),
         other => Err(AgentError::InvalidArgument(format!(
             "module '{other}' has no password/username credential"
         ))),
@@ -154,6 +155,7 @@ fn default_account_name(config: &Config, module: &str) -> Option<String> {
         "note" => config.default_account.note.clone(),
         "todo" => config.default_account.todo.clone(),
         "bookmark" => config.default_account.bookmark.clone(),
+        "webdav" => config.default_account.webdav.clone(),
         _ => None,
     }
 }
@@ -187,6 +189,12 @@ fn list_accounts(config: &Config, module: &str) -> Vec<String> {
             .collect(),
         "bookmark" => config
             .bookmark
+            .accounts
+            .iter()
+            .map(|a| a.name.clone())
+            .collect(),
+        "webdav" => config
+            .webdav
             .accounts
             .iter()
             .map(|a| a.name.clone())
@@ -307,6 +315,10 @@ impl ConfigAuthBackend {
                 let acc = self.config.calendar_account(Some(account))?;
                 calendar::cal_verify(acc, &secret).await?;
             }
+            "webdav" => {
+                let acc = self.config.webdav_account(Some(account))?;
+                verify_webdav_remote(&acc.url, &acc.username, &secret).await?;
+            }
             other => {
                 return Err(AgentError::InvalidArgument(format!(
                     "module '{other}' does not support verification"
@@ -394,7 +406,7 @@ impl AuthBackend for ConfigAuthBackend {
     async fn list(&self, module: Option<&str>) -> Result<Vec<CredentialRow>> {
         let modules: Vec<&str> = match module {
             Some(m) => vec![m],
-            None => vec!["mail", "cal", "note", "todo", "bookmark"],
+            None => vec!["mail", "cal", "note", "todo", "bookmark", "webdav"],
         };
         let mut rows = Vec::new();
         for m in &modules {
@@ -421,6 +433,39 @@ impl AuthBackend for ConfigAuthBackend {
 /// Build the auth backend for the current config.
 pub fn for_config(config: &Arc<Config>) -> Box<dyn AuthBackend> {
     Box::new(ConfigAuthBackend::new(config.clone()))
+}
+
+/// Verify a WebDAV credential by PROPFINDing the remote directory: HTTP 401/403
+/// means the application password is wrong. Inlined here (not in the sync
+/// module) to keep the dependency direction auth → modules one-way — sync
+/// reads credentials via `auth::get_credential_with_user`, so auth must not
+/// depend back on sync.
+async fn verify_webdav_remote(url: &str, username: &str, secret: &str) -> Result<()> {
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(10))
+        .build()
+        .map_err(|e| AgentError::Network(format!("build http client: {e}")))?;
+    let method = reqwest::Method::from_bytes(b"PROPFIND")
+        .map_err(|e| AgentError::Other(format!("invalid method token: {e}")))?;
+    let resp = client
+        .request(method, url)
+        .header("Depth", "0")
+        .basic_auth(username, Some(secret))
+        .send()
+        .await
+        .map_err(|e| AgentError::Network(format!("webdav verify: {e}")))?;
+    let status = resp.status().as_u16();
+    if status == 401 || status == 403 {
+        return Err(AgentError::Auth(format!(
+            "webdav authentication rejected ({status}); check the application password"
+        )));
+    }
+    if status == 207 || (200..300).contains(&status) {
+        return Ok(());
+    }
+    Err(AgentError::Other(format!(
+        "webdav verify failed: HTTP {status}"
+    )))
 }
 
 /// CLI dispatch: parse args → call the [`AuthBackend`] service method →
@@ -519,8 +564,8 @@ impl Executor for AuthModule {
                 "保存凭据到系统 keyring（默认只存；--verify 显式验证）",
                 "everyday auth login --module <mod> [--account NAME] [--password PWD] [--verify]",
                 &[
-                    flag!("module", "目标模块（mail/cal）"),
-                    flag!("password", "密码（mail/cal，非交互）"),
+                    flag!("module", "目标模块（mail/cal/webdav）"),
+                    flag!("password", "密码（mail/cal/webdav，非交互）"),
                     flag!("verify", "存后显式验证凭据", Bool),
                 ]
             ),
@@ -596,6 +641,11 @@ provider = "local"
 [[rss.feeds]]
 name = "hn"
 url = "https://hnrss.org/frontpage"
+
+[[webdav.accounts]]
+name = "wd1"
+url = "https://dav.jianguoyun.com/dav/everyday"
+username = "wd@example.com"
 "#;
         toml::from_str(s).unwrap()
     }
@@ -637,6 +687,29 @@ url = "https://hnrss.org/frontpage"
             resolve_strategy(&c, "rss", "hn").unwrap(),
             AuthStrategy::None
         );
+    }
+
+    #[test]
+    fn resolve_strategy_webdav_password() {
+        let c = test_config();
+        assert_eq!(
+            resolve_strategy(&c, "webdav", "wd1").unwrap(),
+            AuthStrategy::Password
+        );
+    }
+
+    #[test]
+    fn webdav_username_resolves_from_config() {
+        let c = test_config();
+        assert_eq!(username_for(&c, "webdav", "wd1").unwrap(), "wd@example.com");
+    }
+
+    #[test]
+    fn webdav_keyring_target_uses_username() {
+        let c = test_config();
+        let (service, user) = keyring_target(&c, "webdav", "wd1", &AuthStrategy::Password).unwrap();
+        assert_eq!(service, "everyday/webdav/wd1");
+        assert_eq!(user, "wd@example.com");
     }
 
     #[test]

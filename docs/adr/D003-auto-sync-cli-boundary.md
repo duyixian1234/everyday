@@ -13,9 +13,16 @@
 - **开启时**：写操作命令（bookmark add / memory add / note create / todo add 等）执行完毕后、输出返回前，做一次 best-effort 推送：
   - 只推有变更的文件（hash 检测，见 [D002](D002-snapshot-hash-state.md)）；
   - **同步等待**推送完成（诚实语义：CLI 无真后台，不等完就返回 = 静默丢变更）；
-  - 失败**不改变命令退出码**，仅记录 ops-log 并输出一行警告。
+  - 失败**不改变命令退出码**，仅记录 ops-log 并输出一行警告（见下方 Revision 注记）。
 - **查询路径永不触发 sync**（拉取永远显式 `everyday sync`）——延续 L005，无例外。
 - 推送网络超时设短上限（默认 10s）：离线时写命令至多 +10s 延迟且最终成功退出。
+
+## Revision (2026-08-09, R019)
+
+本 ADR 原要求 auto_sync 失败"记录 ops-log"——该要求已被 [R019](R019-remove-notion-provider.md)
+作废：ops-log.db 与 `src/ops_log.rs` 随 Notion provider 一并移除（v0.13.0）。
+auto_sync 失败的审计面收缩为**输出一行警告**（文本 stderr / JSON `_warning` 行），
+"失败不改变退出码"语义不变。
 
 ## Alternatives considered
 

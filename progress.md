@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.13.0 已发布** — Notion provider 移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）；**WebDAV 设备同步上线**（[D001–D003](./docs/adr/D001-webdav-file-sync.md)）：`everyday sync` 双向文件级同步（4 个用户 DB + config.toml，LWW 冲突副本），`auth` 支持 `--module webdav`，写命令后可选 auto_sync（D003，默认关）。
 - **v0.12.0 已发布** — F012 P4 显式参数化 RequestContext（[F013](./docs/adr/F013-request-context-explicit-parameter.md)）：`Executor::execute` + middleware 钩子加 `&RequestContext`，thread-local 移除；破坏性（自定义 Executor 迁移指南见 F013）。
 - **v0.11.0-rc 已发布** — 架构深化三阶段落地（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：Phase 1（P6 TypedValue / P2c Config 校验 / P2a AccountProvider）+ Phase 2（P1 CLI/business 分离 + P2b config 子集）+ Phase 3（P3 lifecycle `everyday health` / P4 RequestContext / P5 Middleware）。
 - **v0.9.0 已发布** — 跨模块统一搜索 v1.1 收口：`mail` Searchable 走本地 envelope 缓存（[S007](./docs/adr/S007-mail-search-local-cache.md)）。
@@ -28,6 +29,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-09 | D | [D001–D003](./docs/adr/D001-webdav-file-sync.md) | WebDAV 设备同步：D001 同步模型/范围/冲突（文件级 LWW + 冲突副本）/ D002 快照 + hash 状态（sync-state.json）/ D003 auto_sync CLI 边界（写命令 best-effort push，查询永不触发） |
 | 2026-08-09 | R | [R019](./docs/adr/R019-remove-notion-provider.md) | 移除 Notion provider：note/todo/bookmark 仅本地 SQLite；`provider="notion"` 加载即报错；ops-log/AOP 钩子/OpsLogProvider/共享客户端/令牌流全删；JSON 核心键保持稳定（v0.13.0 破坏性） |
 | 2026-08-05 | F | [F013](./docs/adr/F013-request-context-explicit-parameter.md) | P4 显式参数化 RequestContext：`Executor::execute` / middleware 钩子加 `&RequestContext`，thread-local 移除，破坏性（迁移指南内置） |
 | 2026-08-05 | F | [F012](./docs/adr/F012-architecture-deepening-phase.md) | 架构深化阶段：Phase 1（P6 TypedValue / P2c Config 校验 / P2a AccountProvider）+ Phase 2（P1 CLI/business 分离 + P2b config 子集）+ Phase 3（P3 lifecycle + P4 request context + P5 middleware）全部落地 |

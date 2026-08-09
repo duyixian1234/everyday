@@ -159,6 +159,13 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
     )
     .await;
 
+    // Auto-sync (opt-in, D003): after a successful write command, best-effort
+    // push changed files to WebDAV. Never blocks the exit code — a push
+    // failure only prints a warning. Query paths never sync (L005).
+    if result.is_ok() && crate::modules::sync::is_write_action(module_name, action_name) {
+        crate::modules::sync::auto_sync_after_write(config.clone()).await;
+    }
+
     // Lifecycle (P3): graceful shutdown after the action completes.
     registry.shutdown_all();
 

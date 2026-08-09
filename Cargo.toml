@@ -69,5 +69,11 @@ chrono = { version = "0.4", features = ["serde"] }
 # 表格输出
 tabled = "0.15"
 
+# 内容 hash（WebDAV sync 变更检测，D002）
+sha2 = "0.10"
+
+# HTTP-date 解析（WebDAV Last-Modified → LWW 仲裁，D001/D002）
+httpdate = "1"
+
 [dev-dependencies]
 tokio-test = "0.4"

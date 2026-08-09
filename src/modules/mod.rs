@@ -326,6 +326,13 @@ impl ModuleRegistry {
             Box::new(crate::modules::auth::AuthModule::new(config.clone())),
         );
 
+        // Cross-device file sync via WebDAV (ADR D001–D003). Cross-module
+        // orchestrator: needs the full Config (webdav + local accounts).
+        modules.insert(
+            "sync",
+            Box::new(crate::modules::sync::SyncModule::new(config.clone())),
+        );
+
         Ok(Self { modules })
     }
 
@@ -395,6 +402,7 @@ pub mod note;
 pub mod rss;
 pub mod rss_items;
 pub mod search;
+pub mod sync;
 pub mod timeline;
 pub mod todo;
 
