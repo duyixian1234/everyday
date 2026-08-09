@@ -1,13 +1,29 @@
-## [unreleased]
+## [0.13.1] - 2026-08-09
+
+### 🐛 Bug Fixes
+
+- *(sync)* Per-invocation tmp dir to survive parallel runs
+- *(ci)* Nextest 0.9 junit output moved to config file
 
 ### 📚 Documentation
 
 - Document sync module in README and skills (v0.13.0)
+- Record G001 quality tool suite ADR
+
+### 🎨 Styling
+
+- Rustfmt cli_contract.rs
+
+### 🧪 Testing
+
+- *(cli)* Lock CLI contract — commands, actions, config shape
 
 ### ⚙️ Miscellaneous Tasks
 
 - *(ci)* Use nextest for CI tests with junit reports
 - *(ci)* Add typos spelling gate
+- *(release)* Add git-cliff changelog generation
+- *(release)* Adopt cargo-dist for the release pipeline (G001 batch 2)
 ## [0.13.0] - 2026-08-09
 
 ### 🚀 Features

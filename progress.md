@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.13.1 已发布** — 工程质量工具栈批 1 + 批 2 落地（[G001](./docs/adr/G001-quality-tools-suite.md)）：CI 测试换 nextest（junit 报告）、typos/git-cliff/cargo-deny 门禁、CLI contract 测试层；sync 并行 tmp 目录竞争修复（Unix 可见、Windows 掩盖）；release 流水线换 cargo-dist（installer 脚本 + Sigstore attestation）。无新功能、无破坏。
 - **v0.13.0 已发布** — Notion provider 移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）；**WebDAV 设备同步上线**（[D001–D003](./docs/adr/D001-webdav-file-sync.md)）：`everyday sync` 双向文件级同步（4 个用户 DB + config.toml，LWW 冲突副本），`auth` 支持 `--module webdav`，写命令后可选 auto_sync（D003，默认关）。
 - **v0.12.0 已发布** — F012 P4 显式参数化 RequestContext（[F013](./docs/adr/F013-request-context-explicit-parameter.md)）：`Executor::execute` + middleware 钩子加 `&RequestContext`，thread-local 移除；破坏性（自定义 Executor 迁移指南见 F013）。
 - **v0.11.0-rc 已发布** — 架构深化三阶段落地（[F012](./docs/adr/F012-architecture-deepening-phase.md)）：Phase 1（P6 TypedValue / P2c Config 校验 / P2a AccountProvider）+ Phase 2（P1 CLI/business 分离 + P2b config 子集）+ Phase 3（P3 lifecycle `everyday health` / P4 RequestContext / P5 Middleware）。
