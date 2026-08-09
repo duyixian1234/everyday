@@ -20,6 +20,10 @@ everyday <module> <action> [options] [--json] [--account NAME]
 |------|------|
 | `config` · `mail` · `cal` · `rss` · `note` · `todo` · `bookmark` | ✅ Available |
 | `timeline` (v0.5.0) | ✅ Available — unified event log aggregating the modules above |
+| `search` (v0.7.0) | ✅ Available — cross-module unified search (`everyday search query "<q>"`) |
+| `memory` (v0.10.0) | ✅ Available — agent's own structured `(subject, predicate, object)` notebook |
+| `health` (v0.11.0) | ✅ Available — root-level local-only health check (exit 0/1) |
+| `sync` (v0.13.0) | ✅ Available — cross-device file-level sync via WebDAV (`everyday sync`) |
 
 > This file is a concise intro for Agent users. The full human-readable documentation is in the repository root `README.md` (`README_ZH.md` for Chinese), and collaboration guidelines are in `agents.md`.
 

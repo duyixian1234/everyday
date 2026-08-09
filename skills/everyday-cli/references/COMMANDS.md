@@ -28,6 +28,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `memory` | ✅ Complete (v0.10.0) | Single-instance append-only `(subject, predicate, object)` triple notebook with `--confidence` / `--source` metadata; soft delete + full version history; forward-only BFS graph (depth 1..=5); participates in `everyday search`. No `account` column, no `auth` module touch. Storage at `~/.config/everyday/memory.db` |
 | `search` | ✅ Complete (v0.7.0; v0.9.0 +mail, v0.10.0 +memory) | Cross-module unified search fan-out: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`. Modules: `note` / `todo` / `bookmark` / `rss` / `cal` / `mail` (local envelope cache) / `memory` (current-state view) |
 | `health` | ✅ Complete (v0.11.0) | Root-level ops command (not a module): runs every module's local-only `health_check`, one row per module. Exit 0 when all healthy, 1 when any degraded. JSON = array of `{module, healthy, detail}` |
+| `sync` | ✅ Complete (v0.13.0) | Cross-device **file-level** sync to a WebDAV directory (default Jianguoyun): 4 user DBs (bookmark/note/todo/memory) + config.toml. Snapshot + SHA-256 change detection, LWW conflicts with dual `.conflict-<UTC ts>` copies, first-sync direction auto-detection, `--push-only` / `--pull-only` / `--force`, opt-in `auto_sync` after write commands (D003). Auth via `everyday auth login --module webdav --account <name>` (application password → keyring). Design: D001–D003 |
 
 ---
 
@@ -40,6 +41,29 @@ Runs every module's `health_check` and renders one row per module. Checks are **
 | `health` | Probe every module's local health | `everyday health` / `everyday health --json` |
 
 Text output is a `module | status | detail` table; JSON output is an array of `{"module": ..., "healthy": bool, "detail": ...}`. **Exit code**: 0 when all modules healthy, 1 when any is degraded (scripts can gate on it). Implemented as part of the F012 P3 lifecycle hooks.
+
+---
+
+## sync — cross-device file sync via WebDAV ✅ (v0.13.0)
+
+Bidirectional file-level sync of the five user data files (`bookmark-<acct>.db` / `note-<acct>.db` / `todo-<acct>.db` / `memory.db` / `config.toml`) against a WebDAV directory (default `https://dav.jianguoyun.com/dav/everyday`). Derived caches (mail_cache / rss-items / timeline) are never synced. DBs are uploaded as `VACUUM INTO` snapshots (WAL-safe); changes are detected by content hash, conflicts by Last-Write-Wins mtime arbitration — the loser is preserved as `<name>.conflict-<UTC ts>.<ext>` **locally and on the remote**. First sync auto-detects direction: empty remote → push all; fresh device (empty config template) → pull all (remote listing drives the pull set). Sync state lives in `sync-state.json` (not synced; delete it or `--force` to rebuild from a full re-upload).
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `sync` | Bidirectional sync (pull-then-push) | `everyday sync` / `everyday sync --json` |
+| `sync --push-only` | Upload local changes only (also used by auto_sync) | `everyday sync --push-only --json` |
+| `sync --pull-only` | Download remote changes only | `everyday sync --pull-only --json` |
+| `sync --force` | Ignore `sync-state.json`: re-upload all local files + pull remote-only ones | `everyday sync --force --json` |
+
+**JSON output**: `{ "remote": "<dir>", "files": [{name, action, detail?}], "pushed": N, "pulled": N, "skipped": N, "conflicts": N }` (+ `first_sync: "push_all"|"pull_all"` on an unambiguous first sync). `action` ∈ `push|pull|skip|conflict`; conflict entries carry `winner` (`local`|`remote`) and `conflict_copy`.
+
+**Setup**: `[[webdav.accounts]]` in config.toml (name / url / username), then:
+
+```bash
+everyday auth login --module webdav --account personal   # application password → keyring everyday/webdav/personal
+```
+
+**Auto-sync (opt-in, default off)**: `auto_sync = true` on an account → successful write commands (`bookmark add`, `note create/append/update`, `todo add/start/complete/delete`, `memory add/delete`, `cal add/delete`, `config set`) do a best-effort push of changed files before returning. Failures print a warning (text stderr / JSON `_warning` line) and never change the exit code; query paths never sync.
 
 ---
 
@@ -59,7 +83,7 @@ Config file: `~/.config/everyday/config.toml` (resolved cross-platform via `dirs
 
 ## auth — credential lifecycle ✅
 
-Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring (default: store only; `--verify` also verifies). Password strategy (mail/cal) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
+Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring (default: store only; `--verify` also verifies). Password strategy (mail/cal/webdav) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
 
 | Command | Description | Example |
 |---------|-------------|---------|

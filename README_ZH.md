@@ -273,7 +273,7 @@ everyday config set default_account.mail personal
 
 ### auth — 凭证生命周期（v0.8.0 新增）
 
-全模块统一的凭证管理。各模块内部通过 `auth::get_credential` 读取已存凭证；你只需用这些命令在系统密钥环中管理凭证。密码凭证（mail/cal）使用 `--password`。若省略该 flag，则回退到交互式提示。密码绝不落盘。
+全模块统一的凭证管理。各模块内部通过 `auth::get_credential` 读取已存凭证；你只需用这些命令在系统密钥环中管理凭证。密码凭证（mail/cal/webdav）使用 `--password`。若省略该 flag，则回退到交互式提示。密码绝不落盘。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|
@@ -281,6 +281,8 @@ everyday config set default_account.mail personal
 | `logout` | 从密钥环删除已存凭证 | `everyday auth logout --module mail --account work` |
 | `verify` | 读取已存凭证并向服务端校验（不重新提示）；local/sqlite 或 rss 返回 `not_required` | `everyday auth verify --module note` |
 | `list` | 列出已配置账户及其密钥环状态（stored / missing / not_required） | `everyday auth list --module todo` |
+
+WebDAV 设备同步请存**应用密码**（非登录密码）：`everyday auth login --module webdav --account personal`（keyring 键 `everyday/webdav/personal`）。
 
 ### timeline — 统一事件流（v0.5.0 新增）
 
@@ -428,6 +430,27 @@ auth      ok      ok
 ```
 
 实现见 [F012](docs/adr/F012-architecture-deepening-phase.md) P3 生命周期钩子。
+
+### sync — WebDAV 跨设备文件同步（v0.13.0 新增）
+
+将真实用户数据做**文件级**双向同步到 WebDAV 目录（默认坚果云 `dav.jianguoyun.com`）：4 个用户 DB（`bookmark-<账户>.db` / `note-<账户>.db` / `todo-<账户>.db` / `memory.db`）+ `config.toml`。派生缓存（mail_cache / rss-items / timeline）永不参与同步。变更检测基于内容 hash（DB 先经 `VACUUM INTO` 生成一致快照，WAL 数据不会漏）；冲突用 **Last-Write-Wins + 双端冲突副本**——败方存为 `<名字>.conflict-<UTC 时间戳>.<扩展名>`，本地与远程各留一份，任何数据都不会丢。
+
+| 命令 | 描述 | 用法 |
+|------|------|------|
+| `sync` | 双向同步（先拉后推）。首同步自动检测方向：远程目录空 → 全量推送；新设备（空配置模板）→ 全量拉取 | `everyday sync` |
+| `--push-only` | 只上传本地变更 | `everyday sync --push-only` |
+| `--pull-only` | 只下载远程变更 | `everyday sync --pull-only` |
+| `--force` | 忽略 `sync-state.json`，全量重传本地 + 拉取远程独有文件 | `everyday sync --force` |
+
+**配置**：先在 `config.toml` 配置账户（`[[webdav.accounts]]` — name / url / username），再把**应用密码**（非登录密码）存入系统钥匙串：
+
+```
+everyday auth login --module webdav --account personal
+```
+
+**自动同步（opt-in，默认关）**：账户 `auto_sync = true` 时，写命令（`bookmark add`、`note create`、`memory add` 等）成功后返回前会做一次 best-effort 变更文件推送。失败仅输出一行警告、绝不改变命令退出码；查询路径永不触发同步（[D003](docs/adr/D003-auto-sync-cli-boundary.md)）。
+
+同步状态存于 `sync-state.json`（与配置同目录，本身不参与同步）；删除它或传 `--force` 会从全量重传重建。设计：[D001](docs/adr/D001-webdav-file-sync.md) / [D002](docs/adr/D002-snapshot-hash-state.md) / [D003](docs/adr/D003-auto-sync-cli-boundary.md)。
 
 ## 输出模式
 
@@ -736,6 +759,7 @@ pub trait Executor: Send + Sync {
 | `search` | ✅ 完整可用（v0.7.0 新增） | 跨模块统一搜索：query |
 | `memory` | ✅ 完整可用（v0.10.0 新增） | append-only `(subject, predicate, object)` 三元组笔记本 + graph + Searchable |
 | `health` | ✅ 完整可用（v0.11.0 新增） | 根级运维命令：所有模块本地健康检查，退出码 0/1 |
+| `sync` | ✅ 完整可用（v0.13.0 新增） | WebDAV 双向文件同步：4 个用户 DB + config.toml，LWW 冲突双副本，`--push-only` / `--pull-only` / `--force`，opt-in auto_sync |
 
 ## 许可证
 

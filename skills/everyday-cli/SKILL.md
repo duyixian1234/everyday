@@ -1,12 +1,12 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite, add, list, tag-filter), notes and todo tasks (search, list, create, read, append, update, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), structured agent memory notebook (memory add / get / relation / list / delete / graph / history), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos, persist structured facts to the agent's own memory, query an aggregated timeline of recent activity, search across all integrations in one shot, manage credentials, or run everyday commands. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite, add, list, tag-filter), notes and todo tasks (search, list, create, read, append, update, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), cross-device WebDAV file sync (everyday sync, --push-only/--pull-only/--force, auth login --module webdav), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), structured agent memory notebook (memory add / get / relation / list / delete / graph / history), and config management. Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos, persist structured facts to the agent's own memory, query an aggregated timeline of recent activity, search across all integrations in one shot, sync data files across devices via WebDAV, manage credentials, or run everyday commands. Always pass --json for machine-readable output.
 license: MIT
 ---
 
 # everyday CLI
 
-`everyday` is a Rust CLI on the local machine that gives an agent hands-on access to the user's email (IMAP/SMTP), calendar (CalDAV), RSS feeds, bookmarks, notes/todos, an aggregated activity timeline, and a structured agent-memory notebook. Binary: `everyday` (on PATH).
+`everyday` is a Rust CLI on the local machine that gives an agent hands-on access to the user's email (IMAP/SMTP), calendar (CalDAV), RSS feeds, bookmarks, notes/todos, an aggregated activity timeline, a structured agent-memory notebook, and cross-device file sync via WebDAV. Binary: `everyday` (on PATH).
 
 ## Install
 
@@ -24,7 +24,7 @@ Verify with `everyday --version`. Full per-platform steps: repo root [README.md]
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `config` (+ root-level `health`)
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `config` · `sync` (+ root-level `health`)
 
 ## Rules (follow exactly)
 
@@ -35,6 +35,7 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline
 5. **`everyday health --json`** runs a local-only health probe of every module (cache DB openable, keyring credential present — never network). Exit code 1 + `"healthy": false` rows identify degraded modules. Use it to diagnose before deeper debugging. Dispatch logs (`_log` lines, request ids) go to stderr and are safe to ignore unless debugging.
 6. **`timeline today --json` is the aggregated activity snapshot.** Prefer it over per-module polling unless the user explicitly asks for a specific module.
 7. **`memory` is the agent's own structured notebook.** Use `everyday memory add` to persist stable facts about the user, projects, or the world; use `memory get <SUBJECT>` to recall them. Subject naming is a convention, not enforced — see [references/MEMORY.md](references/MEMORY.md). Memory facts automatically participate in `everyday search`.
+8. **`sync` is cross-device file-level sync** (`everyday sync`). It syncs the 4 user DBs (bookmark/note/todo/memory) + `config.toml` to the WebDAV directory (default Jianguoyun). Bidirectional by default; `--push-only` / `--pull-only` / `--force` override. Conflicts are Last-Write-Wins with dual `.conflict-<UTC ts>` copies (local + remote). Configure `[[webdav.accounts]]` in `config.toml` (name/url/username) and store the **application password** (not the login password): `everyday auth login --module webdav --account <name>`. Sync state lives in `sync-state.json`; never sync caches (mail_cache/rss-items/timeline).
 
 ## First-time setup (only if config is missing)
 

@@ -295,7 +295,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 ### auth — credential lifecycle (NEW in v0.8.0)
 
-Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring. Password strategy (mail/cal) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
+Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring. Password strategy (mail/cal/webdav) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
 
 | Command | Description | Usage |
 |------|------|------|
@@ -303,6 +303,8 @@ Consolidated credential management for all modules. Modules read stored credenti
 | `logout` | Delete the stored credential from the keyring | `everyday auth logout --module mail --account work` |
 | `verify` | Read the stored credential and verify it against the server (no re-prompt); reports `not_required` for local/sqlite or rss | `everyday auth verify --module note` |
 | `list` | List configured accounts and their keyring state (stored / missing / not_required) | `everyday auth list --module todo` |
+
+For WebDAV device sync, store the **application password** (not the login password): `everyday auth login --module webdav --account personal` (keyring `everyday/webdav/personal`).
 
 ### timeline — unified event timeline (NEW in v0.5.0)
 
@@ -449,6 +451,27 @@ auth      ok      ok
 ```
 
 Implemented as part of the lifecycle hooks in [F012](docs/adr/F012-architecture-deepening-phase.md) (P3).
+
+### sync — cross-device file sync via WebDAV (NEW in v0.13.0)
+
+Bidirectional, **file-level** sync of your real user data to a WebDAV directory (default: Jianguoyun `dav.jianguoyun.com`): the four user DBs (`bookmark-<acct>.db` / `note-<acct>.db` / `todo-<acct>.db` / `memory.db`) plus `config.toml`. Derived caches (mail_cache / rss-items / timeline) are never synced. Changes are detected by content hash (DBs are snapshotted via `VACUUM INTO` first, so WAL data is included); conflicts are resolved by **Last-Write-Wins with a dual conflict copy** — the loser is kept as `<name>.conflict-<UTC ts>.<ext>` both locally and on the remote, so nothing is ever lost.
+
+| Command | Description | Usage |
+|------|------|------|
+| `sync` | Bidirectional sync (pull-then-push). First sync auto-detects the direction: empty remote → push all; fresh device (empty config template) → pull all | `everyday sync` |
+| `--push-only` | Upload local changes only | `everyday sync --push-only` |
+| `--pull-only` | Download remote changes only | `everyday sync --pull-only` |
+| `--force` | Ignore `sync-state.json` and re-upload everything local + pull remote-only files | `everyday sync --force` |
+
+**Setup**: configure the account in `config.toml` (`[[webdav.accounts]]` — name / url / username), then store the **application password** (not the login password) in the keyring:
+
+```
+everyday auth login --module webdav --account personal
+```
+
+**Auto-sync (opt-in, default off)**: with `auto_sync = true` on an account, a successful write command (`bookmark add`, `note create`, `memory add`, ...) does a best-effort push of the changed files before returning. Failures only print a warning line and never change the command's exit code; query paths never trigger sync ([D003](docs/adr/D003-auto-sync-cli-boundary.md)).
+
+Sync state lives in `sync-state.json` next to the config (not synced itself); deleting it or passing `--force` rebuilds it from a full re-upload. Design: [D001](docs/adr/D001-webdav-file-sync.md) / [D002](docs/adr/D002-snapshot-hash-state.md) / [D003](docs/adr/D003-auto-sync-cli-boundary.md).
 
 ## Output Modes
 
@@ -757,6 +780,7 @@ Adding a module only takes: create a file + implement the trait + register one l
 | `search` | ✅ Fully available (NEW in v0.7.0) | cross-module unified search: query all modules in one shot |
 | `memory` | ✅ Fully available (NEW in v0.10.0) | append-only `(subject, predicate, object)` triple notebook with confidence/source + graph + Searchable |
 | `health` | ✅ Fully available (NEW in v0.11.0) | root-level ops command: every module's local-only health check, exit 0/1 |
+| `sync` | ✅ Fully available (NEW in v0.13.0) | bidirectional WebDAV file sync: 4 user DBs + config.toml, LWW conflicts with dual copies, `--push-only` / `--pull-only` / `--force`, opt-in auto_sync |
 
 ## License
 
