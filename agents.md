@@ -38,6 +38,10 @@ shell 做不到的事"。
 | `timeline` | 跨模块统一事件层（append-only log） | [L001](./docs/adr/L001-append-only-event-log.md) – [L013](./docs/adr/L013-from-explicit-error.md) |
 | `config` | 配置查看 / 修改；走 Executor trait | [R012](./docs/adr/R012-config-executor-trait.md) |
 | `memory` | Agent 结构化事实笔记本（append-only 三元组） | [K001](./docs/adr/K001-memory-module.md) – [K004](./docs/adr/K004-memory-single-instance.md) |
+| `search` | 跨模块统一搜索（聚合各模块 Searchable） | [S001](./docs/adr/S001-search-architecture.md) – [S007](./docs/adr/S007-mail-search-local-cache.md) |
+| `auth` | 凭据 / login 收拢到顶层 auth 模块 | [R013](./docs/adr/R013-auth-module-consolidation.md) – [R015](./docs/adr/R015-auth-credential-io.md) |
+| `sync` | WebDAV 跨设备文件级同步 | [D001](./docs/adr/D001-webdav-file-sync.md) – [D003](./docs/adr/D003-auto-sync-cli-boundary.md) |
+| `mcp` | MCP server（stdio）：把各模块 (module, action) 投影为 MCP tools | [F014](./docs/adr/F014-mcp-module.md) |
 
 ## 文档约定
 

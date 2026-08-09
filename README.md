@@ -478,6 +478,44 @@ everyday auth login --module webdav --account personal
 
 Sync state lives in `sync-state.json` next to the config (not synced itself); deleting it or passing `--force` rebuilds it from a full re-upload. Design: [D001](docs/adr/D001-webdav-file-sync.md) / [D002](docs/adr/D002-snapshot-hash-state.md) / [D003](docs/adr/D003-auto-sync-cli-boundary.md).
 
+### mcp — expose everyday as an MCP server (NEW in v0.15.0)
+
+Turns `everyday` into a **Model Context Protocol (MCP) server** over stdio. Any
+MCP-capable agent (Claude Code, CodeBuddy, Cursor, ...) connects with a one-line
+`mcpServers` entry and gets every `(module, action)` as a **tool** named
+`<module>_<action>` — argument schemas are generated from the same
+`module_arg_spec()` the CLI uses, so the MCP surface can never drift from the
+CLI. Design: [F014](docs/adr/F014-mcp-module.md), glossary: `CONTEXT.md` §MCP.
+
+| Command | Description | Usage |
+|------|------|------|
+| `serve` | Run the MCP stdio server (blocks until stdin closes, then exits 0) | `everyday mcp serve` |
+| `tools` | Print the projected tool list + JSON Schemas (debugging) | `everyday mcp tools` |
+
+**Connect an MCP client** (e.g. Claude Desktop `claude_desktop_config.json`, or the
+equivalent `mcpServers` block in Claude Code / CodeBuddy):
+
+```json
+{
+  "mcpServers": {
+    "everyday": {
+      "command": "everyday",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+**Notes**
+
+- One tool per `(module, action)`: `mail_list`, `note_add`, `timeline_today`, ...
+  The `mcp` module itself is not projected (`mcp_*` tools do not exist).
+- Tool results are the `--json`-rendered output; failures come back as MCP
+  `isError`. The optional `account` argument mirrors the CLI `--account` flag.
+- The server is a **long-lived process**: config / database changes are picked
+  up on the **next session start**, not mid-session.
+- stdout is reserved for JSON-RPC; all logging goes to stderr.
+
 ## Output Modes
 
 ### Text mode (default)

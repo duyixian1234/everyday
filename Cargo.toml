@@ -75,6 +75,8 @@ sha2 = "0.10"
 
 # HTTP-date 解析（WebDAV Last-Modified → LWW 仲裁，D001/D002）
 httpdate = "1"
+# MCP server (F014): stdio transport requires the `transport-io` feature.
+rmcp = { version = "3.1.2", features = ["server", "transport-io"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

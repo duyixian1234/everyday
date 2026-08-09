@@ -12,7 +12,7 @@
 
 use async_trait::async_trait;
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use crate::config::Config;
 use crate::error::{AgentError, Result};
@@ -248,7 +248,7 @@ pub struct ModuleRegistry {
 
 impl ModuleRegistry {
     /// Build all modules from config.
-    pub fn build(config: Arc<Config>) -> Result<Self> {
+    pub fn build(config: Arc<Config>) -> Result<Arc<Self>> {
         let mut modules: HashMap<&'static str, Box<dyn Executor>> = HashMap::new();
 
         // Register each module. The module itself decides whether it needs
@@ -333,7 +333,20 @@ impl ModuleRegistry {
             Box::new(crate::modules::sync::SyncModule::new(config.clone())),
         );
 
-        Ok(Self { modules })
+        // MCP server module (ADR F014): projects every module's actions as MCP
+        // tools. Cross-module orchestrator that needs the *registry it lives
+        // in* — a build-time self-reference. We create a cell first, assemble
+        // `Self`, then fill the cell so the module can resolve the registry
+        // lazily during `serve`/`tools`.
+        let mcp_cell: Arc<OnceLock<Arc<ModuleRegistry>>> = Arc::new(OnceLock::new());
+        modules.insert(
+            "mcp",
+            Box::new(crate::modules::mcp::McpModule::new(mcp_cell.clone())),
+        );
+
+        let this = Arc::new(Self { modules });
+        let _ = mcp_cell.set(this.clone());
+        Ok(this)
     }
 
     /// Look up a module by name.
@@ -397,6 +410,7 @@ pub mod email;
 pub mod email_cache;
 pub mod email_pool;
 pub mod local;
+pub mod mcp;
 pub mod memory;
 pub mod note;
 pub mod rss;

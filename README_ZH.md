@@ -457,6 +457,35 @@ everyday auth login --module webdav --account personal
 
 同步状态存于 `sync-state.json`（与配置同目录，本身不参与同步）；删除它或传 `--force` 会从全量重传重建。设计：[D001](docs/adr/D001-webdav-file-sync.md) / [D002](docs/adr/D002-snapshot-hash-state.md) / [D003](docs/adr/D003-auto-sync-cli-boundary.md)。
 
+### mcp — 将 everyday 暴露为 MCP server（v0.15.0 新增）
+
+把 `everyday` 变成 **Model Context Protocol（MCP）server**，走 stdio 传输。任何支持 MCP 的 agent（Claude Code / CodeBuddy / Cursor 等）用一行 `mcpServers` 配置即可连上，并把每个 `(module, action)` 作为名为 `<module>_<action>` 的 **tool** 调用——参数 schema 由 CLI 同源的 `module_arg_spec()` 生成，MCP 表面与 CLI 永不漂移。设计：[F014](docs/adr/F014-mcp-module.md)，术语见 `CONTEXT.md` §MCP。
+
+| 命令 | 描述 | 用法 |
+|------|------|------|
+| `serve` | 运行 MCP stdio server（阻塞至 stdin 关闭后退出，退出码 0） | `everyday mcp serve` |
+| `tools` | 打印投影出的 tool 清单 + JSON Schema（调试用） | `everyday mcp tools` |
+
+**连接 MCP client**（例如 Claude Desktop 的 `claude_desktop_config.json`，或 Claude Code / CodeBuddy 对应的 `mcpServers` 块）：
+
+```json
+{
+  "mcpServers": {
+    "everyday": {
+      "command": "everyday",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+**注意**
+
+- 每个 `(module, action)` 对应一个 tool：`mail_list`、`note_add`、`timeline_today` 等。`mcp` 模块自身不投影（不存在 `mcp_*` tools）。
+- tool 返回 `--json` 渲染的输出；失败以 MCP `isError` 标记。可选 `account` 参数与 CLI `--account` 语义一致。
+- server 是**长驻进程**：配置 / 数据库变更在**下次会话启动**时生效，会话中途不感知。
+- stdout 专供 JSON-RPC；日志全部走 stderr。
+
 ## 输出模式
 
 ### Text 模式（默认）

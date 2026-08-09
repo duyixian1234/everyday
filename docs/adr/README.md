@@ -41,6 +41,7 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [F010](F010-testing-requirements.md) | Testing requirements — mandatory coverage, mocks, CI behaviour, bug-fix discipline | Accepted | 2026-07-12 |
 | [F012](F012-architecture-deepening-phase.md) | Architecture deepening phase — Phases 1–3 all implemented (P2c/P2a/P6, P1/P2b, P3/P4/P5) | Accepted | 2026-08-05 |
 | [F013](F013-request-context-explicit-parameter.md) | Explicit-parameter `RequestContext` through `Executor::execute` + middleware (v0.12 breaking, supersedes F012 P4 thread-local form) | Accepted | 2026-08-05 |
+| [F014](F014-mcp-module.md) | MCP module — everyday as an MCP server (stdio, rmcp 3.x), protocol projection of every (module, action) into MCP tools | Accepted | 2026-08-10 |
 
 ## Mail (M-series)
 

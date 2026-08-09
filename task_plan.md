@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.13.0 已发布；Notion provider 已移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）。本文档历史阶段的 Notion 描述仅作决策记录，不代表当前能力。
+**当前状态：** v0.15.0 开发中 — MCP server 模块落地（[F014](./docs/adr/F014-mcp-module.md)，`everyday mcp serve` / `mcp tools`，stdio + rmcp 3.x）；v0.14.0 已发布（[R020](./docs/adr/R020-env-credential-fallback.md)）；Notion provider 已移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）。本文档历史阶段的 Notion 描述仅作决策记录，不代表当前能力。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
@@ -83,6 +83,9 @@
 
 ### Phase 20: env 凭据回退（R020，opt-in）[complete]
 按 ADR [R020](./docs/adr/R020-env-credential-fallback.md) 为 R015 开受控例外：系统无 keyring 后端时允许 opt-in 从环境变量读凭据（`[auth] env_credentials = true` 或 `EVERYDAY_ENV_CREDENTIALS=1` 双通道开关；`EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` 命名；读取链 keyring→env→报错；`auth list` 第四态 `env`；login 仍写 keyring、logout 对 env 凭据提示 unset）。默认行为不变。
+
+### Phase 21: MCP server 模块（F014）[complete]
+按 ADR [F014](./docs/adr/F014-mcp-module.md) 落地：`everyday mcp serve` 经 stdio 把每个 `(module, action)` 协议投影为 MCP tool `<module>_<action>`（rmcp 3.x）；`mcp tools` 打印 tool 清单 + JSON Schema；schema 复用 `module_arg_spec()` 单一事实来源；`mcp` 模块注入 `Arc<ModuleRegistry>`（构建期后置注入）；Mutex 串行化 tool 调用；会话内复用 registry + initialize/shutdown 钩子；JSON 文本输出 + `isError`；无 `[mcp]` 配置面。质量：stdio 端到端测试（tests/mcp_stdio.rs）锁定 stdout 仅 JSON-RPC + EOF 退出 0；CLI contract 覆盖 `mcp serve`/`tools`；README/README_ZH/skill 文档同步。
 
 ---
 

@@ -409,3 +409,25 @@ RFC 4918 WebDAV 服务器上的远程目录（默认坚果云 `dav.jianguoyun.co
 
 ### sync-state
 本地 `sync-state.json`，记录每个同步文件的本地/服务器内容 hash，驱动变更检测。不参与同步；损坏用 `--force` 全量重传重建。
+
+---
+
+## MCP
+
+> AI agent 通过 Model Context Protocol 调用 everyday 能力的协议暴露层。
+> 设计决策见 [F014](docs/adr/F014-mcp-module.md)。
+
+### MCP（Model Context Protocol）
+AI agent（Claude Code / CodeBuddy / Cursor 等，扮演 **MCP Client**）与 everyday（扮演 **MCP Server**）之间的开放协议。everyday 以 `everyday mcp serve` 作为 server，经 stdio 传输为 agent 提供工具调用。属 F012 预留的"新前端"（REPL / API 层）的一种协议形态。
+
+### MCP Client
+MCP 调用方——配置了 everyday 作为 server 的 AI agent。发起 `tools/list` / `tools/call` 请求。
+
+### MCP Tool
+MCP 协议中的可调用函数单元。每个 MCP tool 是 everyday 一个 (module, action) 命令面的**协议投影**。
+
+### Protocol projection（协议投影）
+把一个 (module, action) 的命令面投影为一个 MCP tool：tool 名 = `<module>_<action>`，参数 schema 由 `module_arg_spec` 数据驱动生成（与 CLI 共享单一事实来源，永不漂移），输出为该 action 的 JSON 渲染。与 Timeline 的"事件投影"（事件 → 视图）**不同义**——此处是"命令面 → 协议面"的映射。
+
+### Server session（服务会话）
+一次 `mcp serve` 的运行：stdio server 建立 → client `initialize` → 零次或多次 `tools/call` → stdin EOF 退出。一次会话内复用同一个 ModuleRegistry；tool 调用**串行**执行（模块假定单次调用生命周期）。

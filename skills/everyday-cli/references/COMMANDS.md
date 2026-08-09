@@ -29,6 +29,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `search` | ✅ Complete (v0.7.0; v0.9.0 +mail, v0.10.0 +memory) | Cross-module unified search fan-out: `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N]`. Modules: `note` / `todo` / `bookmark` / `rss` / `cal` / `mail` (local envelope cache) / `memory` (current-state view) |
 | `health` | ✅ Complete (v0.11.0) | Root-level ops command (not a module): runs every module's local-only `health_check`, one row per module. Exit 0 when all healthy, 1 when any degraded. JSON = array of `{module, healthy, detail}` |
 | `sync` | ✅ Complete (v0.13.0) | Cross-device **file-level** sync to a WebDAV directory (default Jianguoyun): 4 user DBs (bookmark/note/todo/memory) + config.toml. Snapshot + SHA-256 change detection, LWW conflicts with dual `.conflict-<UTC ts>` copies, first-sync direction auto-detection, `--push-only` / `--pull-only` / `--force`, opt-in `auto_sync` after write commands (D003). Auth via `everyday auth login --module webdav --account <name>` (application password → keyring). Design: D001–D003 |
+| `mcp` | ✅ Complete (v0.15.0) | everyday as an **MCP server** over stdio (rmcp 3.x): every `(module, action)` is projected into a tool `<module>_<action>` (schemas from `module_arg_spec`, single source of truth). `serve` blocks until stdin EOF; `tools` prints the projected list + JSON Schemas. MCP clients connect via `{"mcpServers":{"everyday":{"command":"everyday","args":["mcp","serve"]}}}`. Design: F014 |
 
 ---
 
@@ -64,6 +65,41 @@ everyday auth login --module webdav --account personal   # application password 
 ```
 
 **Auto-sync (opt-in, default off)**: `auto_sync = true` on an account → successful write commands (`bookmark add`, `note create/append/update`, `todo add/start/complete/delete`, `memory add/delete`, `cal add/delete`, `config set`) do a best-effort push of changed files before returning. Failures print a warning (text stderr / JSON `_warning` line) and never change the exit code; query paths never sync.
+
+---
+
+## mcp — MCP server over stdio ✅ (v0.15.0)
+
+`everyday` acts as a **Model Context Protocol (MCP) server**: any MCP-capable
+agent (Claude Code / CodeBuddy / Cursor / Claude Desktop) connects over stdio
+and gets every `(module, action)` as a tool named `<module>_<action>` (e.g.
+`mail_list`, `note_add`, `timeline_today`). Tool argument schemas are generated
+from the same `module_arg_spec()` the CLI uses — the MCP surface never drifts
+from the CLI. The `mcp` module itself is not projected. Design: F014.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `serve` | Run the MCP stdio server (blocks until stdin EOF, then exits 0) | `everyday mcp serve` |
+| `tools` | Print the projected tool list + JSON Schemas (debugging) | `everyday mcp tools` |
+
+**Connect a client** (`claude_desktop_config.json` / Claude Code / CodeBuddy):
+
+```json
+{
+  "mcpServers": {
+    "everyday": {
+      "command": "everyday",
+      "args": ["mcp", "serve"]
+    }
+  }
+}
+```
+
+**Tool call semantics**: results are the `--json`-rendered output (same data as
+`everyday <mod> <action> --json`); failures come back as MCP `isError` with the
+error message; the optional `account` argument mirrors the global `--account`
+flag. The server is long-lived — config / DB changes apply on the **next
+session start**. stdout carries JSON-RPC only; logs go to stderr.
 
 ---
 

@@ -16,7 +16,7 @@ use assert_cmd::Command;
 /// Removing one? That is a BREAKING change — bump major, add an ADR, update this list.
 const TOP_LEVEL_COMMANDS: &[&str] = &[
     "health", "config", "bookmark", "search", "auth", "mail", "memory", "sync", "timeline", "rss",
-    "todo", "note", "cal",
+    "todo", "note", "cal", "mcp",
 ];
 
 /// Per-module action set: (module, actions).
@@ -41,6 +41,7 @@ const MODULE_ACTIONS: &[(&str, &[&str])] = &[
     ("config", &["path", "list", "get", "set", "init"]),
     ("search", &["query"]),
     ("sync", &["sync"]),
+    ("mcp", &["serve", "tools"]),
 ];
 
 /// clap renders one subcommand per line as `  <name> <description>`.
