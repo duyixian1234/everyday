@@ -31,7 +31,7 @@ Behavior:
 - If only `--from` is given → `to = now()` (effectively "from this date forward").
 - If only `--to` is given → `from = preset_start(now)` (the preset's start, not epoch).
 - If both are given and `from > to` → `AgentError::InvalidArgument` with a clear message.
-- If either date is unparseable → `AgentError::InvalidArgument` (no silent fallback).
+- If either date is unparsable → `AgentError::InvalidArgument` (no silent fallback).
 - If `--since` is also given, it **overrides** the resolved range (sub-day precision from [L012](L012-since-query-flag.md) wins).
 
 ## Alternatives considered

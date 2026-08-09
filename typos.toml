@@ -1,0 +1,19 @@
+# typos configuration — spelling gate.
+# See docs/adr/G001-quality-tools-suite.md. Extend this list only for
+# intentional identifiers/terms, never to silence a real typo.
+
+[files]
+extend-exclude = [
+    ".git/**",
+    "target/**",
+    "tmp/**",
+    ".workbuddy/**",
+    ".scratch/**",
+]
+
+[default.extend-words]
+# <typo> = "<correction>"; correction equal to key = always valid.
+nd = "nd"           # code variable (calendar.rs, timeline/providers.rs)
+omitable = "omitable"  # clap subcommand param (cli.rs)
+propert = "propert"    # "propert(ies)" intentional suffix notation in log copy
+mis = "mis"            # "mis-split" hyphenated word (docs)

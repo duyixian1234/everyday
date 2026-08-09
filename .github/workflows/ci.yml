@@ -77,3 +77,18 @@ jobs:
 
       - name: Check formatting
         run: cargo fmt --all -- --check
+
+  typos:
+    name: Typos check
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install typos
+        uses: taiki-e/install-action@v2
+        with:
+          tool: typos
+
+      - name: Spell check
+        run: typos

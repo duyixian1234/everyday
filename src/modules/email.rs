@@ -562,7 +562,7 @@ impl MailBackend for ImapMailBackend {
         let mut found: Option<(async_imap::types::Fetch, String)> = None;
         for folder in &folders {
             if select_folder(&mut session, folder).await.is_err() {
-                continue; // skip folders that cannot be SELECTed (e.g. \NoSelect)
+                continue; // skip folders that cannot be selected (e.g. \NoSelect)
             }
             match session.uid_fetch(uid.to_string(), "(UID BODY[])").await {
                 Ok(stream) => match stream.try_collect::<Vec<_>>().await {
@@ -679,7 +679,7 @@ async fn list_all_folders(session: &mut ImapSession) -> Result<Vec<String>> {
     let folders = names
         .iter()
         .filter(|n| {
-            // Skip folders marked \NoSelect (cannot be SELECTed)
+            // Skip folders marked \NoSelect (cannot be selected)
             !n.attributes()
                 .iter()
                 .any(|a| matches!(a, async_imap::types::NameAttribute::NoSelect))
@@ -708,7 +708,7 @@ async fn resolve_folders(
 }
 
 /// Collect mail summaries across multiple folders, merge them, sort by date
-/// descending and truncate to `limit`. Folders that cannot be SELECTed
+/// descending and truncate to `limit`. Folders that cannot be selected
 /// (e.g. \NoSelect) are skipped; per-folder search failures are non-fatal.
 async fn collect_across_folders(
     session: &mut ImapSession,

@@ -26,6 +26,10 @@ _clippy:
 test:
     cargo test -q
 
+# Spell-check all docs/code (typos-cli; config: typos.toml)
+typos:
+    typos
+
 # Build the project (cargo build)
 build:
     cargo build -q
@@ -35,5 +39,5 @@ build:
 check-links:
     uv run scripts/check_doc_links.py
 
-# Full CI pipeline: check → check-links → test → build
-ci: check check-links test build
+# Full CI pipeline: check → check-links → test → build → typos
+ci: check check-links test build typos
