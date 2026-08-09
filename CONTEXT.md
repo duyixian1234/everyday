@@ -378,3 +378,27 @@ mail_cache.db **独立**于 timeline.db，不跨数据库 JOIN。Timeline 的 ma
 - **timeline.db**：跨模块事件聚合层（envelope → Timeline event 投影）。
 
 未来可选：将 mail_cache 投影到 Timeline 的 `MailProvider`（避免 `fetch_for_timeline` 重连 server）。不在本 ADR 范围。
+
+---
+
+## WebDAV 设备同步
+
+> 跨设备文件级同步层。决策见 [`docs/adr/D001`](docs/adr/D001-webdav-file-sync.md) [`D002`](docs/adr/D002-snapshot-hash-state.md) [`D003`](docs/adr/D003-auto-sync-cli-boundary.md)。
+
+### Sync（设备同步）
+`everyday sync` 命令实现的跨设备**文件级**同步：将本机数据文件与 WebDAV 服务器双向对齐。与 Timeline 的 `sync`（provider 拉取事件写日志）**同名不同义**——后者是"源 → 本地"增量事件拉取；Sync 是"本地数据文件快照上传/下载"。共同点：显式命令触发，查询路径永不自动触发（延续 L005 精神）。
+
+### 同步范围（Sync Scope）
+参与同步的 5 个文件：`bookmark-<account>.db` / `memory.db` / `note-<account>.db` / `todo-<account>.db` 与 `config.toml`。派生缓存（mail_cache.db / rss-items.db / timeline.db / ops-log.db）**不参与**——可从源端重建，同步只会制造冲突。
+
+### WebDAV 目标（WebDAV Target）
+RFC 4918 WebDAV 服务器上的远程目录（默认坚果云 `dav.jianguoyun.com`）。账户结构 `[[webdav.accounts]]`（name / url / username），应用密码存 keyring（`everyday/webdav/<account>`），config 只存地址与用户名。
+
+### 快照（Snapshot）
+推送前用 `VACUUM INTO` 从 SQLite 库生成的一致副本（自动合并 WAL 中未 checkpoint 的数据）。因为 sqlx 默认 WAL journal mode，直接 COPY `.db` 会漏数据。快照是网络传输单元。
+
+### 冲突副本（Conflict Copy）
+文件级 LWW 仲裁中败北一方的完整备份，命名 `xxx.conflict-<UTC时间戳>.db`。保留在本地**并上传到远程**——是"被覆盖数据"的唯一恢复来源。
+
+### sync-state
+本地 `sync-state.json`，记录每个同步文件的本地/服务器内容 hash，驱动变更检测。不参与同步；损坏用 `--force` 全量重传重建。

@@ -19,6 +19,7 @@ ADRs are numbered by **module prefix**, not chronologically:
 | `L00x`   | Timeline unified event layer |
 | `R00x`   | Refactoring patterns (caveman review, 2026-07-11/12) |
 | `K00x`   | Knowledge base — agent's own notebook (memory module) |
+| `D00x`   | Device/WebDAV sync — cross-device file-level sync |
 
 Status legend: **Accepted** = in production; **Superseded** = replaced by a later ADR (see the link).
 
@@ -144,6 +145,16 @@ Append-only triple store for the agent's own notebook. Distinguishes from Timeli
 | [K002](K002-memory-graph-query.md) | Memory graph query — forward-only recursive traversal on current state | Accepted | 2026-07-14 |
 | [K003](K003-memory-searchable.md) | Memory participates in cross-module `Searchable` trait (current-state GLOB) | Accepted | 2026-07-14 |
 | [K004](K004-memory-single-instance.md) | Memory single-instance storage — no account column | Accepted | 2026-07-14 |
+
+## Device sync (D-series)
+
+Cross-device file-level sync to WebDAV (RFC 4918). Scope: bookmark/memory/note/todo SQLite DBs + config.toml. See [`CONTEXT.md` §WebDAV 设备同步](../../CONTEXT.md) for the glossary.
+
+| # | Title | Status | Date |
+|---|-------|--------|------|
+| [D001](D001-webdav-file-sync.md) | WebDAV file-level sync — scope, semantics, LWW + conflict copy | Accepted | 2026-08-09 |
+| [D002](D002-snapshot-hash-state.md) | Consistent snapshots (VACUUM INTO) + hash-driven state | Accepted | 2026-08-09 |
+| [D003](D003-auto-sync-cli-boundary.md) | auto_sync — best-effort push after write commands, never on query | Accepted | 2026-08-09 |
 
 ---
 

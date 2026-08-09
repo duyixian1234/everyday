@@ -83,3 +83,19 @@ name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/bookmarks.db"   # 可选，覆盖默认路径
 
+# ---- WebDAV 设备同步 ----
+# 跨设备文件级同步：将本机数据文件（bookmark/memory/note/todo 的 .db 与 config.toml）
+# 双向同步到 WebDAV 服务器。默认目标：坚果云。
+# 应用密码（非登录密码）用 `everyday auth login --module webdav --account NAME` 存入 keyring
+# service 名约定：everyday/webdav/<account>
+# 用法：
+#   everyday sync               # 双向（先拉后推）
+#   everyday sync --push-only   # 只推
+#   everyday sync --pull-only   # 只拉
+#   everyday sync --force       # 忽略 sync-state 全量重传
+[[webdav.accounts]]
+name = "personal"
+url = "https://dav.jianguoyun.com/dav/everyday"
+username = "you@example.com"
+# auto_sync = true   # 可选：写操作命令末尾 best-effort 推送（默认 false）
+
