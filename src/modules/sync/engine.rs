@@ -140,7 +140,7 @@ pub async fn run_sync(
             let Some(file) = resolve_remote(name) else {
                 continue; // not part of the sync namespace (foreign file)
             };
-            actions.push(pull_one(client, &file, entry, state, opts).await?);
+            actions.push(pull_one(client, &file, entry, state, opts, &tmp_dir).await?);
         }
     } else {
         for file in files {
@@ -170,12 +170,57 @@ pub async fn run_sync(
     // Best-effort cleanup of snapshot temp files.
     let _ = std::fs::remove_dir_all(&tmp_dir);
 
+    // Some servers (e.g. Jianguoyun) do not return an ETag header on PUT, so
+    // the state recorded from the PUT response has `remote_etag = None`. A
+    // later PROPFIND does return one, which would make the next run see
+    // "remote changed" and pull back what we just pushed. Re-list the
+    // directory once and correct the pushed files' metadata from PROPFIND.
+    let pushed: Vec<String> = actions
+        .iter()
+        .filter(|a| {
+            matches!(a, SyncAction::Push { .. })
+                || matches!(a, SyncAction::Conflict { winner, .. } if winner == "local")
+        })
+        .map(|a| match a {
+            SyncAction::Push { name } => name.clone(),
+            SyncAction::Conflict { name, .. } => name.clone(),
+            _ => unreachable!(),
+        })
+        .collect();
+    refresh_remote_metadata(client, &opts.dir_url, state, &pushed).await?;
+
     // Bind the state to this remote URL so the next run is not "first" again.
     state.remote_url = opts.dir_url.clone();
     Ok(SyncOutcome {
         actions,
         first_sync_direction,
     })
+}
+
+/// Re-read the remote directory and overwrite the pushed files' recorded
+/// ETag / Last-Modified with the PROPFIND values (PUT responses often lack an
+/// ETag header; PROPFIND is authoritative for change detection).
+async fn refresh_remote_metadata(
+    client: &dyn WebdavClient,
+    dir_url: &str,
+    state: &mut SyncState,
+    names: &[String],
+) -> Result<()> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let remote = client.list(dir_url).await?;
+    let map: HashMap<String, RemoteEntry> =
+        remote.into_iter().map(|e| (e.name.clone(), e)).collect();
+    for name in names {
+        if let Some(entry) = map.get(name)
+            && let Some(fs) = state.files.get_mut(name)
+        {
+            fs.remote_etag = entry.etag.clone();
+            fs.remote_mtime = entry.last_modified.clone();
+        }
+    }
+    Ok(())
 }
 
 /// Result of a bidirectional sync: the per-file actions plus (for display)
@@ -211,7 +256,7 @@ async fn per_file(
         return if local_exists {
             push_action(client, file, tmp_dir, state, opts).await
         } else if let Some(r) = remote {
-            pull_one(client, file, r, state, opts).await
+            pull_one(client, file, r, state, opts, tmp_dir).await
         } else {
             Ok(SyncAction::Skip {
                 name: file.remote_name.clone(),
@@ -226,7 +271,7 @@ async fn per_file(
             reason: "missing on both sides".into(),
         }),
         // Remote-only → pull regardless of state.
-        (false, Some(r)) => pull_one(client, file, r, state, opts).await,
+        (false, Some(r)) => pull_one(client, file, r, state, opts, tmp_dir).await,
         // Local-only → push regardless of state.
         (true, None) => push_action(client, file, tmp_dir, state, opts).await,
         (true, Some(r)) => {
@@ -246,7 +291,7 @@ async fn per_file(
                     reason: "unchanged".into(),
                 })
             } else if same_local && !same_remote {
-                pull_one(client, file, r, state, opts).await
+                pull_one(client, file, r, state, opts, tmp_dir).await
             } else if !same_local && same_remote {
                 push_action(client, file, tmp_dir, state, opts).await
             } else {
@@ -276,7 +321,8 @@ async fn lww_resolve(
     if opts.empty_shell_config && file.remote_name == "config.toml" {
         let new_remote = client.get(&opts.dir_url, &file.remote_name).await?;
         replace_local(&file.local_path, &new_remote)?;
-        record_after_pull(state, file, &new_remote, remote);
+        let local_hash = local_hash_of(file, tmp_dir).await?;
+        record_after_pull(state, file, &local_hash, remote);
         return Ok(SyncAction::Pull {
             name: file.remote_name.clone(),
         });
@@ -325,7 +371,8 @@ async fn lww_resolve(
         client
             .put(&opts.dir_url, &conflict_name, &local_snapshot)
             .await?;
-        record_after_pull(state, file, &new_remote, remote);
+        let local_hash = local_hash_of(file, tmp_dir).await?;
+        record_after_pull(state, file, &local_hash, remote);
         Ok(SyncAction::Conflict {
             name: file.remote_name.clone(),
             winner: "remote".into(),
@@ -363,16 +410,24 @@ async fn push_action(
 }
 
 /// Pull the remote file, atomically replace the local path, and record state.
+///
+/// The recorded local hash uses the same snapshot convention as change
+/// detection (`local_hash_of`): for DBs that means VACUUM INTO snapshotting
+/// the pulled file. Recording the raw downloaded bytes instead would mismatch
+/// the detection hash and make every pulled DB look "locally changed" on the
+/// next run.
 async fn pull_one(
     client: &dyn WebdavClient,
     file: &SyncFile,
     remote: &RemoteEntry,
     state: &mut SyncState,
     opts: &SyncOptions,
+    tmp_dir: &Path,
 ) -> Result<SyncAction> {
     let bytes = client.get(&opts.dir_url, &file.remote_name).await?;
     replace_local(&file.local_path, &bytes)?;
-    record_after_pull(state, file, &bytes, remote);
+    let local_hash = local_hash_of(file, tmp_dir).await?;
+    record_after_pull(state, file, &local_hash, remote);
     Ok(SyncAction::Pull {
         name: file.remote_name.clone(),
     })
@@ -473,14 +528,16 @@ fn record_after_push(
 }
 
 /// Record state after a pull: the local content is now the remote content.
+/// `local_hash` is the snapshot-convention hash of the pulled file (caller
+/// computes it via `local_hash_of` so it matches change detection).
 fn record_after_pull(
     state: &mut SyncState,
     file: &SyncFile,
-    pulled_bytes: &[u8],
+    local_hash: &str,
     remote: &RemoteEntry,
 ) {
     let fs = state.files.entry(file.remote_name.clone()).or_default();
-    fs.local_hash = Some(sha256_bytes(pulled_bytes));
+    fs.local_hash = Some(local_hash.to_string());
     fs.remote_etag = remote.etag.clone();
     fs.remote_mtime = remote.last_modified.clone();
 }
@@ -522,6 +579,17 @@ pub async fn push_changed(
         actions.push(push_action(client, file, &tmp_dir, state, opts).await?);
     }
     let _ = std::fs::remove_dir_all(&tmp_dir);
+    // Correct pushed files' ETags from PROPFIND (PUT responses often carry no
+    // ETag header; see `refresh_remote_metadata`).
+    let pushed: Vec<String> = actions
+        .iter()
+        .filter(|a| matches!(a, SyncAction::Push { .. }))
+        .map(|a| match a {
+            SyncAction::Push { name } => name.clone(),
+            _ => unreachable!(),
+        })
+        .collect();
+    refresh_remote_metadata(client, &opts.dir_url, state, &pushed).await?;
     state.remote_url = opts.dir_url.clone();
     Ok(actions)
 }
@@ -538,6 +606,8 @@ pub async fn pull_only(
     let remote = client.list(&opts.dir_url).await?;
     let remote_map: HashMap<String, RemoteEntry> =
         remote.into_iter().map(|e| (e.name.clone(), e)).collect();
+    let tmp_dir = tmp_dir_for(&opts.dir_url);
+    std::fs::create_dir_all(&tmp_dir)?;
     let mut actions = Vec::new();
     for file in files {
         let Some(entry) = remote_map.get(&file.remote_name) else {
@@ -560,11 +630,12 @@ pub async fn pull_only(
             });
             continue;
         }
-        pull_one(client, file, entry, state, opts).await?;
+        pull_one(client, file, entry, state, opts, &tmp_dir).await?;
         actions.push(SyncAction::Pull {
             name: file.remote_name.clone(),
         });
     }
+    let _ = std::fs::remove_dir_all(&tmp_dir);
     state.remote_url = opts.dir_url.clone();
     Ok(actions)
 }
@@ -597,13 +668,15 @@ mod tests {
     }
 
     /// A `resolve_remote` stub that maps every canonical name to `dir/name`
-    /// (used by the fresh-device pull tests).
+    /// (used by the fresh-device pull tests). `is_db: false` keeps the seeds
+    /// plain text — this stub only exercises the pull-set logic; the DB
+    /// snapshot path has its own dedicated test.
     fn resolve_in(dir: &Path) -> impl Fn(&str) -> Option<SyncFile> + '_ {
         move |name: &str| {
             Some(SyncFile {
                 local_path: dir.join(name),
                 remote_name: name.to_string(),
-                is_db: name != "config.toml",
+                is_db: false,
             })
         }
     }
@@ -1109,6 +1182,43 @@ mod tests {
             b"local-data"
         );
         assert_eq!(std::fs::read(&files[1].local_path).unwrap(), b"remote-data");
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    #[tokio::test]
+    async fn push_then_second_sync_skips_when_put_has_no_etag() {
+        // Some servers (Jianguoyun) omit the ETag header on PUT. The engine
+        // must correct the recorded ETag from a follow-up PROPFIND, or every
+        // later run would see "remote changed" and pull back its own push.
+        let d = tmp_workdir("no-etag");
+        let c = MockWebdavClient {
+            put_returns_etag: false,
+            ..Default::default()
+        };
+        text_file(&d.join("config.toml"), "cfg-v1");
+        let files = vec![SyncFile {
+            local_path: d.join("config.toml"),
+            remote_name: "config.toml".into(),
+            is_db: false,
+        }];
+        let mut state = SyncState::default();
+
+        // First sync: empty remote → push all.
+        let out = run_sync(&c, &files, &mut state, &opts(false, false), &resolve_none)
+            .await
+            .unwrap();
+        assert_kind(&out.actions, "config.toml", "push");
+        // The PUT carried no ETag; PROPFIND correction must fill it in.
+        assert!(
+            state.files["config.toml"].remote_etag.is_some(),
+            "remote_etag must be corrected from PROPFIND after an ETag-less PUT"
+        );
+
+        // Second sync: nothing changed → skip (not pull!).
+        let out2 = run_sync(&c, &files, &mut state, &opts(false, false), &resolve_none)
+            .await
+            .unwrap();
+        assert_kind(&out2.actions, "config.toml", "skip");
         let _ = std::fs::remove_dir_all(&d);
     }
 

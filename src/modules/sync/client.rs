@@ -257,7 +257,6 @@ async fn auth_or_err<T>(resp: reqwest::Response, what: impl AsRef<str>) -> Resul
 pub mod test_support {
     use super::*;
 
-    #[derive(Default)]
     pub struct MockWebdavClient {
         /// Remote directory contents (name → raw bytes).
         pub files: std::sync::Mutex<std::collections::HashMap<String, Vec<u8>>>,
@@ -265,6 +264,21 @@ pub mod test_support {
         pub fixed_last_modified: Option<String>,
         /// When true, every operation fails with a network error.
         pub fail_network: bool,
+        /// When false, PUT responses carry no ETag — mirrors servers like
+        /// Jianguoyun whose PUT replies omit the header (the engine must
+        /// re-read PROPFIND to learn the real ETag).
+        pub put_returns_etag: bool,
+    }
+
+    impl Default for MockWebdavClient {
+        fn default() -> Self {
+            Self {
+                files: Default::default(),
+                fixed_last_modified: None,
+                fail_network: false,
+                put_returns_etag: true,
+            }
+        }
     }
 
     impl MockWebdavClient {
@@ -275,6 +289,7 @@ pub mod test_support {
                 files: Default::default(),
                 fixed_last_modified: Some(ts.to_string()),
                 fail_network: false,
+                put_returns_etag: true,
             }
         }
 
@@ -330,7 +345,7 @@ pub mod test_support {
                 .insert(name.to_string(), body.to_vec());
             Ok(RemoteEntry {
                 name: name.to_string(),
-                etag: Some(mock_etag(body)),
+                etag: self.put_returns_etag.then(|| mock_etag(body)),
                 last_modified: self.fixed_last_modified.clone(),
             })
         }

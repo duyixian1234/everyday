@@ -37,19 +37,9 @@ fn multi_flag(spec: &ArgSpec) -> Arg {
         .action(ArgAction::Append)
 }
 
-/// Turn a single action's argument spec into a clap subcommand.
-fn build_action_command(spec: &ActionArgSpec) -> Command {
-    let mut cmd = Command::new(spec.name)
-        .about(spec.description)
-        .after_help(format!("Usage: {}", spec.usage));
-    for a in spec.args {
-        cmd = cmd.arg(match a.kind {
-            ArgKind::Value => value_flag(a),
-            ArgKind::Bool => bool_flag(a),
-            ArgKind::Multi => multi_flag(a),
-        });
-    }
-    match spec.positional {
+/// Attach the positional-argument slot an action declared.
+fn add_positional(mut cmd: Command, positional: Positional) -> Command {
+    match positional {
         Positional::None => {}
         Positional::OptionalSingle => {
             cmd = cmd.arg(
@@ -69,12 +59,44 @@ fn build_action_command(spec: &ActionArgSpec) -> Command {
     cmd
 }
 
-/// Build a module's clap subcommand (including each action sub-subcommand).
-pub(crate) fn build_module_command(spec: &ModuleArgSpec) -> Command {
+/// Turn a single action's argument spec into a clap subcommand.
+fn build_action_command(spec: &ActionArgSpec) -> Command {
     let mut cmd = Command::new(spec.name)
         .about(spec.description)
-        .subcommand_required(true)
-        .arg_required_else_help(true);
+        .after_help(format!("Usage: {}", spec.usage));
+    for a in spec.args {
+        cmd = cmd.arg(match a.kind {
+            ArgKind::Value => value_flag(a),
+            ArgKind::Bool => bool_flag(a),
+            ArgKind::Multi => multi_flag(a),
+        });
+    }
+    add_positional(cmd, spec.positional)
+}
+
+/// Build a module's clap subcommand (including each action sub-subcommand).
+pub(crate) fn build_module_command(spec: &ModuleArgSpec) -> Command {
+    // A single-action module whose action name equals the module name may be
+    // invoked without repeating the action: `everyday sync` ≡ `everyday sync
+    // sync` (main.rs falls back to the module name as the action). The action's
+    // flags and positional slot are mirrored at module level so
+    // `everyday sync --push-only` parses; the explicit form still works too.
+    let omitable = spec.actions.len() == 1 && spec.actions[0].name == spec.name;
+    let mut cmd = Command::new(spec.name)
+        .about(spec.description)
+        .subcommand_required(!omitable)
+        .arg_required_else_help(!omitable);
+    if omitable {
+        let action = &spec.actions[0];
+        for a in action.args {
+            cmd = cmd.arg(match a.kind {
+                ArgKind::Value => value_flag(a),
+                ArgKind::Bool => bool_flag(a),
+                ArgKind::Multi => multi_flag(a),
+            });
+        }
+        cmd = add_positional(cmd, action.positional);
+    }
     for a in spec.actions {
         cmd = cmd.subcommand(build_action_command(a));
     }
