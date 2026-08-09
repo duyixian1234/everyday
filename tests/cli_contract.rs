@@ -15,19 +15,8 @@ use assert_cmd::Command;
 /// Top-level subcommand set. Adding a module? Add it here too.
 /// Removing one? That is a BREAKING change — bump major, add an ADR, update this list.
 const TOP_LEVEL_COMMANDS: &[&str] = &[
-    "health",
-    "config",
-    "bookmark",
-    "search",
-    "auth",
-    "mail",
-    "memory",
-    "sync",
-    "timeline",
-    "rss",
-    "todo",
-    "note",
-    "cal",
+    "health", "config", "bookmark", "search", "auth", "mail", "memory", "sync", "timeline", "rss",
+    "todo", "note", "cal",
 ];
 
 /// Per-module action set: (module, actions).
@@ -36,11 +25,19 @@ const MODULE_ACTIONS: &[(&str, &[&str])] = &[
     ("mail", &["folders", "list", "read", "search", "send"]),
     ("cal", &["calendars", "list", "add", "delete"]),
     ("rss", &["follow", "list", "unfollow", "digest", "fetch"]),
-    ("note", &["search", "create", "read", "append", "update", "list"]),
+    (
+        "note",
+        &["search", "create", "read", "append", "update", "list"],
+    ),
     ("todo", &["list", "add", "start", "complete", "delete"]),
     ("bookmark", &["add", "list"]),
     ("timeline", &["today", "yesterday", "week", "month", "sync"]),
-    ("memory", &["add", "get", "relation", "list", "delete", "graph", "history"]),
+    (
+        "memory",
+        &[
+            "add", "get", "relation", "list", "delete", "graph", "history",
+        ],
+    ),
     ("config", &["path", "list", "get", "set", "init"]),
     ("search", &["query"]),
     ("sync", &["sync"]),
@@ -48,12 +45,21 @@ const MODULE_ACTIONS: &[(&str, &[&str])] = &[
 
 /// clap renders one subcommand per line as `  <name> <description>`.
 fn has_command(help: &str, name: &str) -> bool {
-    help.lines().any(|l| l.starts_with(&format!("  {name} ")) || l == format!("  {name}"))
+    help.lines()
+        .any(|l| l.starts_with(&format!("  {name} ")) || l == format!("  {name}"))
 }
 
 fn run_help(args: &[&str]) -> String {
-    let out = Command::cargo_bin("everyday").unwrap().args(args).output().unwrap();
-    assert!(out.status.success(), "`everyday {} --help` failed", args.join(" "));
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "`everyday {} --help` failed",
+        args.join(" ")
+    );
     String::from_utf8(out.stdout).unwrap()
 }
 
@@ -87,12 +93,21 @@ fn module_action_sets_are_contract() {
 fn config_example_shape_is_contract() {
     let content = std::fs::read_to_string("config.example.toml")
         .expect("config.example.toml must exist at crate root");
-    let doc: toml::Value = content.parse().expect("config.example.toml must parse as TOML");
+    let doc: toml::Value = content
+        .parse()
+        .expect("config.example.toml must parse as TOML");
 
     // Sections whose removal would silently break user configs.
-    assert!(doc.get("default_account").is_some(), "`[default_account]` must exist");
-    for section in ["mail", "calendar", "rss", "note", "todo", "bookmark", "webdav"] {
-        let v = doc.get(section).unwrap_or_else(|| panic!("`[{section}]` section must exist"));
+    assert!(
+        doc.get("default_account").is_some(),
+        "`[default_account]` must exist"
+    );
+    for section in [
+        "mail", "calendar", "rss", "note", "todo", "bookmark", "webdav",
+    ] {
+        let v = doc
+            .get(section)
+            .unwrap_or_else(|| panic!("`[{section}]` section must exist"));
         assert!(
             v.get("accounts").is_some() || v.get("feeds").is_some(),
             "`[{section}]` must contain an array (`accounts` or `feeds`)"
