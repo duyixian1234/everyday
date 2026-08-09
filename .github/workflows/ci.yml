@@ -48,8 +48,20 @@ jobs:
       - name: Clippy
         run: cargo clippy --all-targets --target ${{ matrix.target }} -- -D warnings
 
-      - name: Test
-        run: cargo test --verbose --target ${{ matrix.target }}
+      - name: Install nextest
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-nextest
+
+      - name: Test (nextest)
+        run: cargo nextest run --target ${{ matrix.target }} --junit junit-${{ matrix.target }}.xml
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: junit-${{ matrix.target }}
+          path: junit-${{ matrix.target }}.xml
 
   fmt:
     name: Format check
