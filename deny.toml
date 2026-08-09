@@ -1,0 +1,44 @@
+# cargo-deny configuration — license + advisory audit.
+# See docs/adr/G001-quality-tools-suite.md for the decision record.
+# Run locally: `just deny` / CI: .github/workflows/ci.yml `deny` job.
+
+[graph]
+# Full audit of the 389-crate graph (Cargo.lock).
+
+[licenses]
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unlicense",
+    "CC0-1.0",
+    "MPL-2.0",
+    "BSL-1.0",
+    # --- 2026-08-09 baseline scan additions (all permissive, zero copyleft) ---
+    "Unicode-3.0",         # icu_* / unicode-ident (via idna_adapter -> lettre/url/sqlx chains)
+    "0BSD",                # mailparse, quoted_printable
+    "CDLA-Permissive-2.0", # webpki-roots (root cert data license)
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[advisories]
+version = 2
+# v0.20+: unmaintained/yanked take a SCOPE value (all | workspace | transitive | none),
+# not a severity. Security-class advisories stay error (hard CI gate) by default.
+# The 4 known unmaintained crates are discontinued-but-not-vulnerable — explicitly
+# ignored below and recorded with reasons in G001. New unmaintained deps WILL fail
+# CI until reviewed (add an ADR note + ignore entry).
+unmaintained = "all"
+ignore = [
+    "RUSTSEC-2025-0052", # async-std discontinued — via async-imap (mail module)
+    "RUSTSEC-2024-0388", # derivative unmaintained — via keyring -> zbus (Linux secret-service chain)
+    "RUSTSEC-2024-0384", # instant unmaintained — via zbus -> futures-lite chain
+    "RUSTSEC-2024-0370", # proc-macro-error unmaintained — via tabled_derive (table output)
+]

@@ -30,6 +30,10 @@ test:
 typos:
     typos
 
+# Dependency audit — licenses + RUSTSEC advisories (config: deny.toml)
+deny:
+    cargo deny check
+
 # Build the project (cargo build)
 build:
     cargo build -q
@@ -39,5 +43,5 @@ build:
 check-links:
     uv run scripts/check_doc_links.py
 
-# Full CI pipeline: check → check-links → test → build → typos
-ci: check check-links test build typos
+# Full CI pipeline: check → check-links → test → build → typos → deny
+ci: check check-links test build typos deny

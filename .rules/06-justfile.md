@@ -27,9 +27,11 @@ works on native Windows. Use bash chaining (`&&`) for portability.
 | `just` | `just --list` | List all recipes |
 | `just format` | `cargo fmt` | Format all code |
 | `just check` | `cargo fmt --check && cargo clippy --all-targets -- -D warnings` | Lint; **fail-fast on `fmt --check`** (does not run clippy if formatting is wrong) |
-| `just test` | `cargo test -q` | Run all tests; `-q` suppresses progress lines |
+| `just test` | `cargo test -q` | Run all tests; `-q` suppresses progress lines. CI uses nextest (junit reports); local suite is ~4s so `cargo test` stays (see G001) |
+| `just typos` | `typos` | Spell-check all docs/code (config: `typos.toml`) |
+| `just deny` | `cargo deny check` | Dependency audit: licenses + RUSTSEC advisories (config: `deny.toml`) |
 | `just build` | `cargo build -q` | Build the binary; `-q` suppresses progress lines |
-| `just ci` | `check` → `test` → `build` | Full local CI |
+| `just ci` | `check` → `check-links` → `test` → `build` → `typos` → `deny` | Full local CI |
 | `just check-links` | (custom) | Cross-reference integrity check — see below |
 
 ## Quiet output convention
