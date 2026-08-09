@@ -105,10 +105,13 @@ Full release runbook lives in the project long-term memory
 (`everyday/.workbuddy/memory/MEMORY.md` under "Release Runbook"). Summary:
 
 1. `chore: release vX.Y.Z` commit bumping `Cargo.toml` + document version refs.
-2. Annotated tag: `git tag -a vX.Y.Z -m "vX.Y.Z: <highlights>"`.
-3. Push: `git push origin master && git push origin vX.Y.Z`. **Never `cnb`** —
+2. Regenerate the changelog: `git cliff -o CHANGELOG.md` and include it in the
+   release commit (see [G001](../docs/adr/G001-quality-tools-suite.md) — git-cliff
+   renders only; version bumps stay manual + ADR-governed).
+3. Annotated tag: `git tag -a vX.Y.Z -m "vX.Y.Z: <highlights>"`.
+4. Push: `git push origin master && git push origin vX.Y.Z`. **Never `cnb`** —
    see [F006](../docs/adr/F006-ci-release-github-only.md).
-4. `gh run watch <run-id> --exit-status` until release workflow completes
+5. `gh run watch <run-id> --exit-status` until release workflow completes
    (~6 min).
 
 ## Doc discipline summary
