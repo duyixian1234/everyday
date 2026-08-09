@@ -124,16 +124,22 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         }
     };
 
-    // Resolve the action. The module-level subcommand_required guarantees it
-    // exists; when absent, clap has already shown help and exited.
-    let (action_name, action_matches) = module_matches
-        .subcommand()
-        .unwrap_or((module_name, module_matches));
-
     // Reconstruct the action's `ArgMatches` into the `Vec<String>` the module
     // expects (type-safe, no panic), then inject the global `--account`
     // (handled here to avoid `matches_to_args` regenerating it).
     let spec = module.module_arg_spec();
+
+    // Resolve the action. For single-action modules the action may be
+    // omitted: `everyday sync` ≡ `everyday sync sync`, `everyday search "x"`
+    // ≡ `everyday search query "x"` (cli.rs mirrors the action's flags at
+    // module level; here we fall back to the module's only action name).
+    let (action_name, action_matches) = match module_matches.subcommand() {
+        Some((name, m)) => (name, m),
+        None => (
+            spec.actions.first().map(|a| a.name).unwrap_or(module_name),
+            module_matches,
+        ),
+    };
     let action_spec = spec.actions.iter().find(|a| a.name == action_name);
     let mut args: Vec<String> = match action_spec {
         Some(a) => matches_to_args(action_matches, a),

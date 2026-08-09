@@ -76,12 +76,13 @@ fn build_action_command(spec: &ActionArgSpec) -> Command {
 
 /// Build a module's clap subcommand (including each action sub-subcommand).
 pub(crate) fn build_module_command(spec: &ModuleArgSpec) -> Command {
-    // A single-action module whose action name equals the module name may be
-    // invoked without repeating the action: `everyday sync` ≡ `everyday sync
-    // sync` (main.rs falls back to the module name as the action). The action's
-    // flags and positional slot are mirrored at module level so
-    // `everyday sync --push-only` parses; the explicit form still works too.
-    let omitable = spec.actions.len() == 1 && spec.actions[0].name == spec.name;
+    // A single-action module may be invoked without naming the action:
+    // `everyday sync` ≡ `everyday sync sync`, `everyday search "x"` ≡
+    // `everyday search query "x"` (main.rs falls back to the module's only
+    // action). The action's flags and positional slot are mirrored at module
+    // level so `everyday sync --push-only` / `everyday search --module note`
+    // parse; the explicit form still works too.
+    let omitable = spec.actions.len() == 1;
     let mut cmd = Command::new(spec.name)
         .about(spec.description)
         .subcommand_required(!omitable)
@@ -196,4 +197,99 @@ pub(crate) fn matches_to_args(m: &ArgMatches, spec: &ActionArgSpec) -> Vec<Strin
         }
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::{ArgKind, Positional};
+
+    fn single_action_spec() -> ModuleArgSpec {
+        static A: &[ArgSpec] = &[ArgSpec {
+            name: "flag-a",
+            help: "h",
+            kind: ArgKind::Bool,
+        }];
+        static ACTS: &[ActionArgSpec] = &[ActionArgSpec {
+            name: "query",
+            description: "d",
+            usage: "u",
+            args: A,
+            positional: Positional::OptionalSingle,
+        }];
+        ModuleArgSpec {
+            name: "search",
+            description: "d",
+            actions: ACTS,
+        }
+    }
+
+    fn multi_action_spec() -> ModuleArgSpec {
+        static ACTS: &[ActionArgSpec] = &[
+            ActionArgSpec {
+                name: "list",
+                description: "d",
+                usage: "u",
+                args: &[],
+                positional: Positional::None,
+            },
+            ActionArgSpec {
+                name: "add",
+                description: "d",
+                usage: "u",
+                args: &[],
+                positional: Positional::None,
+            },
+        ];
+        ModuleArgSpec {
+            name: "bookmark",
+            description: "d",
+            actions: ACTS,
+        }
+    }
+
+    #[test]
+    fn single_action_module_accepts_omitted_action() {
+        // The command under test is the module subcommand itself (name
+        // "search"), so argv[0] is the module name.
+        let cmd = build_module_command(&single_action_spec());
+        // `search` (no action) parses; no action subcommand was invoked.
+        let m = cmd.clone().try_get_matches_from(["search"]).unwrap();
+        assert!(m.subcommand().is_none());
+        assert!(!m.get_flag("flag-a"));
+        // `search --flag-a` — mirrored flag at module level.
+        let m2 = cmd
+            .clone()
+            .try_get_matches_from(["search", "--flag-a"])
+            .unwrap();
+        assert!(m2.get_flag("flag-a"));
+        // Positional mirror: `search "hello"`.
+        let m3 = cmd
+            .clone()
+            .try_get_matches_from(["search", "hello"])
+            .unwrap();
+        assert_eq!(
+            m3.get_one::<String>("args").map(String::as_str),
+            Some("hello")
+        );
+        // Explicit action form still works: `search query "hello"`.
+        let m4 = cmd
+            .clone()
+            .try_get_matches_from(["search", "query", "hello"])
+            .unwrap();
+        assert_eq!(m4.subcommand().unwrap().0, "query");
+    }
+
+    #[test]
+    fn multi_action_module_still_requires_action() {
+        let cmd = build_module_command(&multi_action_spec());
+        // `bookmark` without an action must fail (clap help path).
+        assert!(cmd.clone().try_get_matches_from(["bookmark"]).is_err());
+        // With an action it parses.
+        assert!(
+            cmd.clone()
+                .try_get_matches_from(["bookmark", "list"])
+                .is_ok()
+        );
+    }
 }
