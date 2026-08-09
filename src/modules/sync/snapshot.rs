@@ -78,7 +78,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
 /// A unique-enough suffix for temp files: process id + high-resolution
 /// timestamp (nanos since epoch). Not cryptographically random — collision
 /// resistance across concurrent processes is all that matters here.
-fn rand_suffix() -> String {
+pub(crate) fn rand_suffix() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

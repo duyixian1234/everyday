@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use crate::error::Result;
 
 use super::client::{RemoteEntry, WebdavClient};
-use super::snapshot::{sha256_file, snapshot_db};
+use super::snapshot::{rand_suffix, sha256_file, snapshot_db};
 use super::state::SyncState;
 
 /// One file in the sync manifest: local path + canonical remote name.
@@ -509,7 +509,14 @@ fn tmp_dir_for(dir_url: &str) -> PathBuf {
         .split('/')
         .rfind(|s| !s.is_empty())
         .unwrap_or("sync");
-    dir.join("everyday").join(".sync-tmp").join(key)
+    // Unique per-invocation subdirectory: run_sync removes its own tmp dir on
+    // exit, so concurrent runs (parallel tests, multi-command scripts) must not
+    // share one directory — a shared dir gets deleted out from under peers
+    // (VACUUM INTO CANTOPEN/IOERR on Unix; masked by file locks on Windows).
+    dir.join("everyday")
+        .join(".sync-tmp")
+        .join(key)
+        .join(rand_suffix())
 }
 
 // ============ state bookkeeping ============
