@@ -22,6 +22,7 @@
 - **本地 provider 唯一**：`note` / `todo` / `bookmark` 三模块仅本地 SQLite（Notion provider 已移除，[R019](./docs/adr/R019-remove-notion-provider.md)，v0.13.0）。
 - **Timeline**：append-only event log 统一 6 source 事件捕获（[L001–L013](./docs/adr/L001-append-only-event-log.md)）。
 - **质量门禁**：`cargo build` / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` / `cargo fmt --check` 全绿；CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
+- **工程质量工具栈（[G001](./docs/adr/G001-quality-tools-suite.md)）**：CI 测试换 nextest（junit 报告，本地仍 `cargo test` ~4s）；typos 拼写门禁；git-cliff 发版时生成 CHANGELOG.md；cargo-deny 合规审计（389 crates 零 copyleft，allow 加 Unicode-3.0/0BSD/CDLA-Permissive-2.0；4 个 unmaintained 显式接受并记录）；**CLI contract 测试层**（tests/cli_contract.rs 锁顶层命令集/模块 action 集/config 结构——防 v0.8/v0.12/v0.13 类破坏）；semver-checks 因纯 bin 无公共 API 被否。
 
 ## ADR 时间序索引
 
@@ -29,6 +30,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-09 | G | [G001](./docs/adr/G001-quality-tools-suite.md) | 工程质量工具栈：nextest(CI)/typos/git-cliff/cargo-deny + CLI contract 测试；semver-checks 因纯 bin 被否；4 unmaintained 依赖显式接受（G001 记录理由）；cargo-dist/sccache 留批 2 |
 | 2026-08-09 | D | [D001–D003](./docs/adr/D001-webdav-file-sync.md) | WebDAV 设备同步：D001 同步模型/范围/冲突（文件级 LWW + 冲突副本）/ D002 快照 + hash 状态（sync-state.json）/ D003 auto_sync CLI 边界（写命令 best-effort push，查询永不触发） |
 | 2026-08-09 | R | [R019](./docs/adr/R019-remove-notion-provider.md) | 移除 Notion provider：note/todo/bookmark 仅本地 SQLite；`provider="notion"` 加载即报错；ops-log/AOP 钩子/OpsLogProvider/共享客户端/令牌流全删；JSON 核心键保持稳定（v0.13.0 破坏性） |
 | 2026-08-05 | F | [F013](./docs/adr/F013-request-context-explicit-parameter.md) | P4 显式参数化 RequestContext：`Executor::execute` / middleware 钩子加 `&RequestContext`，thread-local 移除，破坏性（迁移指南内置） |

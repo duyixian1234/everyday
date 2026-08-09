@@ -156,6 +156,14 @@ Cross-device file-level sync to WebDAV (RFC 4918). Scope: bookmark/memory/note/t
 | [D002](D002-snapshot-hash-state.md) | Consistent snapshots (VACUUM INTO) + hash-driven state | Accepted | 2026-08-09 |
 | [D003](D003-auto-sync-cli-boundary.md) | auto_sync — best-effort push after write commands, never on query | Accepted | 2026-08-09 |
 
+## Quality tool suite (G-series)
+
+Engineering-stack decisions: what tooling guards the release/CI pipeline and why.
+
+| # | Title | Status | Date |
+|---|-------|--------|------|
+| [G001](G001-quality-tools-suite.md) | Quality tool suite — nextest/typos/git-cliff/cargo-deny + CLI contract tests; semver-checks rejected (pure bin); unmaintained deps accepted | Accepted | 2026-08-09 |
+
 ---
 
 ## Conventions

@@ -68,7 +68,7 @@ Agents 与协作者在改代码前，按以下顺序读：
 按 [`.rules/01-workflow.md`](./.rules/01-workflow.md) §"Finishing a task" 执行
 五步：
 
-1. 质量门禁 `just ci`（format / clippy / test / build 全绿）
+1. 质量门禁 `just ci`（format / clippy / test / build / typos / deny 全绿——工具栈见 [G001](./docs/adr/G001-quality-tools-suite.md)）
 2. `just check-links`（跨文档引用完整性）
 3. **ADR 抽取**——把决策性内容从 `progress.md` / `task_plan.md` 推到 ADR，
    `progress.md` 仅剩索引与一行式当前状态
