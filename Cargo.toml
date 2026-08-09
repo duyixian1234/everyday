@@ -4,6 +4,7 @@ version = "0.13.0"
 edition = "2024"
 description = "The Rust-powered hands for your AI Agent"
 license = "MIT"
+repository = "https://github.com/duyixian1234/everyday"
 
 [[bin]]
 name = "everyday"
@@ -80,3 +81,8 @@ tokio-test = "0.4"
 
 # CLI contract tests (tests/cli_contract.rs) — assert_cmd drives the built binary
 assert_cmd = "2"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"

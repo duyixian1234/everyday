@@ -23,6 +23,7 @@
 - **Timeline**：append-only event log 统一 6 source 事件捕获（[L001–L013](./docs/adr/L001-append-only-event-log.md)）。
 - **质量门禁**：`cargo build` / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` / `cargo fmt --check` 全绿；CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
 - **工程质量工具栈（[G001](./docs/adr/G001-quality-tools-suite.md)）**：CI 测试换 nextest（junit 报告，本地仍 `cargo test` ~4s）；typos 拼写门禁；git-cliff 发版时生成 CHANGELOG.md；cargo-deny 合规审计（389 crates 零 copyleft，allow 加 Unicode-3.0/0BSD/CDLA-Permissive-2.0；4 个 unmaintained 显式接受并记录）；**CLI contract 测试层**（tests/cli_contract.rs 锁顶层命令集/模块 action 集/config 结构——防 v0.8/v0.12/v0.13 类破坏）；semver-checks 因纯 bin 无公共 API 被否。
+- **批 2：release 流水线换 cargo-dist**（[G001](./docs/adr/G001-quality-tools-suite.md) 批 2 落地）：release.yml 由 `dist generate` 机器生成（勿手改，源在 dist-workspace.toml）；4 平台归档 tar.xz/zip + shell/powershell 安装脚本 + sha256.sum + **Sigstore attestation**（`gh attestation verify` 可验）；README 安装节更新（installer 为推荐通道）。sccache/cargo-cache 评估结论=不引入（Swatinem/rust-cache 已覆盖、cargo-cache 是磁盘卫生工具）；tabled 已是最新（proc-macro-error 无升级路径，保留在 G001 接受清单）。
 
 ## ADR 时间序索引
 
