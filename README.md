@@ -554,6 +554,23 @@ Error format in JSON mode:
 
 Exit codes: `0` on success, `1` on failure.
 
+### Logging & verbosity
+
+All diagnostics go to stderr; stdout carries only the command result
+([R001](docs/adr/R001-thread-local-json-mode.md)). Default is **quiet**
+(WARN): warnings and errors are visible, per-command progress logs are
+silent.
+
+| Flag | Level | Effect |
+| --- | --- | --- |
+| (none) | WARN | Default: warnings/errors visible, progress silent |
+| `-v` | INFO | Restores middleware progress logs: `[req] module action ok in 12ms` (text) or `{"_log": ...}` lines (JSON mode) |
+| `-vv` | DEBUG | Reserved (no debug output yet) |
+
+- The auto-sync success notice (`warning: auto_sync_pushed: N file(s) pushed`) is info-level and appears with `-v`; failures (`auto_sync_failed`) are always visible.
+- In JSON mode stderr lines are structured: `{"_log": ...}` (middleware progress), `{"_warning": ...}` (partial failures: init failure / auto_sync / search provider / timeline sync), `{"_error": ...}` (fatal).
+- The stdout contract is unchanged: the command result (including `--json`) is the only thing on stdout.
+
 ## Configuration
 
 Config file path: `~/.config/everyday/config.toml`

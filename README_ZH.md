@@ -524,6 +524,20 @@ JSON 模式下错误格式：
 
 退出码：成功 `0`，失败 `1`。
 
+### 日志与级别
+
+stderr 承载全部日志；stdout 只输出命令结果（[R001](docs/adr/R001-thread-local-json-mode.md) 契约）。默认**安静**（WARN 级）：warning / error 可见，每次命令的进度日志静默。
+
+| 参数 | 级别 | 效果 |
+| --- | --- | --- |
+| （无） | WARN | 默认：warning / error 可见，进度日志静默 |
+| `-v` | INFO | 恢复中间件进度日志：text 模式 `[req] module action ok in 12ms`，JSON 模式 `{"_log": ...}` 行 |
+| `-vv` | DEBUG | 预留（当前无 debug 输出） |
+
+- auto_sync 成功通知（`warning: auto_sync_pushed: N file(s) pushed`）是 info 级，随 `-v` 出现；失败通知（`auto_sync_failed`）默认可见。
+- JSON 模式下 stderr 为结构化行：`{"_log": ...}`（中间件进度）、`{"_warning": ...}`（部分失败：init 失败 / auto_sync / search provider / timeline sync）、`{"_error": ...}`（致命错误）。
+- stdout 契约不变：命令结果（含 `--json`）是 stdout 的唯一内容。
+
 ## 配置
 
 配置文件路径：`~/.config/everyday/config.toml`
