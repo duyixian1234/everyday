@@ -91,6 +91,17 @@ fn module_action_sets_are_contract() {
 }
 
 #[test]
+fn verbose_flag_is_contract() {
+    // `-v/--verbose` is the explicit opt-in for leveled log output (default
+    // is quiet WARN). Removing or renaming it breaks the logging contract.
+    let help = run_help(&["--help"]);
+    assert!(
+        help.contains("-v, --verbose"),
+        "`-v, --verbose` must appear in `everyday --help`"
+    );
+}
+
+#[test]
 fn config_example_shape_is_contract() {
     let content = std::fs::read_to_string("config.example.toml")
         .expect("config.example.toml must exist at crate root");

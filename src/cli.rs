@@ -126,6 +126,14 @@ pub(crate) fn build_root_command(registry: &ModuleRegistry) -> Command {
                 .global(true),
         )
         .arg(
+            Arg::new("verbose")
+                .short('v')
+                .long("verbose")
+                .help("显式开启日志输出：-v = INFO（中间件进度日志），-vv = DEBUG")
+                .action(ArgAction::Count)
+                .global(true),
+        )
+        .arg(
             Arg::new("account")
                 .long("account")
                 .help("覆盖模块的默认账户")

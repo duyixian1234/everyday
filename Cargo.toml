@@ -78,6 +78,10 @@ httpdate = "1"
 # MCP server (F014): stdio transport requires the `transport-io` feature.
 rmcp = { version = "3.1.2", features = ["server", "transport-io"] }
 
+# 日志（级别过滤 + 自定义输出层）
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 

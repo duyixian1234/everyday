@@ -52,6 +52,12 @@ async fn main() {
     // can query it without re-scanning `env::args`.
     crate::util::json_mode::set_json_mode(json_flag);
 
+    // Leveled logging (default quiet): `-v` = INFO, `-vv` = DEBUG; the
+    // subscriber writes to stderr in the project's text/JSON shapes. Must be
+    // installed before any dispatch so middleware events route through it.
+    let verbose = matches.get_count("verbose");
+    crate::util::logging::init(verbose, json_flag);
+
     let (code, output) = run(matches, mode).await;
     println!("{output}");
     std::process::exit(code);

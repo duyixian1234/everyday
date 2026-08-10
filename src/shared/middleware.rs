@@ -40,24 +40,29 @@ pub trait Middleware: Send + Sync {
     fn on_error(&self, _ctx: &RequestContext, _module: &str, _action: &str, _error: &AgentError) {}
 }
 
-/// Default middleware: logs every dispatch to stderr (never stdout, which is
-/// reserved for command output; JSON mode gets a structured `_log` line).
+/// Default middleware: emits an info-level tracing event per dispatch. The
+/// subscriber renders it to stderr (never stdout, which is reserved for
+/// command output) — compact text or a structured `_log` JSON line depending
+/// on render mode. Events are silenced by the default WARN level; `-v`
+/// (INFO) restores them. Stays in the stack unconditionally — level gating
+/// is the subscriber's job, not the middleware's.
 ///
-/// Enabled by default in `main.rs`; disable by removing it from the stack.
+/// Field set is the R001 contract (`request_id` / `caller` / `module` /
+/// `action`, plus `elapsed_ms` or `message`). These events are emitted
+/// field-only, deliberately WITHOUT a format string: tracing's implicit
+/// `message` field would collide with the explicit `message` payload of the
+/// error path.
 pub struct LoggingMiddleware;
 
 impl Middleware for LoggingMiddleware {
     fn before(&self, ctx: &RequestContext, module: &str, action: &str) {
-        let ev = serde_json::json!({
-            "_log": "start",
-            "request_id": ctx.request_id,
-            "caller": ctx.caller,
-            "module": module,
-            "action": action,
-        });
-        log_line(
-            &ev,
-            &format!("[{}] {module} {action} start", ctx.request_id),
+        tracing::info!(
+            target: "everyday",
+            _log = "start",
+            request_id = %ctx.request_id,
+            caller = %ctx.caller,
+            module = %module,
+            action = %action,
         );
     }
 
@@ -69,66 +74,32 @@ impl Middleware for LoggingMiddleware {
         result: &Result<Output>,
         elapsed: Duration,
     ) {
-        let ms = elapsed.as_millis();
-        match result {
-            Ok(_) => {
-                let ev = serde_json::json!({
-                    "_log": "ok",
-                    "request_id": ctx.request_id,
-                    "caller": ctx.caller,
-                    "module": module,
-                    "action": action,
-                    "elapsed_ms": ms,
-                });
-                log_line(
-                    &ev,
-                    &format!("[{}] {module} {action} ok in {ms}ms", ctx.request_id),
-                );
-            }
-            Err(_) => {
-                let ev = serde_json::json!({
-                    "_log": "error",
-                    "request_id": ctx.request_id,
-                    "caller": ctx.caller,
-                    "module": module,
-                    "action": action,
-                    "elapsed_ms": ms,
-                });
-                log_line(
-                    &ev,
-                    &format!("[{}] {module} {action} error in {ms}ms", ctx.request_id),
-                );
-            }
-        }
+        // `as_millis()` is u128, but tracing's Visit has no u128 slot and the
+        // JSON contract renders elapsed_ms as a number — narrowing to u64 is
+        // lossless for any realistic duration (< 5.8e11 years).
+        let elapsed_ms = elapsed.as_millis() as u64;
+        let kind = if result.is_ok() { "ok" } else { "error" };
+        tracing::info!(
+            target: "everyday",
+            _log = %kind,
+            request_id = %ctx.request_id,
+            caller = %ctx.caller,
+            module = %module,
+            action = %action,
+            elapsed_ms = elapsed_ms,
+        );
     }
 
     fn on_error(&self, ctx: &RequestContext, module: &str, action: &str, error: &AgentError) {
-        let ev = serde_json::json!({
-            "_log": "error_detail",
-            "request_id": ctx.request_id,
-            "caller": ctx.caller,
-            "module": module,
-            "action": action,
-            "message": error.message(),
-        });
-        log_line(
-            &ev,
-            &format!(
-                "[{}] {module} {action} error: {}",
-                ctx.request_id,
-                error.message()
-            ),
+        tracing::info!(
+            target: "everyday",
+            _log = "error_detail",
+            request_id = %ctx.request_id,
+            caller = %ctx.caller,
+            module = %module,
+            action = %action,
+            message = %error.message(),
         );
-    }
-}
-
-/// Emit a middleware log line: structured JSON in `--json` mode, plain text
-/// otherwise. `text` is the human-readable form (used only in text mode).
-fn log_line(event: &serde_json::Value, text: &str) {
-    if crate::util::json_mode::is_json() {
-        eprintln!("{event}");
-    } else {
-        eprintln!("{text}");
     }
 }
 
