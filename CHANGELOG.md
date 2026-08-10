@@ -1,3 +1,8 @@
+## [0.16.2] - 2026-08-10
+
+### 🐛 Bug Fixes
+
+- *(auth)* Honor [auth] env_credentials on no-Config hot paths
 ## [0.16.1] - 2026-08-10
 
 ### 🚀 Features
@@ -8,6 +13,10 @@
 ### 📚 Documentation
 
 - *(cli)* Document default-quiet logging and -v/-vv semantics (#9)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.16.1
 ## [0.16.0] - 2026-08-10
 
 ### 🚀 Features

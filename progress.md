@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.16.2 已发布** — **R020 修订：`[auth] env_credentials` 对 no-Config hot path 生效**：`mail list` / `cal` / `sync` 等调用点（`get_credential_with_user`，P2b 无完整 Config）此前只认 `EVERYDAY_ENV_CREDENTIALS` 环境开关，config 字段无效；现 main 启动时把 config 字段镜像到进程级开关（`sync_env_credentials_from_config`），双通道对全部模块生效（[R020](./docs/adr/R020-env-credential-fallback.md) amendment）。非破坏性。
 - **v0.16.1 已发布** — **日志迁移收尾**（[F015](./docs/adr/F015-leveled-logging-tracing.md)）：T2-T4 完成——warning 站点全迁 tracing（`_warning`+`warning_text` 机制，text 逐字节 / JSON 形状不变；auto_sync 成功降 info 随 `-v`；timeline JSON 模式结构化）；mcp serve 迁移（`_error` 第三系）；README 双语契约段更新。非破坏性。
 - **v0.16.0 已发布** — **默认日志静音 + `-v`/`-vv` 显式开启**（[F015](./docs/adr/F015-leveled-logging-tracing.md)）：引入 tracing + tracing-subscriber，默认 WARN（warning/error 可见、中间件进度静音），`-v`=INFO 恢复 `[req] module action ok in Nms` / `{"_log"}` 行（R001 形状不变），`-vv`=DEBUG 预留；`LoggingMiddleware` 无条件留栈靠 LevelFilter 静音；仅渲染 everyday target；14 处 eprintln 全量迁移；Layer 单测 + 二进制级契约测试锁定形状。非破坏性。
 - **v0.15.0 已发布** — **MCP server 上线**（[F014](./docs/adr/F014-mcp-module.md)）：`everyday mcp serve` 经 stdio 把每个 `(module, action)` 投影为 MCP tool `<module>_<action>`（schema 复用 `module_arg_spec`，单一事实来源）；`mcp tools` 打印 tool 清单调试；rmcp 3.x + Mutex 串行 + 会话复用 registry + stdout 仅 JSON-RPC；写操作 tool 带 `[WRITE]` 标记；stdio 端到端测试锁定协议卫生；README/README_ZH/skill 文档已同步。非破坏性。

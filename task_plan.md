@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.16.1 已发布 — 日志迁移收尾（[F015](./docs/adr/F015-leveled-logging-tracing.md)：warning 站点全迁 tracing、mcp serve `_error` 系、README 契约段）；v0.16.0 已发布 — 默认日志静音 + `-v`/`-vv` 显式开启（[F015](./docs/adr/F015-leveled-logging-tracing.md)，tracing 分级日志，R001 形状不变）；v0.15.0 已发布 — MCP server 模块落地（[F014](./docs/adr/F014-mcp-module.md)，`everyday mcp serve` / `mcp tools`，stdio + rmcp 3.x）；v0.14.0 已发布（[R020](./docs/adr/R020-env-credential-fallback.md)）；Notion provider 已移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）。本文档历史阶段的 Notion 描述仅作决策记录，不代表当前能力。
+**当前状态：** v0.16.2 已发布 — R020 修订（[R020](./docs/adr/R020-env-credential-fallback.md) amendment：`[auth] env_credentials` 经进程级镜像对 `mail list`/`cal`/`sync` 等 no-Config hot path 生效，双通道全模块一致）；v0.16.1 已发布 — 日志迁移收尾（[F015](./docs/adr/F015-leveled-logging-tracing.md)：warning 站点全迁 tracing、mcp serve `_error` 系、README 契约段）；v0.16.0 已发布 — 默认日志静音 + `-v`/`-vv` 显式开启（[F015](./docs/adr/F015-leveled-logging-tracing.md)，tracing 分级日志，R001 形状不变）；v0.15.0 已发布 — MCP server 模块落地（[F014](./docs/adr/F014-mcp-module.md)，`everyday mcp serve` / `mcp tools`，stdio + rmcp 3.x）；v0.14.0 已发布（[R020](./docs/adr/R020-env-credential-fallback.md)）；Notion provider 已移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）。本文档历史阶段的 Notion 描述仅作决策记录，不代表当前能力。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
