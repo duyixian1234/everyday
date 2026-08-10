@@ -1,3 +1,8 @@
+## [0.16.0] - 2026-08-10
+
+### 🚀 Features
+
+- *(cli)* Leveled logging via tracing — default quiet, -v/-vv opt-in (F015, #6)
 ## [0.15.0] - 2026-08-09
 
 ### 🚀 Features
@@ -8,6 +13,10 @@
 
 - *(id)* Gen_id unique across processes via PID segment
 - *(id)* Relax gen_id_embeds_pid test to not pin the seq suffix
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.15.0
 ## [0.14.0] - 2026-08-09
 
 ### 🚀 Features

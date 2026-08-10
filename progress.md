@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.16.0 已发布** — **默认日志静音 + `-v`/`-vv` 显式开启**（[F015](./docs/adr/F015-leveled-logging-tracing.md)）：引入 tracing + tracing-subscriber，默认 WARN（warning/error 可见、中间件进度静音），`-v`=INFO 恢复 `[req] module action ok in Nms` / `{"_log"}` 行（R001 形状不变），`-vv`=DEBUG 预留；`LoggingMiddleware` 无条件留栈靠 LevelFilter 静音；仅渲染 everyday target；14 处 eprintln 全量迁移；Layer 单测 + 二进制级契约测试锁定形状。非破坏性。
 - **v0.15.0 已发布** — **MCP server 上线**（[F014](./docs/adr/F014-mcp-module.md)）：`everyday mcp serve` 经 stdio 把每个 `(module, action)` 投影为 MCP tool `<module>_<action>`（schema 复用 `module_arg_spec`，单一事实来源）；`mcp tools` 打印 tool 清单调试；rmcp 3.x + Mutex 串行 + 会话复用 registry + stdout 仅 JSON-RPC；写操作 tool 带 `[WRITE]` 标记；stdio 端到端测试锁定协议卫生；README/README_ZH/skill 文档已同步。非破坏性。
 - **v0.13.1 已发布** — 工程质量工具栈批 1 + 批 2 落地（[G001](./docs/adr/G001-quality-tools-suite.md)）：CI 测试换 nextest（junit 报告）、typos/git-cliff/cargo-deny 门禁、CLI contract 测试层；sync 并行 tmp 目录竞争修复（Unix 可见、Windows 掩盖）；release 流水线换 cargo-dist（installer 脚本 + Sigstore attestation）。无新功能、无破坏。
 - **v0.14.0 已发布** — env 凭据回退（[R020](./docs/adr/R020-env-credential-fallback.md)）：为 R015 开受控例外——keyring 后端不可用（headless/CI/沙箱）时，opt-in 后可从环境变量读凭据。`[auth] env_credentials = true` 或 `EVERYDAY_ENV_CREDENTIALS=1` 双通道开关；变量 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`；读取链 keyring → env → 报错；`auth list` 新增第四态 `env`；`logout` 对 env 来源凭据提示 `unset`；login 始终写 keyring。默认行为不变（R015 仍生效）。非破坏性。
@@ -76,6 +77,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.16.0** | `v0.16.0` | 默认日志静音 + `-v`/`-vv` 显式开启：引入 tracing + 自定义 Layer（text 紧凑格式 + JSON `{"_log"}` 形状不变，R001）；默认 WARN、`-v`=INFO、`-vv`=DEBUG；middleware 留栈靠 LevelFilter 静音；14 处 eprintln 全量迁移；契约测试锁定形状 | [F015](./docs/adr/F015-leveled-logging-tracing.md) |
 | **v0.15.0** | `v0.15.0` | MCP server 上线：`everyday mcp serve`（rmcp 3.x stdio）把每个 (module, action) 协议投影为 MCP tool `<module>_<action>`，schema 复用 module_arg_spec；`mcp tools` 调试输出；`[WRITE]` 写标记；stdout 仅 JSON-RPC | [F014](./docs/adr/F014-mcp-module.md) |
 | **v0.14.0** | `v0.14.0` | env 凭据回退（opt-in）：keyring 不可用时从 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` 读凭据；双通道开关（config `[auth] env_credentials` / `EVERYDAY_ENV_CREDENTIALS=1`）；`auth list` 第四态 `env` | [R020](./docs/adr/R020-env-credential-fallback.md) |
 | **v0.13.0** | `v0.13.0` | Notion provider 移除（note/todo/bookmark 仅本地 SQLite，破坏性）+ **WebDAV 设备同步**：`everyday sync` 双向文件级同步（4 用户 DB + config.toml，VACUUM INTO 快照 + SHA-256 变更检测，LWW 冲突副本），`auth --module webdav`，写命令后 opt-in auto_sync（D003）；单动作模块（sync/search）可省略 action | [R019](./docs/adr/R019-remove-notion-provider.md), [D001–D003](./docs/adr/D001-webdav-file-sync.md) |
