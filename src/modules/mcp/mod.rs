@@ -66,7 +66,13 @@ impl McpModule {
         // Session lifecycle: initialize every module once (best-effort —
         // warnings go to stderr, never stdout).
         for (name, e) in registry.initialize_all() {
-            eprintln!("warning: {name} initialize failed: {}", e.message());
+            tracing::warn!(
+                target: "everyday",
+                _warning = "initialize_failed",
+                module = %name,
+                message = %e,
+                warning_text = %format!("warning: {name} initialize failed: {e}"),
+            );
         }
 
         let server = match McpServer::new(tool_registry) {
@@ -89,9 +95,16 @@ impl McpModule {
 
 /// Startup-failure exit for `serve`: report on stderr and exit 1, never
 /// letting an `Err(Output)` reach main's stdout render path (which would
-/// corrupt the JSON-RPC channel).
+/// corrupt the JSON-RPC channel). Emitted as an `error!` event — the layer
+/// renders `error: {msg}` in text mode (byte-identical to the old
+/// `eprintln!`) and a structured `{"_error": ...}` line in JSON mode.
 fn err_and_exit(msg: &str) -> Result<Output> {
-    eprintln!("error: {msg}");
+    tracing::error!(
+        target: "everyday",
+        _error = "mcp_serve_failed",
+        message = %msg,
+        warning_text = %format!("error: {msg}"),
+    );
     std::process::exit(1);
 }
 

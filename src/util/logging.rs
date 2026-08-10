@@ -3,9 +3,10 @@
 //!
 //! - text mode: compact lines (`[req] module action ok in 12ms`,
 //!   `warning: ...`, `timeline: ...`).
-//! - `--json` mode: structured `{"_log": ...}` / `{"_warning": ...}` lines
-//!   with the exact field sets the old middleware/sites emitted
-//!   (start/ok/error/error_detail; initialize_failed/auto_sync_*/...).
+//! - `--json` mode: structured `{"_log": ...}` / `{"_warning": ...}` /
+//!   `{"_error": ...}` lines with the exact field sets the old
+//!   middleware/sites emitted (start/ok/error/error_detail;
+//!   initialize_failed/auto_sync_*/...; mcp_serve_failed).
 //!
 //! Warning-shaped events flow through this layer exactly like `_log` events:
 //! a site emits a `warn!`/`info!` event carrying `_warning` + structured
@@ -204,6 +205,10 @@ fn render_text(event: &Event<'_>) -> Option<String> {
         let detail = f.message.as_deref().unwrap_or("");
         return Some(format!("warning: {status}: {detail}"));
     }
+    if let Some(status) = f._error.as_deref() {
+        let detail = f.message.as_deref().unwrap_or("");
+        return Some(format!("error: {status}: {detail}"));
+    }
     None
 }
 
@@ -211,6 +216,7 @@ fn render_text(event: &Event<'_>) -> Option<String> {
 struct TextFields {
     _log: Option<String>,
     _warning: Option<String>,
+    _error: Option<String>,
     request_id: Option<String>,
     module: Option<String>,
     action: Option<String>,
@@ -224,6 +230,7 @@ impl Visit for TextFields {
         match field.name() {
             "_log" => self._log = Some(value.to_string()),
             "_warning" => self._warning = Some(value.to_string()),
+            "_error" => self._error = Some(value.to_string()),
             "request_id" => self.request_id = Some(value.to_string()),
             "module" => self.module = Some(value.to_string()),
             "action" => self.action = Some(value.to_string()),
@@ -496,5 +503,37 @@ mod tests {
         assert_eq!(v["_warning"], "auto_sync_pushed");
         assert_eq!(v["message"], "3 file(s) pushed");
         assert!(v.get("warning_text").is_none());
+    }
+
+    #[test]
+    fn json_mode_preserves_error_shape() {
+        // `_error` events (mcp serve startup failures) render
+        // `{"_error": ..., "message": ...}` with `warning_text` excluded.
+        let out = run_with(true, LevelFilter::WARN, || {
+            tracing::error!(
+                target: "everyday",
+                _error = "mcp_serve_failed",
+                message = "mcp serve: registry not initialized",
+                warning_text = "error: mcp serve: registry not initialized",
+            );
+        });
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["_error"], "mcp_serve_failed");
+        assert_eq!(v["message"], "mcp serve: registry not initialized");
+        assert!(v.get("warning_text").is_none());
+    }
+
+    #[test]
+    fn error_fallback_renders_when_no_text_hint() {
+        // No `warning_text` on an `_error` event: fall back to
+        // `error: {status}: {message}` instead of silently dropping it.
+        let out = run_with(false, LevelFilter::WARN, || {
+            tracing::error!(
+                target: "everyday",
+                _error = "mcp_serve_failed",
+                message = "boom",
+            );
+        });
+        assert_eq!(out.trim(), "error: mcp_serve_failed: boom");
     }
 }

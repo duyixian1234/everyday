@@ -84,3 +84,7 @@ mcp serve errors → `warn!`/`error!`; auto-sync success notice → `info!`
   (rendered verbatim in text mode so non-standard prefixes like `timeline:`
   survive byte-for-byte; excluded from the JSON shape by the layer). Sites
   without a `warning_text` fall back to `warning: {status}: {message}`.
+- Fatal-diagnostic sites emit `_error` events the same way (`{"_error": ...}`
+  JSON shape; text fallback `error: {status}: {message}`); `_log` /
+  `_warning` / `_error` are the three structured field families, all with
+  the same `warning_text` mechanism.

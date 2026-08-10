@@ -100,6 +100,87 @@ fn initialize_handshake(s: &mut Server) {
 }
 
 #[test]
+fn serve_stderr_is_quiet_by_default() {
+    // `mcp serve` is a dispatch like any other: without `-v` the middleware
+    // progress lines (and any initialize warning) must be silenced on stderr.
+    // This is the leveled-logging contract (F015) applied to the long-lived
+    // server path — stderr stays clean, stdout stays pure JSON-RPC.
+    let mut child = Command::new(env!("CARGO_BIN_EXE_everyday"))
+        .args(["mcp", "serve"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn `everyday mcp serve`");
+
+    // Handshake once so the server is fully inside its stdio loop before we
+    // close stdin (an early EOF would make rmcp error out instead of exiting
+    // cleanly, which is not what this test asserts).
+    let init = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2026-07-28",
+            "capabilities": {},
+            "clientInfo": {"name": "quiet_test", "version": "0.1"},
+        },
+    });
+    let mut line = serde_json::to_string(&init).unwrap();
+    line.push('\n');
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(line.as_bytes())
+        .expect("write initialize");
+    child.stdin.as_mut().unwrap().flush().unwrap();
+    let mut resp = String::new();
+    {
+        let stdout = child.stdout.as_mut().expect("stdout");
+        BufReader::new(stdout)
+            .read_line(&mut resp)
+            .expect("read initialize response");
+    }
+    assert!(
+        resp.contains("\"jsonrpc\""),
+        "expected a JSON-RPC initialize response, got: {resp}"
+    );
+    // Complete the handshake so the server is fully initialized before EOF
+    // (rmcp's clean-shutdown path on EOF requires it).
+    let notif = json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+    let mut nline = serde_json::to_string(&notif).unwrap();
+    nline.push('\n');
+    child
+        .stdin
+        .as_mut()
+        .expect("stdin")
+        .write_all(nline.as_bytes())
+        .expect("write initialized");
+    child.stdin.as_mut().unwrap().flush().unwrap();
+
+    drop(child.stdin.take());
+    let status = child.wait().expect("wait for server exit");
+    assert!(status.success(), "server must exit 0 on stdin EOF");
+
+    let mut stderr = String::new();
+    use std::io::Read;
+    child
+        .stderr
+        .as_mut()
+        .expect("stderr")
+        .read_to_string(&mut stderr)
+        .expect("read stderr");
+    assert!(
+        !stderr.contains(" start")
+            && !stderr.contains("ok in")
+            && !stderr.contains("error in")
+            && !stderr.contains("warning:"),
+        "default (WARN) must silence middleware progress on serve; stderr was:\n{stderr}"
+    );
+}
+
+#[test]
 fn stdio_server_full_round_trip() {
     let mut s = Server::spawn();
     initialize_handshake(&mut s);
