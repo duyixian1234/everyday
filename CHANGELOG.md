@@ -1,8 +1,22 @@
+## [0.16.1] - 2026-08-10
+
+### 🚀 Features
+
+- *(cli)* Migrate warning sites to tracing, keep {"_warning"} shapes (#7)
+- *(cli)* Migrate mcp serve logging to tracing, add serve quiet test (#8)
+
+### 📚 Documentation
+
+- *(cli)* Document default-quiet logging and -v/-vv semantics (#9)
 ## [0.16.0] - 2026-08-10
 
 ### 🚀 Features
 
 - *(cli)* Leveled logging via tracing — default quiet, -v/-vv opt-in (F015, #6)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.16.0
 ## [0.15.0] - 2026-08-09
 
 ### 🚀 Features
