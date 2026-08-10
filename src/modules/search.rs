@@ -237,25 +237,23 @@ async fn dispatch(backend: &dyn SearchBackend, action: &str, args: &[String]) ->
 ///
 /// Text mode: a header line + a table (one row per hit).
 /// `--json` mode: a flat JSON array of hit objects, identical in shape to
-/// `Hit`'s `Serialize` impl. Warnings, if any, are emitted via `eprintln!`
-/// (per [R001](../../docs/adr/R001-thread-local-json-mode.md) — `--json`
-/// keeps stderr structured).
+/// `Hit`'s `Serialize` impl. Warnings, if any, are emitted as `warn!`
+/// tracing events (per [R001](../../docs/adr/R001-thread-local-json-mode.md)
+/// — `--json` keeps stderr structured; the layer renders `_warning` shapes).
 fn render_search(outcome: &SearchOutcome, q: &SearchQuery, json_mode: bool) -> Result<Output> {
     // Surface warnings to stderr (both modes); in --json mode the
-    // structured shape is preserved by keeping them off stdout.
+    // structured shape is preserved by keeping them off stdout. The layer
+    // renders `{"_warning": "search_provider_failed", ...}` in JSON mode and
+    // the `warning: ...` line in text mode, both from this single event
+    // (serde_json escapes `message` correctly — no quote-munging needed).
     for w in &outcome.warnings {
-        if json_mode {
-            eprintln!(
-                "{{\"_warning\":\"search_provider_failed\",\"module\":\"{}\",\"message\":\"{}\"}}",
-                w.module,
-                w.message.replace('"', "'")
-            );
-        } else {
-            eprintln!(
-                "warning: search provider '{}' failed: {}",
-                w.module, w.message
-            );
-        }
+        tracing::warn!(
+            target: "everyday",
+            _warning = "search_provider_failed",
+            module = %w.module,
+            message = %w.message,
+            warning_text = %format!("warning: search provider '{}' failed: {}", w.module, w.message),
+        );
     }
 
     if json_mode {

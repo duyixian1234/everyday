@@ -1,13 +1,17 @@
 //! Leveled logging via `tracing`, writing to stderr with the project's
 //! text/JSON output contract preserved (R001):
 //!
-//! - text mode: compact lines (`[req] module action ok in 12ms`).
-//! - `--json` mode: structured `{"_log": ...}` lines with the exact field
-//!   sets the old middleware emitted (start/ok/error/error_detail).
+//! - text mode: compact lines (`[req] module action ok in 12ms`,
+//!   `warning: ...`, `timeline: ...`).
+//! - `--json` mode: structured `{"_log": ...}` / `{"_warning": ...}` lines
+//!   with the exact field sets the old middleware/sites emitted
+//!   (start/ok/error/error_detail; initialize_failed/auto_sync_*/...).
 //!
-//! Warning-shaped events (`warning: ...` / `{"_warning": ...}`) do NOT pass
-//! through this layer — they are emitted by their call sites directly (see
-//! the warning-site migration, follow-up ticket T2).
+//! Warning-shaped events flow through this layer exactly like `_log` events:
+//! a site emits a `warn!`/`info!` event carrying `_warning` + structured
+//! fields plus a site-controlled `warning_text` line (rendered verbatim in
+//! text mode so prefixes like `timeline:` survive byte-for-byte; excluded
+//! from JSON).
 //!
 //! Only events with an `everyday` target are rendered; dependency crates
 //! (rmcp, hyper, …) are deliberately not surfaced, matching the pre-tracing
@@ -125,83 +129,106 @@ where
 /// Collect an event's fields into a JSON object, preserving the R001
 /// `{"_log" / "_warning": ...}` shapes. Events are emitted field-only (no
 /// implicit `message`), so every recorded field maps 1:1 to a JSON key.
+/// The internal `warning_text` field (text-mode-only hint, site-controlled)
+/// is excluded — it is not part of the JSON contract.
 struct JsonVisitor<'a>(&'a mut serde_json::Map<String, serde_json::Value>);
+
+impl<'a> JsonVisitor<'a> {
+    fn insert(&mut self, field: &Field, value: serde_json::Value) {
+        if field.name() != "warning_text" {
+            self.0.insert(field.name().to_string(), value);
+        }
+    }
+}
 
 impl<'a> Visit for JsonVisitor<'a> {
     fn record_str(&mut self, field: &Field, value: &str) {
-        self.0.insert(field.name().to_string(), json!(value));
+        self.insert(field, json!(value));
     }
     fn record_u64(&mut self, field: &Field, value: u64) {
-        self.0.insert(
-            field.name().to_string(),
-            serde_json::Value::Number(value.into()),
-        );
+        self.insert(field, serde_json::Value::Number(value.into()));
     }
     fn record_i64(&mut self, field: &Field, value: i64) {
-        self.0.insert(
-            field.name().to_string(),
-            serde_json::Value::Number(value.into()),
-        );
+        self.insert(field, serde_json::Value::Number(value.into()));
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
-        self.0.insert(field.name().to_string(), json!(value));
+        self.insert(field, json!(value));
     }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         // `%field` (Display) events arrive here via a Debug wrapper whose
         // Debug impl delegates to Display, so the string is unquoted.
-        self.0
-            .insert(field.name().to_string(), json!(format!("{value:?}")));
+        self.insert(field, json!(format!("{value:?}")));
     }
 }
 
-/// Render the text-mode line for the middleware events (`_log` = start/ok/
-/// error/error_detail), matching the pre-tracing compact format. Returns
-/// `None` for everyday events without a `_log` kind — callers must not emit
-/// a blank line for them.
+/// Render the text-mode line for `_log` (middleware progress) and `_warning`
+/// (site diagnostics) events, matching the pre-tracing formats. Returns
+/// `None` for everyday events without a recognizable kind — callers must not
+/// emit a blank line for them.
+///
+/// Priority:
+/// 1. `warning_text` — the site-controlled full line (`warning: ...` or
+///    `timeline: ...`), kept byte-identical to the old `eprintln!`.
+/// 2. `_log` middleware rendering (`[req] module action ok in 12ms`).
+/// 3. `_warning` fallback (`warning: {status}: {message}`) for events that
+///    carry the structured fields but no pre-formatted text.
 fn render_text(event: &Event<'_>) -> Option<String> {
     let mut f = TextFields::default();
     event.record(&mut f);
-    let kind = f._log.as_deref()?;
-    let rid = f.request_id.as_deref().unwrap_or("");
-    let module = f.module.as_deref().unwrap_or("");
-    let action = f.action.as_deref().unwrap_or("");
-    let line = match kind {
-        "start" => format!("[{rid}] {module} {action} start"),
-        "ok" => format!(
-            "[{rid}] {module} {action} ok in {}ms",
-            f.elapsed_ms.unwrap_or(0)
-        ),
-        "error" => format!(
-            "[{rid}] {module} {action} error in {}ms",
-            f.elapsed_ms.unwrap_or(0)
-        ),
-        "error_detail" => format!(
-            "[{rid}] {module} {action} error: {}",
-            f.message.as_deref().unwrap_or("")
-        ),
-        other => format!("[{rid}] {module} {action} {other}"),
-    };
-    Some(line)
+    if let Some(text) = f.warning_text {
+        return Some(text);
+    }
+    if let Some(kind) = f._log.as_deref() {
+        let rid = f.request_id.as_deref().unwrap_or("");
+        let module = f.module.as_deref().unwrap_or("");
+        let action = f.action.as_deref().unwrap_or("");
+        let line = match kind {
+            "start" => format!("[{rid}] {module} {action} start"),
+            "ok" => format!(
+                "[{rid}] {module} {action} ok in {}ms",
+                f.elapsed_ms.unwrap_or(0)
+            ),
+            "error" => format!(
+                "[{rid}] {module} {action} error in {}ms",
+                f.elapsed_ms.unwrap_or(0)
+            ),
+            "error_detail" => format!(
+                "[{rid}] {module} {action} error: {}",
+                f.message.as_deref().unwrap_or("")
+            ),
+            other => format!("[{rid}] {module} {action} {other}"),
+        };
+        return Some(line);
+    }
+    if let Some(status) = f._warning.as_deref() {
+        let detail = f.message.as_deref().unwrap_or("");
+        return Some(format!("warning: {status}: {detail}"));
+    }
+    None
 }
 
 #[derive(Default)]
 struct TextFields {
     _log: Option<String>,
+    _warning: Option<String>,
     request_id: Option<String>,
     module: Option<String>,
     action: Option<String>,
     elapsed_ms: Option<u64>,
     message: Option<String>,
+    warning_text: Option<String>,
 }
 
 impl Visit for TextFields {
     fn record_str(&mut self, field: &Field, value: &str) {
         match field.name() {
             "_log" => self._log = Some(value.to_string()),
+            "_warning" => self._warning = Some(value.to_string()),
             "request_id" => self.request_id = Some(value.to_string()),
             "module" => self.module = Some(value.to_string()),
             "action" => self.action = Some(value.to_string()),
             "message" => self.message = Some(value.to_string()),
+            "warning_text" => self.warning_text = Some(value.to_string()),
             _ => {}
         }
     }
@@ -357,5 +384,117 @@ mod tests {
             tracing::info!(target: "everyday", module = "x");
         });
         assert!(out.is_empty(), "no blank line expected: {out}");
+    }
+
+    #[test]
+    fn json_mode_preserves_warning_shape() {
+        // `_warning` events render `{"_warning": ..., module, message}` with
+        // the internal `warning_text` field excluded.
+        let out = run_with(true, LevelFilter::WARN, || {
+            tracing::warn!(
+                target: "everyday",
+                _warning = "initialize_failed",
+                module = "mail",
+                message = "keyring unavailable",
+                warning_text = "warning: mail initialize failed: keyring unavailable",
+            );
+        });
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["_warning"], "initialize_failed");
+        assert_eq!(v["module"], "mail");
+        assert_eq!(v["message"], "keyring unavailable");
+        assert!(
+            v.get("warning_text").is_none(),
+            "warning_text is internal and must not leak into JSON"
+        );
+    }
+
+    #[test]
+    fn text_mode_renders_site_controlled_warning_text() {
+        // Byte-identical to the old `eprintln!` line, including non-standard
+        // prefixes like `timeline:`.
+        let out = run_with(false, LevelFilter::WARN, || {
+            tracing::warn!(
+                target: "everyday",
+                _warning = "timeline_insert_failed",
+                source = "mail",
+                message = "db write: boom",
+                warning_text = "timeline: insert_events failed for mail: db write: boom",
+            );
+        });
+        assert_eq!(
+            out.trim(),
+            "timeline: insert_events failed for mail: db write: boom"
+        );
+    }
+
+    #[test]
+    fn warning_fallback_renders_when_no_text_hint() {
+        // No `warning_text`: fall back to `warning: {status}: {message}`.
+        let out = run_with(false, LevelFilter::WARN, || {
+            tracing::warn!(
+                target: "everyday",
+                _warning = "auto_sync_failed",
+                message = "connection reset",
+            );
+        });
+        assert_eq!(out.trim(), "warning: auto_sync_failed: connection reset");
+    }
+
+    #[test]
+    fn warn_level_shows_warnings_and_silences_info_notices() {
+        // auto_sync success is info (`-v` only); failure is warn (always).
+        let out = run_with(false, LevelFilter::WARN, || {
+            tracing::info!(
+                target: "everyday",
+                _warning = "auto_sync_pushed",
+                message = "3 file(s) pushed",
+                warning_text = "warning: auto_sync_pushed: 3 file(s) pushed",
+            );
+            tracing::warn!(
+                target: "everyday",
+                _warning = "auto_sync_failed",
+                message = "connection reset",
+                warning_text = "warning: auto_sync_failed: connection reset",
+            );
+        });
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(
+            lines,
+            vec!["warning: auto_sync_failed: connection reset"],
+            "only the warn-level notice renders at default WARN"
+        );
+    }
+
+    #[test]
+    fn info_level_restores_info_notices() {
+        let out = run_with(false, LevelFilter::INFO, || {
+            tracing::info!(
+                target: "everyday",
+                _warning = "auto_sync_pushed",
+                message = "3 file(s) pushed",
+                warning_text = "warning: auto_sync_pushed: 3 file(s) pushed",
+            );
+        });
+        assert_eq!(out.trim(), "warning: auto_sync_pushed: 3 file(s) pushed");
+    }
+
+    #[test]
+    fn json_mode_keeps_auto_sync_pushed_shape_at_info() {
+        // `-v --json`: the auto_sync success notice renders the original
+        // `{"_warning": "auto_sync_pushed", "message": ...}` shape — the
+        // info-level JSON contract, not just text.
+        let out = run_with(true, LevelFilter::INFO, || {
+            tracing::info!(
+                target: "everyday",
+                _warning = "auto_sync_pushed",
+                message = "3 file(s) pushed",
+                warning_text = "warning: auto_sync_pushed: 3 file(s) pushed",
+            );
+        });
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["_warning"], "auto_sync_pushed");
+        assert_eq!(v["message"], "3 file(s) pushed");
+        assert!(v.get("warning_text").is_none());
     }
 }

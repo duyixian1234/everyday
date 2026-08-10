@@ -137,7 +137,13 @@ async fn sync_one(
             let count = match store::insert_events(pool, &events, mode, from, to).await {
                 Ok(n) => n,
                 Err(e) => {
-                    eprintln!("timeline: insert_events failed for {source}: {e}");
+                    tracing::warn!(
+                        target: "everyday",
+                        _warning = "timeline_insert_failed",
+                        source = %source,
+                        message = %e,
+                        warning_text = %format!("timeline: insert_events failed for {source}: {e}"),
+                    );
                     return ProviderSyncResult {
                         source,
                         account,
@@ -152,7 +158,15 @@ async fn sync_one(
             // [L009](../../../docs/adr/L009-best-effort-sync.md).
             if let Err(e) = store::set_watermark(pool, &source, account.as_deref(), now, true).await
             {
-                eprintln!("timeline: set_watermark failed for {source}: {e} (will re-sync window)");
+                tracing::warn!(
+                    target: "everyday",
+                    _warning = "timeline_set_watermark_failed",
+                    source = %source,
+                    message = %e,
+                    warning_text = %format!(
+                        "timeline: set_watermark failed for {source}: {e} (will re-sync window)"
+                    ),
+                );
             }
 
             ProviderSyncResult {
@@ -164,7 +178,13 @@ async fn sync_one(
         }
         Err(e) => {
             // Failure: leave the watermark unchanged and retry next time.
-            eprintln!("timeline: sync failed for {source}: {e}");
+            tracing::warn!(
+                target: "everyday",
+                _warning = "timeline_sync_failed",
+                source = %source,
+                message = %e,
+                warning_text = %format!("timeline: sync failed for {source}: {e}"),
+            );
             ProviderSyncResult {
                 source,
                 account,

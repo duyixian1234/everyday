@@ -79,3 +79,8 @@ mcp serve errors → `warn!`/`error!`; auto-sync success notice → `info!`
 - The `message` field of the error path must not collide with tracing's
   implicit event-message field — events are emitted field-only, no format
   strings (documented in `LoggingMiddleware`).
+- Warning sites emit `_warning` + structured fields plus an internal
+  `warning_text` field: the site-controlled, pre-formatted text line
+  (rendered verbatim in text mode so non-standard prefixes like `timeline:`
+  survive byte-for-byte; excluded from the JSON shape by the layer). Sites
+  without a `warning_text` fall back to `warning: {status}: {message}`.

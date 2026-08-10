@@ -217,7 +217,11 @@ pub async fn auto_sync_after_write(config: Arc<Config>) {
     }
     for account in accounts {
         let result = run_push_only(&config, account).await;
-        let (status, detail) = match result {
+        // Success is an info-level notice (`-v` restores it); failure is a
+        // warn-level line (always visible). Both keep the old text/JSON
+        // shapes — the success path deliberately keeps its `warning:` prefix
+        // for byte-compatibility with the pre-tracing output.
+        match result {
             Ok(actions) => {
                 let pushed = actions
                     .iter()
@@ -226,15 +230,23 @@ pub async fn auto_sync_after_write(config: Arc<Config>) {
                 if pushed == 0 {
                     continue;
                 }
-                ("auto_sync_pushed", format!("{pushed} file(s) pushed"))
+                let detail = format!("{pushed} file(s) pushed");
+                tracing::info!(
+                    target: "everyday",
+                    _warning = "auto_sync_pushed",
+                    message = %detail,
+                    warning_text = %format!("warning: auto_sync_pushed: {detail}"),
+                );
             }
-            Err(e) => ("auto_sync_failed", e.message()),
-        };
-        if crate::util::json_mode::is_json() {
-            let warn = serde_json::json!({ "_warning": status, "message": detail });
-            eprintln!("{warn}");
-        } else {
-            eprintln!("warning: {status}: {detail}");
+            Err(e) => {
+                let detail = e.message();
+                tracing::warn!(
+                    target: "everyday",
+                    _warning = "auto_sync_failed",
+                    message = %detail,
+                    warning_text = %format!("warning: auto_sync_failed: {detail}"),
+                );
+            }
         }
     }
 }

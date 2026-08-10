@@ -99,19 +99,13 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
     // module may still function for its core actions, and `everyday health`
     // reports the underlying state.
     for (name, e) in registry.initialize_all() {
-        match mode {
-            RenderMode::Json => {
-                let warn = serde_json::json!({
-                    "_warning": "initialize_failed",
-                    "module": name,
-                    "message": e.message(),
-                });
-                eprintln!("{warn}");
-            }
-            RenderMode::Text => {
-                eprintln!("warning: {name} initialize failed: {}", e.message());
-            }
-        }
+        tracing::warn!(
+            target: "everyday",
+            _warning = "initialize_failed",
+            module = %name,
+            message = %e,
+            warning_text = %format!("warning: {name} initialize failed: {e}"),
+        );
     }
 
     // `everyday health` (P3): root-level ops command, not a module. Runs every
