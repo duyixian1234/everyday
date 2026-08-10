@@ -30,7 +30,7 @@ The dual channel exists because business modules read credentials via `auth::get
 
 There is **no auto-detection**: a silently falling-back default would bypass R015's red line without the user's knowledge.
 
-**Switch scope (important).** The config field is only visible at call sites that hold the full `Config` (`auth list` / `auth verify` / a few module paths). The business-module **hot paths** — `email::imap_connect`, the calendar connect path, `sync` — read credentials via `auth::get_credential_with_user(module, account, user)`, which by design (P2b) has **no `Config`** and therefore consults the **environment switch only**. In practice: a headless agent that only sets `[auth] env_credentials = true` gets the fallback for `auth`-level commands but **not** for `mail`/`cal`/`sync`. Exporting `EVERYDAY_ENV_CREDENTIALS=1` activates the fallback everywhere. The read error message on no-`Config` paths tells the user exactly this.
+**Switch scope (amended 2026-08-10).** Both channels are **process-wide**: the config field `[auth] env_credentials` **and** the env variable `EVERYDAY_ENV_CREDENTIALS=1` activate the fallback for every credential read — including the business-module **hot paths** (`email::imap_connect`, the calendar connect path, `sync`), which read credentials via `auth::get_credential_with_user(module, account, user)` and, by design (P2b), hold **no `Config`**. Those call sites honor the config field through a process-global mirror that `main` seeds from the loaded config at startup (`auth::sync_env_credentials_from_config`). In practice: a headless agent that sets `[auth] env_credentials = true` in `config.toml` gets the fallback everywhere, with no export needed; `EVERYDAY_ENV_CREDENTIALS=1` remains the switch for config-less invocations (and the original config-less call path). When neither channel is enabled, the read error on no-`Config` paths tells the user how to turn the fallback on.
 
 ### Naming
 
@@ -94,11 +94,12 @@ No process-isolation mechanisms are attempted: that is the operating system's jo
 
 ## Consequences
 
-- Headless deployments now have a working credential path: `export EVERYDAY_ENV_CREDENTIALS=1` + per-account `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`.
+- Headless deployments now have a working credential path: `export EVERYDAY_ENV_CREDENTIALS=1` + per-account `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`, or (since the 2026-08-10 amendment) `[auth] env_credentials = true` in `config.toml` + the same exports — both activate the fallback for `mail` / `cal` / `sync` hot paths too.
 - Default behavior is unchanged: with no opt-in, everyday still never reads secrets from the environment (R015 holds).
 - `auth list` grows a fourth status value (`env`) — consumers of the JSON output must be aware.
 - `auth verify` consumes the same read chain; its env path is covered by the `get_credential` read-chain tests (the network verification itself depends on a live service and is not unit-testable offline).
 - The security red line in `agents.md` / [F002](F002-multi-account-keyring.md) ("credentials never in config or logs") is untouched: env-sourced secrets still never appear in `config.toml` or logs.
+- **Amendment (2026-08-10):** the config field is mirrored process-wide at startup (`auth::sync_env_credentials_from_config`), so no-`Config` hot paths behave identically to `auth`-level commands. The mirror is seeded once per invocation from the loaded config; no per-account granularity is introduced (the switch stays global — which accounts use env is determined by which `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` variables exist).
 
 ## Cross-references
 

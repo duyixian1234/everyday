@@ -7,7 +7,9 @@
 # 当系统无 OS keyring 后端（headless 服务器 / CI / 沙箱）时，允许从环境变量读取凭据。
 # 读取链：keyring → env → 报错。env 来源的密码对每个子进程可见，仅在确无 keyring 的环境使用。
 # 变量命名：EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD（如 EVERYDAY_MAIL_WORK_PASSWORD）。
-# 等价的 env 开关：EVERYDAY_ENV_CREDENTIALS=1（无 config 的调用方也适用）。
+# 本字段在启动时同步为进程级开关，对所有模块生效（含 mail list / cal / sync 等
+# 不持有完整 Config 的调用点）；等价的 env 开关：EVERYDAY_ENV_CREDENTIALS=1
+# （无需改配置即可启用，或用于不走配置加载的调用场景）。
 # [auth]
 # env_credentials = true
 

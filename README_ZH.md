@@ -278,7 +278,7 @@ everyday config set default_account.mail personal
 
 全模块统一的凭证管理。各模块内部通过 `auth::get_credential` 读取已存凭证；你只需用这些命令在系统密钥环中管理凭证。密码凭证（mail/cal/webdav）使用 `--password`。若省略该 flag，则回退到交互式提示。密码绝不落盘。
 
-**环境变量回退（可选，R020）**：系统无 keyring 后端（headless 服务器 / CI / 沙箱）时，可开启 `[auth] env_credentials = true`（或 `EVERYDAY_ENV_CREDENTIALS=1`）改从环境变量读取凭据，变量名 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`（如 `EVERYDAY_MAIL_WORK_PASSWORD`）。读取链：keyring → env → 报错。env 来源的密码对每个子进程可见，仅在确无 keyring 的环境使用。
+**环境变量回退（可选，R020）**：系统无 keyring 后端（headless 服务器 / CI / 沙箱）时，可开启 `[auth] env_credentials = true`（或 `EVERYDAY_ENV_CREDENTIALS=1`）改从环境变量读取凭据，变量名 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`（如 `EVERYDAY_MAIL_WORK_PASSWORD`）。读取链：keyring → env → 报错。两个开关均对全部模块生效（含 `mail list` / `cal` / `sync` 等 hot path）：配置字段在启动时同步为进程级开关，无需额外 export。env 来源的密码对每个子进程可见，仅在确无 keyring 的环境使用。
 
 | 命令 | 说明 | 用法 |
 |------|------|------|

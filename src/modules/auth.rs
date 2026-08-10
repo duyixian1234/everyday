@@ -75,11 +75,38 @@ fn username_for(config: &Config, module: &str, account: &str) -> Result<String> 
 // and the user explicitly opts in, credentials may be read from
 // `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD`. Dual-channel switch: the config
 // field `[auth] env_credentials` OR the environment variable
-// `EVERYDAY_ENV_CREDENTIALS` — the env channel exists for call sites that
-// hold no `Config` (P2b config subsets, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
-// Note: `get_credential_with_user` call sites (business-module hot paths such
-// as `imap_connect`) consult the env channel only — the config field has no
-// effect there; headless users should export `EVERYDAY_ENV_CREDENTIALS=1`.
+// `EVERYDAY_ENV_CREDENTIALS`.
+//
+// The env channel exists for call sites that hold no `Config` (P2b config
+// subsets, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
+// To make the config field effective there too, `main` mirrors the loaded
+// config's `[auth] env_credentials` into the process-global switch below
+// (`sync_env_credentials_from_config`) — so `get_credential_with_user` call
+// sites (business-module hot paths such as `imap_connect`, `cal`, `sync`)
+// honor the config field exactly like the env variable. The env switch still
+// works when the binary is driven without a config load path.
+//
+// R020's precedence is untouched: keyring → env → error; `login` always
+// writes the keyring; the switch only ever unlocks *reading* from env.
+
+/// Process-global mirror of the loaded config's `[auth] env_credentials`.
+///
+/// `get_credential_with_user` and friends hold no `Config` (P2b), so they
+/// consult this mirror instead of the config field directly. Set once at
+/// startup from the loaded config; reset never (a config is loaded exactly
+/// once per process invocation).
+static CONFIG_ENV_CREDENTIALS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mirror `config.auth.env_credentials` into the process-global switch so
+/// no-`Config` call sites (`get_credential_with_user`) honor the config
+/// channel, not just the env variable. Call once after loading the config.
+pub fn sync_env_credentials_from_config(config: &Config) {
+    CONFIG_ENV_CREDENTIALS.store(
+        config.auth.env_credentials,
+        std::sync::atomic::Ordering::Relaxed,
+    );
+}
 
 /// Normalize an account name for embedding in an env variable name:
 /// every `[A-Za-z0-9]` character is uppercased, every other character
@@ -121,10 +148,19 @@ fn env_switch_enabled() -> bool {
 }
 
 /// Effective fallback switch for a read: the config field **or** the env
-/// switch (dual channel, R020). `config == None` (call sites that hold no
-/// `Config`, e.g. `get_credential_with_user`) consults the env switch only.
+/// switch (dual channel, R020).
+///
+/// `config == None` (call sites that hold no `Config`, e.g.
+/// `get_credential_with_user`) falls back to the process-global mirror of the
+/// loaded config's `[auth] env_credentials`, set by
+/// [`sync_env_credentials_from_config`] at startup — so the config field is
+/// effective on business-module hot paths exactly like the env variable.
 fn env_credentials_enabled(config: Option<&Config>) -> bool {
-    config.map(|c| c.auth.env_credentials).unwrap_or(false) || env_switch_enabled()
+    let from_config = match config {
+        Some(c) => c.auth.env_credentials,
+        None => CONFIG_ENV_CREDENTIALS.load(std::sync::atomic::Ordering::Relaxed),
+    };
+    from_config || env_switch_enabled()
 }
 
 /// Read the credential for `(module, account)` from the environment — only
@@ -237,8 +273,10 @@ pub fn get_credential(config: &Config, module: &str, account: &str) -> Result<St
 /// `Config`) call this: they already know the keyring user from the resolved
 /// account (`username` for mail/cal).
 /// The keyring service name is a pure function of `(module, account)`.
-/// The env fallback switch is consulted via the env channel only — this call
-/// site holds no `Config` (R020).
+/// The env fallback switch consults the config field via the process-global
+/// mirror (set from the loaded config at startup) **and** the
+/// `EVERYDAY_ENV_CREDENTIALS` env variable — both opt-in channels work here
+/// (R020).
 pub fn get_credential_with_user(module: &str, account: &str, user: &str) -> Result<String> {
     let service = Config::keyring_service(module, account);
     get_credential_for(None, module, account, &service, user)
@@ -275,9 +313,9 @@ fn get_credential_for(
                     credential_env_var_name(module, account)
                 ));
             } else if config.is_none() {
-                // No-`Config` call site (business-module hot path): the config
-                // field is invisible here, so the env switch is the only
-                // opt-in channel — tell the user how to turn it on.
+                // No-`Config` call site (business-module hot path) with both
+                // opt-in channels off: tell the user how to turn the fallback
+                // on (config field or env switch).
                 hint.push_str(&format!(
                     " Or export EVERYDAY_ENV_CREDENTIALS=1 and {} to use env credentials.",
                     credential_env_var_name(module, account)
@@ -802,8 +840,10 @@ mod tests {
     //   `EVERYDAY_MAIL_TESTENVABC_PASSWORD` no other test touches;
     // - wrap every `std::env::set_var` in an `EnvGuard` that restores the
     //   previous value on drop;
-    // - drive the fallback switch via the *config field* (no global env)
-    //   except for the one test that exercises the env channel itself.
+    // - wrap every touch of the config mirror (`CONFIG_ENV_CREDENTIALS`) in a
+    //   `ConfigMirrorGuard` that restores the previous value on drop;
+    // - drive the fallback switch via the config field / config mirror (no
+    //   global env) except for the tests that exercise the env channel itself.
 
     /// Test-only RAII restore for an environment variable.
     struct EnvGuard {
@@ -830,6 +870,27 @@ mod tests {
                 Some(v) => unsafe { std::env::set_var(&self.key, v) },
                 None => unsafe { std::env::remove_var(&self.key) },
             }
+        }
+    }
+
+    /// Test-only RAII restore for the process-global config mirror
+    /// (`CONFIG_ENV_CREDENTIALS`). Syncs from `config` and restores the
+    /// previous value on drop.
+    struct ConfigMirrorGuard {
+        prev: bool,
+    }
+
+    impl ConfigMirrorGuard {
+        fn sync(config: &Config) -> Self {
+            let prev = CONFIG_ENV_CREDENTIALS.load(std::sync::atomic::Ordering::Relaxed);
+            sync_env_credentials_from_config(config);
+            Self { prev }
+        }
+    }
+
+    impl Drop for ConfigMirrorGuard {
+        fn drop(&mut self) {
+            CONFIG_ENV_CREDENTIALS.store(self.prev, std::sync::atomic::Ordering::Relaxed);
         }
     }
 
@@ -1220,8 +1281,8 @@ username = "wd@example.com"
     #[tokio::test]
     async fn get_credential_with_user_env_fallback_via_switch() {
         let _lock = ENV_LOCK.lock().unwrap();
-        // Dual channel, env side: no `Config` available at this call site, so
-        // the switch must come from `EVERYDAY_ENV_CREDENTIALS=1`.
+        // Dual channel, env side: the switch comes from `EVERYDAY_ENV_CREDENTIALS=1`
+        // (config mirror left off).
         let _g = EnvGuard::set("EVERYDAY_ENV_CREDENTIALS", "1");
         let _v = EnvGuard::set(
             &credential_env_var_name("mail", ENV_TEST_ACCOUNT),
@@ -1230,6 +1291,49 @@ username = "wd@example.com"
         assert_eq!(
             get_credential_with_user("mail", ENV_TEST_ACCOUNT, "u").unwrap(),
             "hunter2"
+        );
+    }
+
+    #[tokio::test]
+    async fn get_credential_with_user_env_fallback_via_config_mirror() {
+        let _lock = ENV_LOCK.lock().unwrap();
+        // Dual channel, config side on a no-`Config` call site: the env switch
+        // is off, so the fallback must come from the config field mirrored by
+        // `sync_env_credentials_from_config` (what main.rs does after loading
+        // the config). Regression test for: `[auth] env_credentials = true`
+        // had no effect on `mail list` / `cal` / `sync` hot paths.
+        let _g = EnvGuard::set("EVERYDAY_ENV_CREDENTIALS", "0");
+        let _m = ConfigMirrorGuard::sync(&env_test_config());
+        let _v = EnvGuard::set(
+            &credential_env_var_name("mail", ENV_TEST_ACCOUNT),
+            "hunter2",
+        );
+        assert!(env_credentials_enabled(None));
+        assert_eq!(
+            get_credential_with_user("mail", ENV_TEST_ACCOUNT, "u").unwrap(),
+            "hunter2"
+        );
+    }
+
+    #[test]
+    fn config_mirror_defaults_disabled() {
+        // The mirror is opt-in: without `sync_env_credentials_from_config`, a
+        // no-`Config` call site must not read the env (R015 default holds).
+        let _lock = ENV_LOCK.lock().unwrap();
+        let _g = EnvGuard::set("EVERYDAY_ENV_CREDENTIALS", "0");
+        let _v = EnvGuard::set(&credential_env_var_name("mail", ENV_TEST_ACCOUNT), "s3cret");
+        assert!(!env_credentials_enabled(None));
+        // Fallback stays off: the credential is NOT read from env — the error
+        // must surface neither the value nor an "export <var>" hint claiming
+        // the fallback is on (both channels are off here, so the message
+        // tells the user how to turn the fallback on instead).
+        let err = get_credential_with_user("mail", ENV_TEST_ACCOUNT, "u").unwrap_err();
+        let msg = err.message();
+        assert!(msg.contains("auth login"), "{msg}");
+        assert!(!msg.contains("s3cret"), "{msg}");
+        assert!(
+            msg.contains("EVERYDAY_ENV_CREDENTIALS=1"),
+            "expected turn-on hint, got: {msg}"
         );
     }
 

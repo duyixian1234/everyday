@@ -300,7 +300,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 Consolidated credential management for all modules. Modules read stored credentials internally via `auth::get_credential`; you only use these commands to manage credentials in the OS keyring. Password strategy (mail/cal/webdav) uses `--password`. If the flag is omitted, it falls back to an interactive prompt. Passwords never touch disk.
 
-**Env fallback (opt-in, R020):** when no OS keyring backend exists (headless server / CI / sandbox), enable `[auth] env_credentials = true` (or `EVERYDAY_ENV_CREDENTIALS=1`) and export `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` (e.g. `EVERYDAY_MAIL_WORK_PASSWORD`). Read chain: keyring → env → error. Env-sourced secrets are visible to every child process — use only when the keyring is truly unavailable.
+**Env fallback (opt-in, R020):** when no OS keyring backend exists (headless server / CI / sandbox), enable `[auth] env_credentials = true` (or `EVERYDAY_ENV_CREDENTIALS=1`) and export `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` (e.g. `EVERYDAY_MAIL_WORK_PASSWORD`). Read chain: keyring → env → error. Both switches activate the fallback for all modules, including `mail list` / `cal` / `sync` hot paths (the config field is mirrored process-wide at startup). Env-sourced secrets are visible to every child process — use only when the keyring is truly unavailable.
 
 | Command | Description | Usage |
 |------|------|------|

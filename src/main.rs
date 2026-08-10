@@ -87,6 +87,11 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
         Ok(c) => Arc::new(c),
         Err(e) => return (1, render_error(&e, mode)),
     };
+    // Mirror `[auth] env_credentials` into the process-global switch so
+    // no-`Config` call sites (`get_credential_with_user`: mail/cal/sync hot
+    // paths) honor the config field, not just the EVERYDAY_ENV_CREDENTIALS
+    // env variable (R020).
+    crate::modules::auth::sync_env_credentials_from_config(&config);
 
     // Build the real registry (inject the real config).
     let registry = match ModuleRegistry::build(config.clone()) {
