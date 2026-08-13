@@ -153,6 +153,10 @@ pub struct Config {
     /// WebDAV device-sync configuration (cross-device file sync, ADR D001–D003).
     #[serde(default)]
     pub webdav: WebdavConfig,
+
+    /// Daemon auto-sync configuration (resident process, ADR F016).
+    #[serde(default)]
+    pub daemon: DaemonConfig,
 }
 
 /// Per-module default account names.
@@ -397,6 +401,45 @@ pub struct WebdavAccount {
     pub auto_sync: bool,
 }
 
+// ---- Daemon ----
+
+/// Daemon auto-sync configuration (ADR F016).
+///
+/// Controls the resident `everyday daemon run` process: whether it may start,
+/// how long between sync cycles, and which sources each cycle syncs.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DaemonConfig {
+    /// Whether the daemon is allowed to run. `daemon run` refuses to start
+    /// when disabled (a service-manager restart loop must not spin an empty
+    /// process). Default: true.
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Seconds to sleep after one sync cycle completes (sleep-after-completion
+    /// semantics — no tick catch-up). Default: 900 (15 minutes). Must be >= 1.
+    #[serde(default = "default_interval_seconds")]
+    pub interval_seconds: u64,
+    /// Source whitelist for each cycle. Empty = all sources. Values are the
+    /// timeline source names (`mail` / `cal` / `rss` / `todo` / `note` /
+    /// `bookmark`); a whitelisted source turns on both its timeline provider
+    /// and its cache action (mail cache / rss cache, when applicable).
+    #[serde(default)]
+    pub sources: Vec<String>,
+}
+
+impl Default for DaemonConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval_seconds: 900,
+            sources: Vec::new(),
+        }
+    }
+}
+
+fn default_interval_seconds() -> u64 {
+    900
+}
+
 // ---- Module config subsets (P2b, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
 //
 // Each business module receives only its own config section at construction,
@@ -592,6 +635,11 @@ impl Config {
             require_nonempty("webdav", &a.name, "name")?;
             require_nonempty("webdav", &a.url, "url")?;
             require_nonempty("webdav", &a.username, "username")?;
+        }
+        if self.daemon.interval_seconds == 0 {
+            return Err(AgentError::Config(
+                "daemon.interval_seconds must be >= 1".into(),
+            ));
         }
         Ok(())
     }
@@ -1418,5 +1466,52 @@ webdav = "ghost"
         let err = cfg.validate().unwrap_err();
         assert_eq!(err.type_name(), "ConfigError");
         assert!(err.message().contains("webdav"), "{}", err.message());
+    }
+
+    // ---- Daemon config (ADR F016) ----
+
+    #[test]
+    fn daemon_defaults_when_section_missing() {
+        let cfg: Config = toml::from_str("").unwrap();
+        assert!(cfg.daemon.enabled);
+        assert_eq!(cfg.daemon.interval_seconds, 900);
+        assert!(cfg.daemon.sources.is_empty());
+    }
+
+    #[test]
+    fn daemon_parses_explicit_values() {
+        let cfg: Config = toml::from_str(
+            r#"
+[daemon]
+enabled = false
+interval_seconds = 60
+sources = ["mail", "rss"]
+"#,
+        )
+        .unwrap();
+        assert!(!cfg.daemon.enabled);
+        assert_eq!(cfg.daemon.interval_seconds, 60);
+        assert_eq!(cfg.daemon.sources, vec!["mail", "rss"]);
+    }
+
+    #[test]
+    fn daemon_partial_section_keeps_defaults() {
+        // A partial `[daemon]` section must not reset unset fields to zero.
+        let cfg: Config = toml::from_str("[daemon]\ninterval_seconds = 30\n").unwrap();
+        assert!(cfg.daemon.enabled, "enabled must keep its default `true`");
+        assert_eq!(cfg.daemon.interval_seconds, 30);
+        assert!(cfg.daemon.sources.is_empty());
+    }
+
+    #[test]
+    fn validate_daemon_interval_zero_rejected() {
+        let cfg: Config = toml::from_str("[daemon]\ninterval_seconds = 0\n").unwrap();
+        let err = cfg.validate().unwrap_err();
+        assert_eq!(err.type_name(), "ConfigError");
+        assert!(
+            err.message().contains("interval_seconds"),
+            "{}",
+            err.message()
+        );
     }
 }

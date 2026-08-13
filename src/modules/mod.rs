@@ -344,6 +344,13 @@ impl ModuleRegistry {
             Box::new(crate::modules::mcp::McpModule::new(mcp_cell.clone())),
         );
 
+        // Resident auto-sync daemon (ADR F016). Cross-module orchestrator:
+        // needs the full Config (every source section + `[daemon]`).
+        modules.insert(
+            "daemon",
+            Box::new(crate::modules::daemon::DaemonModule::new(config.clone())),
+        );
+
         let this = Arc::new(Self { modules });
         let _ = mcp_cell.set(this.clone());
         Ok(this)
@@ -406,6 +413,7 @@ pub mod auth;
 pub mod bookmark;
 pub mod calendar;
 pub mod config;
+pub mod daemon;
 pub mod email;
 pub mod email_cache;
 pub mod email_pool;

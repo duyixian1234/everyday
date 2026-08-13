@@ -109,3 +109,16 @@ url = "https://dav.jianguoyun.com/dav/everyday"
 username = "you@example.com"
 # auto_sync = true   # 可选：写操作命令末尾 best-effort 推送（默认 false）
 
+# ---- Daemon 常驻自动同步（ADR F016）----
+# 常驻进程周期自动拉取（timeline 事件 + mail 全文件夹缓存 + rss 缓存），
+# 使 timeline / search / mail list 查询随时拿到新鲜数据，无需手动 --sync。
+# 用法：
+#   everyday daemon run        # 前台常驻（配合 nssm / launchd / systemd 注册为服务）
+#   everyday daemon status     # 查询运行状态（运行中 / 上次周期 / 各源结果）
+#   everyday daemon run --once # 只跑一个周期后退出（手动补拉/调试）
+# 详细部署见 docs/daemon.md。
+[daemon]
+enabled = true
+interval_seconds = 900
+# sources = ["mail", "rss"]   # 空 = 全部；白名单同时控制 timeline provider 与对应缓存动作
+

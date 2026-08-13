@@ -16,7 +16,7 @@ use assert_cmd::Command;
 /// Removing one? That is a BREAKING change — bump major, add an ADR, update this list.
 const TOP_LEVEL_COMMANDS: &[&str] = &[
     "health", "config", "bookmark", "search", "auth", "mail", "memory", "sync", "timeline", "rss",
-    "todo", "note", "cal", "mcp",
+    "todo", "note", "cal", "mcp", "daemon",
 ];
 
 /// Per-module action set: (module, actions).
@@ -42,6 +42,7 @@ const MODULE_ACTIONS: &[(&str, &[&str])] = &[
     ("search", &["query"]),
     ("sync", &["sync"]),
     ("mcp", &["serve", "tools"]),
+    ("daemon", &["run", "status"]),
 ];
 
 /// clap renders one subcommand per line as `  <name> <description>`.
@@ -125,4 +126,7 @@ fn config_example_shape_is_contract() {
             "`[{section}]` must contain an array (`accounts` or `feeds`)"
         );
     }
+    // `[daemon]` is a scalar section (no accounts/feeds array) — only its
+    // existence is contract-locked (ADR F016).
+    assert!(doc.get("daemon").is_some(), "`[daemon]` section must exist");
 }
