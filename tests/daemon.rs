@@ -524,3 +524,48 @@ fn daemon_run_resident_stderr_and_stdout_quiet_log_written() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── t5: graceful shutdown ──
+
+#[test]
+fn daemon_run_sigterm_writes_final_state() {
+    // SIGTERM (Unix service-manager signal) → graceful shutdown → exit 0
+    // with a complete final state: running=false, exit_ok=true, sources
+    // preserved (ADR F016 t5). SIGTERM is POSIX-only, matching the
+    // `not(windows)` gate of this file.
+    let root = temp_root("t5-sigterm");
+    write_config(&root, "[daemon]\nenabled = true\ninterval_seconds = 1\n");
+    let bin = assert_cmd::cargo::cargo_bin("everyday");
+    let mut child = std::process::Command::new(bin)
+        .env(config_env_var(), &root)
+        .args(["daemon", "run"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .expect("spawn daemon run");
+    // Let the first cycle finish, then request a graceful stop.
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+    let kill = std::process::Command::new("kill")
+        .args(["-TERM", &child.id().to_string()])
+        .status()
+        .expect("kill -TERM");
+    assert!(kill.success(), "kill -TERM failed: {kill:?}");
+    let exit = child.wait().expect("wait daemon");
+    assert_eq!(
+        exit.code(),
+        Some(0),
+        "graceful shutdown must exit 0, got {exit:?}"
+    );
+
+    let state_path = state_path_in(&root);
+    let text = std::fs::read_to_string(&state_path).expect("final state file");
+    let v: serde_json::Value = serde_json::from_str(&text).expect("state must be JSON");
+    assert_eq!(v["running"], serde_json::Value::Bool(false));
+    assert_eq!(v["exit_ok"], serde_json::Value::Bool(true));
+    assert!(v["exit_at"].is_string(), "exit_at must be set: {text}");
+    assert!(
+        v["sources"]["timeline"].is_object(),
+        "last cycle sources preserved: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

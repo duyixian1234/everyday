@@ -133,13 +133,28 @@ impl DaemonModule {
             return Ok(render_cycle(&result));
         }
 
-        // Resident mode: Ctrl+C cancels the loop (full signal handling and
-        // state-file finalization land in t5). stdout stays silent (R001).
+        // Resident mode: any stop signal cancels the loop and funnels into
+        // [`graceful_shutdown`] (t5). On Unix both SIGINT (Ctrl+C) and
+        // SIGTERM (service managers) are wired; Windows has ctrl_c only
+        // (tokio provides it cross-platform). stdout stays silent (R001).
         let shutdown = CancellationToken::new();
         {
             let sig = shutdown.clone();
             tokio::spawn(async move {
-                let _ = tokio::signal::ctrl_c().await;
+                #[cfg(unix)]
+                {
+                    let mut term =
+                        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+                            .expect("install SIGTERM handler");
+                    tokio::select! {
+                        _ = tokio::signal::ctrl_c() => {}
+                        _ = term.recv() => {}
+                    }
+                }
+                #[cfg(not(unix))]
+                {
+                    let _ = tokio::signal::ctrl_c().await;
+                }
                 sig.cancel();
             });
         }
@@ -180,15 +195,9 @@ impl DaemonModule {
         )
         .await;
 
-        // Exit state write (t3/t4): running=false + exit_at/exit_ok; a failed
-        // final write surfaces as `_error` + exit 1.
-        {
-            let mut s = state_guard.lock().unwrap_or_else(|e| e.into_inner());
-            s.mark_exit(true);
-            finalize_state(&s)?;
-        }
-
-        // Reached only when the loop was cancelled (Ctrl+C) — exit normally.
+        // Reached only when a stop signal cancelled the loop — graceful
+        // shutdown (t5): write the final state, then exit 0.
+        graceful_shutdown(&state_guard)?;
         Ok(Output::text(""))
     }
 
@@ -327,6 +336,18 @@ fn finalize_state(state: &DaemonState) -> Result<()> {
         return Err(e);
     }
     Ok(())
+}
+
+/// Graceful shutdown (ADR F016, t5): the single exit path for the resident
+/// daemon — mark the state stopped (`running=false` + `exit_at`/`exit_ok`)
+/// and persist it. All stop sources (`--once` completion handled separately;
+/// SIGINT / SIGTERM / Ctrl+C via the cancel token) converge here. The file
+/// log needs no explicit close: `Sink::File` opens per write. A failed final
+/// write surfaces as `_error` + exit 1 (t4).
+fn graceful_shutdown(state_guard: &Mutex<DaemonState>) -> Result<()> {
+    let mut state = state_guard.lock().unwrap_or_else(|e| e.into_inner());
+    state.mark_exit(true);
+    finalize_state(&state)
 }
 
 /// Render the daemon status as human-readable text (t3).

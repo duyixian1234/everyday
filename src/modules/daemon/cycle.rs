@@ -341,6 +341,41 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancel_during_sleep_prevents_next_cycle() {
+        // t5: a stop arriving in the sleep gap must break the loop — the
+        // current cycle already ran, the next one must never start.
+        let counter = StdArc::new(AtomicU64::new(0));
+        let c = counter.clone();
+        let shutdown = CancellationToken::new();
+        let cancel = shutdown.clone();
+        let task = tokio::spawn(async move {
+            run_cycles(
+                move |_| {
+                    let c = c.clone();
+                    async move {
+                        c.fetch_add(1, Ordering::SeqCst);
+                    }
+                },
+                CycleLoopOptions {
+                    once: false,
+                    // Long sleep so the cancel lands squarely inside it.
+                    interval: Duration::from_secs(3600),
+                    shutdown,
+                },
+            )
+            .await
+        });
+        // Wait for cycle 1 to finish, then cancel during the sleep.
+        while counter.load(Ordering::SeqCst) < 1 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        cancel.cancel();
+        let stats = task.await.unwrap();
+        assert_eq!(stats.cycles, 1, "no next cycle after cancel in sleep");
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
     async fn sources_whitelist_gates_cache_actions() {
         // Pure whitelist logic: empty = all, otherwise exact match.
         assert!(sources_include(&[], "mail"));
