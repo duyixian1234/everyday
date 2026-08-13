@@ -486,6 +486,31 @@ everyday auth login --module webdav --account personal
 - server 是**长驻进程**：配置 / 数据库变更在**下次会话启动**时生效，会话中途不感知。
 - stdout 专供 JSON-RPC；日志全部走 stderr。
 
+### daemon — 常驻自动同步（v0.17.0 新增）
+
+后台常驻进程，按计划**拉取** mail / rss / timeline 事件，使 `timeline`、`search`、
+`mail list` 查询无需显式 `--sync` 即可读到新鲜数据。daemon 是**唯一**允许周期性
+拉取的角色——查询路径永不自动同步（L005），所以无论它是否运行，查询行为完全一致。
+设计：[F016](docs/adr/F016-daemon-sync-scheduler.md)；运维指南：
+[docs/daemon.md](docs/daemon.md)。
+
+| 命令 | 说明 | 用法 |
+|------|------|------|
+| `run` | 常驻同步循环：启动立即同步一次，之后每 `interval_seconds` 一个周期 | `everyday daemon run` |
+| `run --once` | 只跑一个同步周期后退出（手动补拉 / 调试） | `everyday daemon run --once` |
+| `run --sources mail,rss` | 覆盖 `[daemon].sources` 白名单 | `everyday daemon run --once --sources mail,rss` |
+| `status` | 运行中 / 已停止（pid 存活校正）、上次周期、各源结果 | `everyday daemon status [--json]` |
+
+**说明**
+
+- 配置在 `config.toml` 的 `[daemon]` 节：`enabled`、`interval_seconds`（默认 900）、
+  `sources`（空 = 全部）。`enabled = false` 时 `run` 拒绝启动（exit 1）。
+- 每个周期（顺序执行，best-effort）：timeline 事件拉取 + mail 信封缓存同步
+  （**服务器全部文件夹**）+ rss 缓存拉取。失败动作记录、不致命。
+- `daemon run` 是**前台常驻进程**——用 OS 服务管理器安装（`nssm` / `launchd` /
+  `systemd`），见 [docs/daemon.md](docs/daemon.md)。状态与日志位于
+  `~/.config/everyday/daemon-state.json` 与 `daemon.log`。
+
 ## 输出模式
 
 ### Text 模式（默认）

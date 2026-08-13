@@ -516,6 +516,35 @@ equivalent `mcpServers` block in Claude Code / CodeBuddy):
   up on the **next session start**, not mid-session.
 - stdout is reserved for JSON-RPC; all logging goes to stderr.
 
+### daemon — resident auto-sync (NEW in v0.17.0)
+
+Runs a background process that **pulls** mail / rss / timeline events on a
+schedule, so `timeline`, `search` and `mail list` queries always see fresh data
+without an explicit `--sync`. The daemon is the **only** role allowed to pull
+periodically — query paths never auto-sync (L005), so behavior is identical
+whether it runs or not. Design: [F016](docs/adr/F016-daemon-sync-scheduler.md);
+operations guide: [docs/daemon.md](docs/daemon.md).
+
+| Command | Description | Usage |
+|------|------|------|
+| `run` | Resident sync loop: syncs once immediately, then one cycle every `interval_seconds` | `everyday daemon run` |
+| `run --once` | Run a single sync cycle then exit (manual catch-up / debugging) | `everyday daemon run --once` |
+| `run --sources mail,rss` | Override the `[daemon].sources` whitelist for this run | `everyday daemon run --once --sources mail,rss` |
+| `status` | Running / stopped (pid-liveness corrected), last cycle, per-source results | `everyday daemon status [--json]` |
+
+**Notes**
+
+- Configure via `[daemon]` in `config.toml`: `enabled`, `interval_seconds`
+  (default 900), `sources` (empty = all). `enabled = false` makes `run` refuse
+  to start (exit 1).
+- Each cycle (sequential, best-effort): timeline event pull + mail envelope
+  cache sync (**all server folders**) + rss cache pull. A failing action is
+  recorded, never fatal.
+- `daemon run` is a **foreground resident process** — install it with the OS
+  service manager (`nssm` / `launchd` / `systemd`); see
+  [docs/daemon.md](docs/daemon.md). State and logs live in
+  `~/.config/everyday/daemon-state.json` and `daemon.log`.
+
 ## Output Modes
 
 ### Text mode (default)
