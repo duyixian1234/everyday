@@ -265,7 +265,7 @@ fn daemon_status_shows_running_for_live_pid() {
     // State claims running=true and the pid is a live child → running.
     let root = temp_root("status-live");
     write_config(&root, "# empty config\n");
-    let child = std::process::Command::new("sleep")
+    let mut child = std::process::Command::new("sleep")
         .arg("30")
         .spawn()
         .expect("spawn sleep");
@@ -368,7 +368,7 @@ fn daemon_run_refuses_when_another_instance_live() {
     // (anti-reentry, t3).
     let root = temp_root("reentry");
     write_config(&root, "# empty config\n");
-    let child = std::process::Command::new("sleep")
+    let mut child = std::process::Command::new("sleep")
         .arg("30")
         .spawn()
         .expect("spawn sleep");
