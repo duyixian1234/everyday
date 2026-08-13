@@ -412,6 +412,21 @@ RFC 4918 WebDAV 服务器上的远程目录（默认坚果云 `dav.jianguoyun.co
 
 ---
 
+## Daemon（常驻同步）
+
+> 常驻进程周期自动拉取层。设计决策见 [`docs/adr/F016`](docs/adr/F016-daemon-sync-scheduler.md)。
+
+### Daemon（常驻进程）
+`everyday daemon run` 启动的长期运行进程，作为**唯一允许周期性自动拉取**的角色，持续把各网络源数据拉进本地缓存（timeline.db / mail_cache.db / rss-items.db），使查询随时拿到新鲜数据。查询语义不因其运行与否而改变——[L005](docs/adr/L005-no-auto-sync.md) 的"查询永不自动同步"铁律无例外。
+
+### Sync Cycle（同步周期）
+daemon 每个周期的完整动作序列：timeline 事件拉取 + mail 缓存全文件夹同步 + rss 缓存拉取，顺序执行，全部结束后再等待配置的间隔。与 `timeline sync`（显式事件拉取）、WebDAV `sync`（文件级双向同步）、`mail list` staleness（查询时隐式触发）**四词同族不同义**——仅 daemon 是自动周期性触发。
+
+### State file（状态文件）
+`daemon-state.json`，daemon 的运行状态记录：pid / running / enabled / interval / 各周期时间 / 各源最近结果。`daemon status` 读它并探测 pid 存活来判定"运行中"。daemon 退出时保留文件并写入 final 状态（供回看"上次同步到几点"）。
+
+---
+
 ## MCP
 
 > AI agent 通过 Model Context Protocol 调用 everyday 能力的协议暴露层。

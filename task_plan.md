@@ -3,7 +3,7 @@
 **项目：** Everyday — The Rust-powered hands for your AI Agent
 **范围：** 以 `agents.md`「范围与定位」节为权威说明（原 PRD.md 已移除）
 **启动时间：** 2026-07-08
-**当前状态：** v0.16.2 已发布 — R020 修订（[R020](./docs/adr/R020-env-credential-fallback.md) amendment：`[auth] env_credentials` 经进程级镜像对 `mail list`/`cal`/`sync` 等 no-Config hot path 生效，双通道全模块一致）；v0.16.1 已发布 — 日志迁移收尾（[F015](./docs/adr/F015-leveled-logging-tracing.md)：warning 站点全迁 tracing、mcp serve `_error` 系、README 契约段）；v0.16.0 已发布 — 默认日志静音 + `-v`/`-vv` 显式开启（[F015](./docs/adr/F015-leveled-logging-tracing.md)，tracing 分级日志，R001 形状不变）；v0.15.0 已发布 — MCP server 模块落地（[F014](./docs/adr/F014-mcp-module.md)，`everyday mcp serve` / `mcp tools`，stdio + rmcp 3.x）；v0.14.0 已发布（[R020](./docs/adr/R020-env-credential-fallback.md)）；Notion provider 已移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）。本文档历史阶段的 Notion 描述仅作决策记录，不代表当前能力。
+**当前状态：** v0.17.0 规划中 — Daemon 自动同步（[F016](./docs/adr/F016-daemon-sync-scheduler.md)，Phase 22，设计已定稿待实现）；v0.16.2 已发布 — R020 修订（[R020](./docs/adr/R020-env-credential-fallback.md) amendment：`[auth] env_credentials` 经进程级镜像对 `mail list`/`cal`/`sync` 等 no-Config hot path 生效，双通道全模块一致）；v0.16.1 已发布 — 日志迁移收尾（[F015](./docs/adr/F015-leveled-logging-tracing.md)：warning 站点全迁 tracing、mcp serve `_error` 系、README 契约段）；v0.16.0 已发布 — 默认日志静音 + `-v`/`-vv` 显式开启（[F015](./docs/adr/F015-leveled-logging-tracing.md)，tracing 分级日志，R001 形状不变）；v0.15.0 已发布 — MCP server 模块落地（[F014](./docs/adr/F014-mcp-module.md)，`everyday mcp serve` / `mcp tools`，stdio + rmcp 3.x）；v0.14.0 已发布（[R020](./docs/adr/R020-env-credential-fallback.md)）；Notion provider 已移除（[R019](./docs/adr/R019-remove-notion-provider.md)，note/todo/bookmark 仅本地 SQLite）。本文档历史阶段的 Notion 描述仅作决策记录，不代表当前能力。
 **文件维护规则：** 阶段计划 + 错误表 + 设计决策摘要；禁止保留任务执行细节
 （子任务清单、完成小结、中途修复明细）。
 详细 ADR 全文见 [docs/adr/](./docs/adr/README.md)。
@@ -86,6 +86,9 @@
 
 ### Phase 21: MCP server 模块（F014）[complete]
 按 ADR [F014](./docs/adr/F014-mcp-module.md) 落地：`everyday mcp serve` 经 stdio 把每个 `(module, action)` 协议投影为 MCP tool `<module>_<action>`（rmcp 3.x）；`mcp tools` 打印 tool 清单 + JSON Schema；schema 复用 `module_arg_spec()` 单一事实来源；`mcp` 模块注入 `Arc<ModuleRegistry>`（构建期后置注入）；Mutex 串行化 tool 调用；会话内复用 registry + initialize/shutdown 钩子；JSON 文本输出 + `isError`；无 `[mcp]` 配置面。质量：stdio 端到端测试（tests/mcp_stdio.rs）锁定 stdout 仅 JSON-RPC + EOF 退出 0；CLI contract 覆盖 `mcp serve`/`tools`；README/README_ZH/skill 文档同步。
+
+### Phase 22: Daemon 自动同步（F016）[in progress]
+按 ADR [F016](./docs/adr/F016-daemon-sync-scheduler.md) 落地常驻自动同步（v0.17.0）：`everyday daemon run [--once] [--sources ...]` / `daemon status`；`[daemon]` 配置节（enabled / interval_seconds / sources，全字段 `serde(default)` 向后兼容，`enabled=false` 时 run 报错退出）；同步周期 = timeline `run_sync`（复用 orchestrator）+ mail 全文件夹增量缓存（每周期 IMAP LIST 发现，含 Sent/Trash/Junk/Drafts）+ rss 缓存拉取，顺序执行、完成后 sleep 防重叠；状态文件 `daemon-state.json`（pid / running / 周期时间 / sources 结果，退出保留 final 状态）；pid 存活判定 + 防重入；优雅退出统一 `graceful_shutdown` 路径（`--once` 完成 / SIGINT / SIGTERM / Ctrl+C 汇合）；日志：常驻 stdout 静默、stderr 随 `-v`、文件日志 `daemon.log` 固定 INFO 不轮转；`cli_contract` / `config.example.toml` / README / skill reference 同步；`docs/daemon.md` 三平台服务注册示例（nssm / launchd / systemd，Q12 不写 SCM 集成代码）。质量：`--once` 集成测试验证完整退出路径 + 状态落盘；单元测试注入 signal/interval 覆盖调度循环与优雅退出；R001 回归（verbose_logging / mcp_stdio）全绿。
 
 ---
 

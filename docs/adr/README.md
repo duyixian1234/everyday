@@ -43,6 +43,7 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [F013](F013-request-context-explicit-parameter.md) | Explicit-parameter `RequestContext` through `Executor::execute` + middleware (v0.12 breaking, supersedes F012 P4 thread-local form) | Accepted | 2026-08-05 |
 | [F014](F014-mcp-module.md) | MCP module — everyday as an MCP server (stdio, rmcp 3.x), protocol projection of every (module, action) into MCP tools | Accepted | 2026-08-10 |
 | [F015](F015-leveled-logging-tracing.md) | Leveled logging via tracing — default quiet (WARN), `-v`/`-vv` opt-in INFO/DEBUG, custom Layer preserving `{"_log"}` shapes | Accepted | 2026-08-10 |
+| [F016](F016-daemon-sync-scheduler.md) | Daemon sync scheduler — resident `everyday daemon run` as the only role allowed to pull periodically (timeline + mail all-folders + rss); `--once`/`status`; state file; graceful shutdown | Accepted | 2026-08-13 |
 
 ## Mail (M-series)
 

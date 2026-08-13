@@ -37,6 +37,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-13 | F | [F016](./docs/adr/F016-daemon-sync-scheduler.md) | Daemon 自动同步：`everyday daemon run` 常驻进程为唯一允许周期性自动拉取的角色（timeline run_sync + mail 全文件夹缓存 + rss 拉取，顺序执行、完成后 sleep）；`[daemon]` 节（enabled/interval_seconds/sources 向后兼容）；状态文件 daemon-state.json + pid 防重入；`--once`/`status`；优雅退出统一 graceful_shutdown 路径；常驻 stdout 静默、文件日志固定 INFO；不写 SCM 集成代码（docs/daemon.md 三平台示例） |
 | 2026-08-10 | F | [F015](./docs/adr/F015-leveled-logging-tracing.md) | 分级日志（tracing）：默认 WARN 静音，`-v`=INFO（中间件进度），`-vv`=DEBUG 预留；全局 `-v/--verbose`（Count，仿 --json）；自定义 Layer 写 stderr，text 紧凑格式 + JSON `{"_log"}` 形状不变（R001）；middleware 无条件留栈靠 LevelFilter 静音；仅渲染 everyday target；14 处 eprintln 全量迁移 |
 | 2026-08-10 | F | [F014](./docs/adr/F014-mcp-module.md) | MCP 模块：everyday 作 MCP server（stdio，rmcp 3.x）；每个 (module, action) 协议投影为 MCP tool `<module>_<action>`（schema 复用 module_arg_spec）；JSON 文本输出 + isError；mcp 模块注入 Arc<ModuleRegistry>（后置注入）；Mutex 串行；serve/tools 动作；无配置面 |
 | 2026-08-09 | R | [R020](./docs/adr/R020-env-credential-fallback.md) | env 凭据回退（opt-in）：keyring 不可用时从 `EVERYDAY_<MODULE>_<ACCOUNT>_PASSWORD` 读凭据；双通道开关（config `[auth] env_credentials` / `EVERYDAY_ENV_CREDENTIALS=1`）；读取链 keyring→env→报错；`auth list` 第四态 `env`；logout 对 env 凭据提示 unset；login 仍写 keyring；R015 默认行为不变 |
