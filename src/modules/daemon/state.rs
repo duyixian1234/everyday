@@ -146,11 +146,23 @@ impl DaemonSources {
 
 // ─── Path ─────────────────────────────────────────────────────────────
 
-/// Where the state file lives: `<config_dir>/everyday/daemon-state.json`.
-pub fn state_path() -> Result<PathBuf> {
+/// The everyday config dir: `<config_dir>/everyday`.
+fn config_everyday_dir() -> Result<PathBuf> {
     let dir = dirs::config_dir()
         .ok_or_else(|| AgentError::Config("cannot determine config directory".into()))?;
-    Ok(dir.join("everyday").join("daemon-state.json"))
+    Ok(dir.join("everyday"))
+}
+
+/// Where the state file lives: `<config_dir>/everyday/daemon-state.json`.
+pub fn state_path() -> Result<PathBuf> {
+    Ok(config_everyday_dir()?.join("daemon-state.json"))
+}
+
+/// Where the daemon file log lives: `<config_dir>/everyday/daemon.log`
+/// (ADR [F016](../../docs/adr/F016-daemon-sync-scheduler.md) t4 — fixed
+/// INFO, append, no rotation).
+pub fn daemon_log_path() -> Result<PathBuf> {
+    Ok(config_everyday_dir()?.join("daemon.log"))
 }
 
 // ─── Read / Write ─────────────────────────────────────────────────────
@@ -176,21 +188,18 @@ pub fn read_from(path: &Path) -> Result<Option<DaemonState>> {
         .map_err(|e| AgentError::Other(format!("daemon-state.json corrupt: {e}")))
 }
 
-/// Atomically write the state file (temp + rename). Failures are logged as
-/// `warn!` but do not propagate — the daemon is best-effort (L009).
+/// Atomic write that **propagates** errors — used by the exit path (t4): a
+/// failed final state write must surface as `_error` + exit 1, unlike the
+/// best-effort startup / per-cycle writes.
+pub fn write_result(state: &DaemonState) -> Result<()> {
+    let path = state_path()?;
+    write_to(&path, state)
+}
+
+/// Best-effort atomic write (temp + rename). Failures are logged as `warn!`
+/// but do not propagate — the daemon is best-effort (L009).
 pub fn write(state: &DaemonState) {
-    let path = match state_path() {
-        Ok(p) => p,
-        Err(e) => {
-            tracing::warn!(
-                target: "everyday",
-                error = %e.message(),
-                "daemon: cannot resolve state path"
-            );
-            return;
-        }
-    };
-    if let Err(e) = write_to(&path, state) {
+    if let Err(e) = write_result(state) {
         tracing::warn!(
             target: "everyday",
             error = %e.message(),

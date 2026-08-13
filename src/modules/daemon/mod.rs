@@ -117,9 +117,11 @@ impl DaemonModule {
         if once {
             // One cycle, then render the summary to stdout (the command
             // result — R001). Full shape alignment with `timeline sync`
-            // lands in t4; this is the working baseline.
+            // (t4). Per-cycle + exit state in one write for --once (t3);
+            // a failed final write surfaces as `_error` + exit 1 (t4).
             let result = run_cycle(&self.config, &sources).await;
-            // Per-cycle + exit state in one write for --once (t3).
+            // The cycle record goes to daemon.log in both modes (t4).
+            log_cycle_completed(&result);
             let mut final_state = initial;
             final_state.update_cycle(DaemonSources::from_cycle(
                 &result.timeline,
@@ -127,7 +129,7 @@ impl DaemonModule {
                 &result.rss,
             ));
             final_state.mark_exit(result.ok());
-            state::write(&final_state);
+            finalize_state(&final_state)?;
             return Ok(render_cycle(&result));
         }
 
@@ -153,15 +155,7 @@ impl DaemonModule {
                 let guard = guard_for_loop.clone();
                 async move {
                     let result = run_cycle(&cfg, &src).await;
-                    tracing::info!(
-                        target: "everyday",
-                        _log = "cycle_completed",
-                        ok = %result.ok(),
-                        timeline_events = result.timeline.as_ref().map(|a| a.events).unwrap_or(0),
-                        mail_folders = result.mail.as_ref().map(|a| a.folders).unwrap_or(0),
-                        mail_envelopes = result.mail.as_ref().map(|a| a.envelopes).unwrap_or(0),
-                        rss_items = result.rss.as_ref().map(|a| a.items).unwrap_or(0),
-                    );
+                    log_cycle_completed(&result);
                     // Per-cycle state write (t3): last_cycle_at / cycles /
                     // last_cycle_ok / sources. Lock is held only across
                     // synchronous calls (never across an await point). A
@@ -186,11 +180,12 @@ impl DaemonModule {
         )
         .await;
 
-        // Exit state write (t3): running=false + exit_at/exit_ok.
+        // Exit state write (t3/t4): running=false + exit_at/exit_ok; a failed
+        // final write surfaces as `_error` + exit 1.
         {
             let mut s = state_guard.lock().unwrap_or_else(|e| e.into_inner());
             s.mark_exit(true);
-            state::write(&s);
+            finalize_state(&s)?;
         }
 
         // Reached only when the loop was cancelled (Ctrl+C) — exit normally.
@@ -241,28 +236,35 @@ fn parse_run_args(args: &[String], config_sources: &[String]) -> (bool, Vec<Stri
     (once, sources)
 }
 
-/// Render one cycle's result (the `--once` command result; R001). Text mode
-/// prints one line per executed action; JSON mode emits the structured
-/// object. (The state file stores the same per-source data in its own schema,
-/// see [`state`].)
+/// Emit the per-cycle INFO record — the daemon.log sync record (t4). Emitted
+/// by both `--once` and the resident loop so the file log always carries
+/// "INFO 级同步记录" (ADR F016).
+fn log_cycle_completed(result: &CycleResult) {
+    tracing::info!(
+        target: "everyday",
+        _log = "cycle_completed",
+        ok = result.ok(),
+        timeline_events = result.timeline.as_ref().map(|a| a.events).unwrap_or(0),
+        mail_folders = result.mail.as_ref().map(|a| a.folders).unwrap_or(0),
+        mail_envelopes = result.mail.as_ref().map(|a| a.envelopes).unwrap_or(0),
+        rss_items = result.rss.as_ref().map(|a| a.items).unwrap_or(0),
+    );
+}
+
+/// Render one cycle's result (the `--once` command result; R001), aligned
+/// with the `timeline sync` output shape (t4): text opens with a summary
+/// line then one line per executed action; JSON carries a top-level `ok`
+/// summary plus per-source objects with only their relevant fields
+/// (`ok/events`, `ok/folders/envelopes`, `ok/items` + `error`).
 fn render_cycle(result: &CycleResult) -> Output {
-    let action = |a: &Option<crate::modules::daemon::cycle::ActionResult>| match a {
-        None => serde_json::Value::Null,
-        Some(a) => serde_json::json!({
-            "ok": a.ok,
-            "events": a.events,
-            "folders": a.folders,
-            "envelopes": a.envelopes,
-            "items": a.items,
-            "error": a.error,
-        }),
-    };
+    let sources = DaemonSources::from_cycle(&result.timeline, &result.mail, &result.rss);
     if crate::util::json_mode::is_json() {
         Output::Json(serde_json::json!({
+            "ok": result.ok(),
             "started_at": result.started_at.to_rfc3339(),
-            "timeline": action(&result.timeline),
-            "mail": action(&result.mail),
-            "rss": action(&result.rss),
+            "timeline": sources.timeline,
+            "mail": sources.mail,
+            "rss": sources.rss,
         }))
     } else {
         let mut lines: Vec<String> = Vec::new();
@@ -287,8 +289,44 @@ fn render_cycle(result: &CycleResult) -> Output {
                 )),
             }
         }
-        Output::text(lines.join("\n"))
+        // Summary line first (aligned with `timeline sync`'s leading
+        // summary); skipped actions don't count toward the total.
+        let actions: Vec<&crate::modules::daemon::cycle::ActionResult> =
+            [&result.timeline, &result.mail, &result.rss]
+                .into_iter()
+                .flatten()
+                .collect();
+        let executed = actions.len();
+        let ok_count = actions.iter().filter(|a| a.ok).count();
+        let mut text = if ok_count == executed {
+            format!("synced {ok_count}/{executed} actions\n")
+        } else {
+            format!(
+                "synced {ok_count}/{executed} actions ({} failed)\n",
+                executed - ok_count
+            )
+        };
+        for line in lines {
+            text.push_str(&format!("{line}\n"));
+        }
+        Output::text(text)
     }
+}
+
+/// Write the final exit state (t4): on failure emit an `_error` record —
+/// surfaced to daemon.log and stderr (WARN default) — and propagate so the
+/// process exits 1 (the sync itself is not blocked; only the exit
+/// finalization reports failure).
+fn finalize_state(state: &DaemonState) -> Result<()> {
+    if let Err(e) = state::write_result(state) {
+        tracing::error!(
+            target: "everyday",
+            _error = "daemon_state_write_failed",
+            message = %format!("daemon: final state write failed: {}", e.message()),
+        );
+        return Err(e);
+    }
+    Ok(())
 }
 
 /// Render the daemon status as human-readable text (t3).
@@ -528,5 +566,84 @@ mod tests {
         };
         assert!(text.contains("Status: stopped"), "{text}");
         assert!(text.contains("PID: 0"), "{text}");
+    }
+
+    // ── render_cycle (t4 shape alignment) ──
+
+    fn sample_cycle() -> CycleResult {
+        use crate::modules::daemon::cycle::ActionResult;
+        CycleResult {
+            started_at: chrono::Utc::now(),
+            timeline: Some(ActionResult::timeline_ok(7)),
+            mail: Some(ActionResult::mail_ok(4, 15)),
+            rss: Some(ActionResult::rss_ok(3)),
+        }
+    }
+
+    #[test]
+    fn render_cycle_json_has_top_level_ok_and_source_fields() {
+        crate::util::json_mode::set_json_mode(true);
+        let out = render_cycle(&sample_cycle());
+        crate::util::json_mode::set_json_mode(false);
+        let v = match out {
+            Output::Json(v) => v,
+            other => panic!("expected JSON output, got {other:?}"),
+        };
+        assert_eq!(v["ok"], true);
+        assert!(v.get("started_at").is_some(), "missing started_at");
+        // Per-source fields only — no cross-contamination.
+        assert_eq!(v["timeline"]["events"], 7);
+        assert!(
+            v["timeline"].get("folders").is_none(),
+            "timeline must not carry mail fields"
+        );
+        assert_eq!(v["mail"]["folders"], 4);
+        assert_eq!(v["mail"]["envelopes"], 15);
+        assert!(
+            v["mail"].get("events").is_none(),
+            "mail must not carry timeline fields"
+        );
+        assert_eq!(v["rss"]["items"], 3);
+    }
+
+    #[test]
+    fn render_cycle_json_null_for_skipped_source() {
+        crate::util::json_mode::set_json_mode(true);
+        let mut cycle = sample_cycle();
+        cycle.rss = None;
+        let out = render_cycle(&cycle);
+        crate::util::json_mode::set_json_mode(false);
+        let v = match out {
+            Output::Json(v) => v,
+            other => panic!("expected JSON output, got {other:?}"),
+        };
+        assert_eq!(v["rss"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn render_cycle_text_has_summary_and_action_lines() {
+        let out = render_cycle(&sample_cycle());
+        let text = match out {
+            Output::Text(t) => t,
+            other => panic!("expected text output, got {other:?}"),
+        };
+        assert!(text.contains("synced 3/3 actions"), "{text}");
+        assert!(text.contains("timeline: 7 events"), "{text}");
+        assert!(text.contains("mail: 4 folders, 15 envelopes"), "{text}");
+        assert!(text.contains("rss: 3 items"), "{text}");
+    }
+
+    #[test]
+    fn render_cycle_text_failed_action_notes_failure() {
+        use crate::modules::daemon::cycle::ActionResult;
+        let mut cycle = sample_cycle();
+        cycle.mail = Some(ActionResult::failed("connection refused"));
+        let out = render_cycle(&cycle);
+        let text = match out {
+            Output::Text(t) => t,
+            other => panic!("expected text output, got {other:?}"),
+        };
+        assert!(text.contains("synced 2/3 actions (1 failed)"), "{text}");
+        assert!(text.contains("mail: failed: connection refused"), "{text}");
     }
 }

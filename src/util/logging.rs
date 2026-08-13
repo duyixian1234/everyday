@@ -20,8 +20,15 @@
 //!
 //! Level mapping (`-v` count, set once at startup by `main.rs`):
 //! 0 → WARN (default: warnings/errors visible), 1 → INFO, ≥2 → DEBUG.
+//!
+//! Daemon (ADR [F016](../../docs/adr/F016-daemon-sync-scheduler.md), t4):
+//! [`init_daemon`] stacks a second layer writing the **same** everyday
+//! events to `daemon.log` at a **fixed** INFO level (independent of `-v`);
+//! the stderr layer keeps the normal `-v` behavior.
 
 use std::fmt;
+use std::io::Write;
+use std::path::PathBuf;
 
 #[cfg(test)]
 use std::sync::{Arc, Mutex};
@@ -51,6 +58,23 @@ pub fn init(verbose: u8, json: bool) {
     let _ = tracing::subscriber::set_global_default(subscriber);
 }
 
+/// Install the daemon subscriber (ADR F016, t4): the normal stderr layer
+/// (`-v`-controlled) **plus** a file layer writing every `everyday` event to
+/// `log_path` at a fixed INFO level (the daemon main log; append, no
+/// rotation). When `log_path` is `None` (config dir unresolvable) behavior
+/// matches [`init`].
+pub fn init_daemon(verbose: u8, json: bool, log_path: Option<PathBuf>) {
+    match log_path {
+        Some(path) => {
+            let stderr_layer = EverydayLayer::new(json).with_filter(level_for_verbose(verbose));
+            let file_layer = EverydayLayer::file(path, json).with_filter(LevelFilter::INFO);
+            let subscriber = registry().with(stderr_layer).with(file_layer);
+            let _ = tracing::subscriber::set_global_default(subscriber);
+        }
+        None => init(verbose, json),
+    }
+}
+
 /// Custom layer: renders only `everyday`-targeted events, in JSON or text
 /// form depending on the process's render mode (captured at construction —
 /// one command per process, so the mode is fixed for the lifetime).
@@ -63,6 +87,8 @@ pub struct EverydayLayer {
 #[derive(Debug, Clone)]
 enum Sink {
     Stderr,
+    /// Append-only file log (daemon.log, ADR F016 t4).
+    File(PathBuf),
     #[cfg(test)]
     Buf(Arc<Mutex<Vec<u8>>>),
 }
@@ -71,6 +97,25 @@ impl Sink {
     fn write_line(&self, line: &str) {
         match self {
             Sink::Stderr => eprintln!("{line}"),
+            Sink::File(path) => {
+                // Open per write: the daemon writes only a handful of lines
+                // per cycle, and reopening guarantees we never hold the file
+                // open across a crash. Append-only, no rotation (t4). The
+                // parent dir is created on demand so a fresh machine with no
+                // `~/.config/everyday` yet still captures the first events.
+                if let Some(parent) = path.parent()
+                    && !parent.as_os_str().is_empty()
+                {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(path)
+                {
+                    let _ = writeln!(f, "{line}");
+                }
+            }
             #[cfg(test)]
             Sink::Buf(buf) => {
                 let mut v = buf.lock().unwrap();
@@ -86,6 +131,15 @@ impl EverydayLayer {
         Self {
             json,
             sink: Sink::Stderr,
+        }
+    }
+
+    /// Layer writing to an append-only file (daemon.log, t4). The format
+    /// follows the process render mode (`json`) like every other sink.
+    pub fn file(path: PathBuf, json: bool) -> Self {
+        Self {
+            json,
+            sink: Sink::File(path),
         }
     }
 
@@ -197,6 +251,19 @@ fn render_text(event: &Event<'_>) -> Option<String> {
                 "[{rid}] {module} {action} error: {}",
                 f.message.as_deref().unwrap_or("")
             ),
+            // Daemon sync-cycle summary (ADR F016): the counters ride the
+            // event, so render them instead of the generic fallback.
+            "cycle_completed" => {
+                let ok = f.ok.as_deref() == Some("true");
+                let status = if ok { "ok" } else { "failed" };
+                format!(
+                    "daemon: cycle {status}, timeline={} mail={}/{} rss={}",
+                    f.timeline_events.unwrap_or(0),
+                    f.mail_folders.unwrap_or(0),
+                    f.mail_envelopes.unwrap_or(0),
+                    f.rss_items.unwrap_or(0),
+                )
+            }
             other => format!("[{rid}] {module} {action} {other}"),
         };
         return Some(line);
@@ -223,6 +290,12 @@ struct TextFields {
     elapsed_ms: Option<u64>,
     message: Option<String>,
     warning_text: Option<String>,
+    /// `cycle_completed` event fields (ADR F016).
+    ok: Option<String>,
+    timeline_events: Option<u64>,
+    mail_folders: Option<u64>,
+    mail_envelopes: Option<u64>,
+    rss_items: Option<u64>,
 }
 
 impl Visit for TextFields {
@@ -236,12 +309,23 @@ impl Visit for TextFields {
             "action" => self.action = Some(value.to_string()),
             "message" => self.message = Some(value.to_string()),
             "warning_text" => self.warning_text = Some(value.to_string()),
+            "ok" => self.ok = Some(value.to_string()),
             _ => {}
         }
     }
     fn record_u64(&mut self, field: &Field, value: u64) {
-        if field.name() == "elapsed_ms" {
-            self.elapsed_ms = Some(value);
+        match field.name() {
+            "elapsed_ms" => self.elapsed_ms = Some(value),
+            "timeline_events" => self.timeline_events = Some(value),
+            "mail_folders" => self.mail_folders = Some(value),
+            "mail_envelopes" => self.mail_envelopes = Some(value),
+            "rss_items" => self.rss_items = Some(value),
+            _ => {}
+        }
+    }
+    fn record_bool(&mut self, field: &Field, value: bool) {
+        if field.name() == "ok" {
+            self.ok = Some(value.to_string());
         }
     }
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
@@ -535,5 +619,63 @@ mod tests {
             );
         });
         assert_eq!(out.trim(), "error: mcp_serve_failed: boom");
+    }
+
+    // ── daemon file sink (ADR F016 t4) ──
+
+    #[test]
+    fn file_sink_appends_lines() {
+        let dir = std::env::temp_dir().join(format!("everyday-log-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("daemon.log");
+
+        let layer = EverydayLayer::file(path.clone(), false);
+        layer.sink.write_line("first");
+        layer.sink.write_line("second");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, "first\nsecond\n", "append mode, one line per event");
+
+        // Second layer instance appends rather than truncates.
+        let layer2 = EverydayLayer::file(path.clone(), false);
+        layer2.sink.write_line("third");
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text, "first\nsecond\nthird\n", "must append, not truncate");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn cycle_completed_renders_counters_in_text() {
+        let out = run_with(false, LevelFilter::INFO, || {
+            tracing::info!(
+                target: "everyday",
+                _log = "cycle_completed",
+                ok = true,
+                timeline_events = 12u64,
+                mail_folders = 8u64,
+                mail_envelopes = 34u64,
+                rss_items = 5u64,
+            );
+        });
+        assert_eq!(out.trim(), "daemon: cycle ok, timeline=12 mail=8/34 rss=5");
+    }
+
+    #[test]
+    fn cycle_completed_failed_status_and_json_shape() {
+        let out = run_with(true, LevelFilter::INFO, || {
+            tracing::info!(
+                target: "everyday",
+                _log = "cycle_completed",
+                ok = false,
+                timeline_events = 0u64,
+                mail_folders = 0u64,
+                mail_envelopes = 0u64,
+                rss_items = 0u64,
+            );
+        });
+        let v: serde_json::Value = serde_json::from_str(out.trim()).unwrap();
+        assert_eq!(v["_log"], "cycle_completed");
+        assert_eq!(v["ok"], false);
+        assert_eq!(v["timeline_events"], 0);
     }
 }

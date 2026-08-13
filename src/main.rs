@@ -55,8 +55,19 @@ async fn main() {
     // Leveled logging (default quiet): `-v` = INFO, `-vv` = DEBUG; the
     // subscriber writes to stderr in the project's text/JSON shapes. Must be
     // installed before any dispatch so middleware events route through it.
+    // `daemon run` additionally writes `daemon.log` at a fixed INFO level
+    // (ADR F016 t4) — the only command that becomes a resident process.
     let verbose = matches.get_count("verbose");
-    crate::util::logging::init(verbose, json_flag);
+    let is_daemon_run = matches
+        .subcommand()
+        .map(|(name, m)| name == "daemon" && m.subcommand_name() == Some("run"))
+        .unwrap_or(false);
+    if is_daemon_run {
+        let log_path = crate::modules::daemon::state::daemon_log_path().ok();
+        crate::util::logging::init_daemon(verbose, json_flag, log_path);
+    } else {
+        crate::util::logging::init(verbose, json_flag);
+    }
 
     let (code, output) = run(matches, mode).await;
     println!("{output}");

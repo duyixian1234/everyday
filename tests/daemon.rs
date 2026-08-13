@@ -394,3 +394,133 @@ fn daemon_run_refuses_when_another_instance_live() {
     let _ = child.wait();
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── t4: file log + --once output shape + resident silence ──
+
+/// Path to daemon.log inside an isolated config root.
+fn daemon_log_in(root: &Path) -> PathBuf {
+    config_path_in(root).parent().unwrap().join("daemon.log")
+}
+
+#[test]
+fn daemon_run_once_writes_daemon_log() {
+    // The file log (fixed INFO) must capture middleware + cycle records even
+    // though stderr is WARN-silent at default `-v`.
+    let root = temp_root("t4-log");
+    write_config(&root, "# empty config\n");
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let log_path = daemon_log_in(&root);
+    assert!(log_path.exists(), "daemon.log should be created");
+    let log = std::fs::read_to_string(&log_path).unwrap();
+    assert!(log.contains("daemon run start"), "log: {log}");
+    assert!(log.contains("daemon: cycle ok"), "log: {log}");
+    assert!(log.contains("daemon run ok in"), "log: {log}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_run_once_v_shows_middleware_stderr() {
+    // `-v` (INFO) restores middleware progress lines on stderr (F015);
+    // without it they are WARN-silent (covered by the resident test).
+    let root = temp_root("t4-verbose");
+    write_config(&root, "# empty config\n");
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once", "-v"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("daemon run start"), "stderr: {stderr}");
+    assert!(stderr.contains("daemon run ok in"), "stderr: {stderr}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_run_once_json_shape_t4() {
+    // Top-level `ok` summary + per-source objects with their relevant
+    // fields (ADR F016 t4).
+    let root = temp_root("t4-json");
+    write_config(&root, "# empty config\n");
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).expect("must be JSON");
+    assert!(v.get("ok").is_some(), "top-level ok: {stdout}");
+    assert!(v.get("started_at").is_some(), "started_at: {stdout}");
+    for key in ["timeline", "mail", "rss"] {
+        let s = &v[key];
+        assert!(s.get("ok").is_some(), "{key}.ok: {stdout}");
+        assert!(s.get("error").is_some(), "{key}.error: {stdout}");
+    }
+    assert!(
+        v["timeline"].get("events").is_some(),
+        "timeline.events: {stdout}"
+    );
+    assert!(v["mail"].get("folders").is_some(), "mail.folders: {stdout}");
+    assert!(
+        v["mail"].get("envelopes").is_some(),
+        "mail.envelopes: {stdout}"
+    );
+    assert!(v["rss"].get("items").is_some(), "rss.items: {stdout}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_run_resident_stderr_and_stdout_quiet_log_written() {
+    // Resident daemon: stdout and stderr both silent at default `-v`
+    // (WARN-quiet stderr, R001 silent stdout), while daemon.log accumulates
+    // INFO cycle records. Spawn with a 1s interval, let ~2 cycles run, kill.
+    let root = temp_root("t4-resident");
+    write_config(&root, "[daemon]\nenabled = true\ninterval_seconds = 1\n");
+    let bin = assert_cmd::cargo::cargo_bin("everyday");
+    let mut child = std::process::Command::new(bin)
+        .env(config_env_var(), &root)
+        .args(["daemon", "run"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .expect("spawn daemon run");
+    std::thread::sleep(std::time::Duration::from_millis(2500));
+    child.kill().expect("kill daemon");
+    let output = child.wait_with_output().expect("wait daemon");
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.trim().is_empty(),
+        "resident stdout must be silent: {stdout}"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.trim().is_empty(),
+        "resident stderr must be WARN-quiet: {stderr}"
+    );
+
+    let log_path = daemon_log_in(&root);
+    assert!(log_path.exists(), "daemon.log should be created");
+    let log = std::fs::read_to_string(&log_path).unwrap();
+    assert!(log.contains("daemon: cycle ok"), "log: {log}");
+    let cycle_count = log.matches("daemon: cycle ok").count();
+    assert!(
+        cycle_count >= 2,
+        "expected >=2 cycles in ~2.5s at 1s interval, got {cycle_count}: {log}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
