@@ -17,3 +17,4 @@ nd = "nd"           # code variable (calendar.rs, timeline/providers.rs)
 omitable = "omitable"  # clap subcommand param (cli.rs)
 propert = "propert"    # "propert(ies)" intentional suffix notation in log copy
 mis = "mis"            # "mis-split" hyphenated word (docs)
+fo = "fo"              # Windows tasklist /FO CSV output-format flag (daemon/state.rs)
