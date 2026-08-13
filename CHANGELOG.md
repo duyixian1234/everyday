@@ -1,8 +1,35 @@
+## [0.17.0] - 2026-08-13
+
+### 🚀 Features
+
+- *(daemon)* [daemon] config section + CLI registration (t1, #11)
+- *(daemon)* Sync cycle engine (t2, #12)
+- *(daemon)* State file + status + anti-reentry (t3, #13)
+- *(daemon)* File log + --once output shape + state-write error (t4, #14)
+- *(daemon)* Graceful shutdown unified path + SIGTERM (t5, #15)
+
+### 📚 Documentation
+
+- *(daemon)* ADR F016 design + daemon ops guide (v0.17.0)
+- *(daemon)* Align daemon.md with implementation + README/skill refs (t6, #16)
+
+### 🧪 Testing
+
+- *(daemon)* Fix child mutability in non-Windows integration tests (t3)
+
+### ⚙️ Miscellaneous Tasks
+
+- *(typos)* Allowlist /FO tasklist flag (daemon state pid probe)
+
 ## [0.16.2] - 2026-08-10
 
 ### 🐛 Bug Fixes
 
 - *(auth)* Honor [auth] env_credentials on no-Config hot paths
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.16.2
 ## [0.16.1] - 2026-08-10
 
 ### 🚀 Features
