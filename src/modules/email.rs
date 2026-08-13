@@ -1284,10 +1284,10 @@ async fn fetch_envelopes_for_cache(
 
 /// Per-folder sync result (used for summary output / debugging).
 #[derive(Debug, Default)]
-struct SyncStats {
-    folders_synced: usize,
-    envelopes_added: usize,
-    errors: Vec<(String, String)>,
+pub(crate) struct SyncStats {
+    pub(crate) folders_synced: usize,
+    pub(crate) envelopes_added: usize,
+    pub(crate) errors: Vec<(String, String)>,
 }
 
 /// Sync a single folder: SELECT to read uid_validity → compare the watermark →
@@ -1392,6 +1392,31 @@ async fn sync_folders_concurrent(
 }
 
 // ============ Timeline data fetch ============
+
+/// Daemon sync-cycle hook (ADR F016, t2): sync **all server folders** of one
+/// mail account into the envelope cache.
+///
+/// IMAP LIST runs on every call for folder discovery (new/deleted folders
+/// follow automatically); each folder syncs incrementally via the UID
+/// watermark with UIDVALIDITY handling inside `sync_one_folder`
+/// ([M004](../../docs/adr/M004-uid-watermark-sync.md)). No folders are
+/// excluded (Sent / Trash / Junk / Drafts included) — the daemon's freshness
+/// guarantee is "all folders". Credential read goes through the consolidated
+/// `auth` module (keyring → env, R020).
+pub(crate) async fn sync_all_folders(account: &MailAccount) -> Result<SyncStats> {
+    let password =
+        crate::modules::auth::get_credential_with_user("mail", &account.name, &account.username)?;
+    let cache = email_cache::open().await?;
+    let pool = email_pool::Pool::new(account.clone(), password).await?;
+
+    // LIST all selectable folders through one pooled session, then release
+    // the guard so the concurrent sync workers can reuse the sessions.
+    let folders = {
+        let mut guard = pool.acquire().await?;
+        list_all_folders(guard.session()?).await?
+    };
+    sync_folders_concurrent(&pool, &cache, &account.name, &folders).await
+}
 
 /// Raw mail entry data used for Timeline fetching.
 pub struct MailTimelineEntry {

@@ -118,3 +118,49 @@ fn disabled_daemon_run_ignores_once_flag() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn daemon_run_once_empty_config_succeeds() {
+    // Empty config → one cycle runs (timeline opens the isolated cache db,
+    // no accounts/feeds → zero counters), exit 0, summary on stdout.
+    let root = temp_root("once-empty");
+    write_config(&root, "# empty config\n");
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stdout: {}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("timeline:") && stdout.contains("mail:") && stdout.contains("rss:"),
+        "one line per action expected: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_run_once_json_shape() {
+    // `--once --json` → structured result object with the three actions.
+    let root = temp_root("once-json");
+    write_config(&root, "# empty config\n");
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value = serde_json::from_str(stdout.trim()).expect("stdout must be JSON");
+    for key in ["timeline", "mail", "rss"] {
+        assert!(v.get(key).is_some(), "JSON missing `{key}`: {stdout}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
