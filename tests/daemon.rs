@@ -164,3 +164,233 @@ fn daemon_run_once_json_shape() {
     }
     let _ = std::fs::remove_dir_all(&root);
 }
+
+// ── t3: state file + status + anti-reentry ──
+
+/// Path to the daemon state file inside an isolated config root.
+fn state_path_in(root: &Path) -> PathBuf {
+    config_path_in(root)
+        .parent()
+        .unwrap()
+        .join("daemon-state.json")
+}
+
+/// Write a raw `daemon-state.json` into the isolated config root.
+fn write_state(root: &Path, state: serde_json::Value) {
+    let path = state_path_in(root);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, state.to_string()).unwrap();
+}
+
+#[test]
+fn daemon_run_once_writes_complete_final_state() {
+    // After `--once`, the state file must hold the exit snapshot: running=false,
+    // exit_ok=true, cycles=1, and per-source results.
+    let root = temp_root("state-after-once");
+    write_config(&root, "# empty config\n");
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once"])
+        .output()
+        .unwrap();
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+
+    let state_path = state_path_in(&root);
+    assert!(state_path.exists(), "state file should exist after --once");
+    let text = std::fs::read_to_string(&state_path).unwrap();
+    let v: serde_json::Value = serde_json::from_str(&text).expect("state file must be JSON");
+    assert_eq!(v["running"], serde_json::Value::Bool(false));
+    assert_eq!(v["exit_ok"], serde_json::Value::Bool(true));
+    assert_eq!(v["cycles"], serde_json::Value::from(1));
+    for key in ["timeline", "mail", "rss"] {
+        assert!(
+            v["sources"][key].is_object(),
+            "sources.{key} should be an object: {text}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_status_no_state_file_reports_not_running() {
+    let root = temp_root("status-none");
+    write_config(&root, "# empty config\n");
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "status"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("not running") || stdout.contains("stopped"),
+        "stdout: {stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_status_after_once_shows_stopped_with_cycle_info() {
+    let root = temp_root("status-after-once");
+    write_config(&root, "# empty config\n");
+    Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once"])
+        .output()
+        .unwrap();
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "status"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Status: stopped"), "stdout: {stdout}");
+    assert!(stdout.contains("Cycles: 1"), "stdout: {stdout}");
+    assert!(stdout.contains("timeline:"), "stdout: {stdout}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_status_shows_running_for_live_pid() {
+    // State claims running=true and the pid is a live child → running.
+    let root = temp_root("status-live");
+    write_config(&root, "# empty config\n");
+    let child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    write_state(
+        &root,
+        serde_json::json!({
+            "pid": child.id(), "running": true, "enabled": true, "interval_seconds": 900,
+            "started_at": "2026-08-13T23:00:00Z", "last_cycle_at": null,
+            "cycles": 1, "last_cycle_ok": true, "exit_at": null, "exit_ok": null,
+            "sources": {"timeline": null, "mail": null, "rss": null}
+        }),
+    );
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "status"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Status: running"), "stdout: {stdout}");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_status_shows_stopped_for_dead_pid() {
+    // State claims running=true but the pid is gone → stopped (stale state).
+    let root = temp_root("status-dead");
+    write_config(&root, "# empty config\n");
+    write_state(
+        &root,
+        serde_json::json!({
+            "pid": 9_999_999, "running": true, "enabled": true, "interval_seconds": 900,
+            "started_at": "2026-08-13T23:00:00Z", "last_cycle_at": null,
+            "cycles": 1, "last_cycle_ok": true, "exit_at": null, "exit_ok": null,
+            "sources": {"timeline": null, "mail": null, "rss": null}
+        }),
+    );
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "status"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("Status: stopped"), "stdout: {stdout}");
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_status_json_shape() {
+    // `status --json` must emit the state object (R001: command result), with
+    // the full ADR F016 schema, parseable as JSON.
+    let root = temp_root("status-json");
+    write_config(&root, "# empty config\n");
+    Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once"])
+        .output()
+        .unwrap();
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "status", "--json"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let v: serde_json::Value =
+        serde_json::from_str(stdout.trim()).expect("status --json must be JSON");
+    for key in [
+        "pid",
+        "running",
+        "enabled",
+        "interval_seconds",
+        "started_at",
+        "last_cycle_at",
+        "cycles",
+        "last_cycle_ok",
+        "exit_at",
+        "exit_ok",
+        "sources",
+    ] {
+        assert!(v.get(key).is_some(), "missing {key}: {stdout}");
+    }
+    assert_eq!(v["running"], serde_json::Value::Bool(false));
+    for key in ["timeline", "mail", "rss"] {
+        assert!(v["sources"][key].is_object(), "sources.{key}: {stdout}");
+    }
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn daemon_run_refuses_when_another_instance_live() {
+    // A state file claiming a live pid → `run` must exit 1 with a clear error
+    // (anti-reentry, t3).
+    let root = temp_root("reentry");
+    write_config(&root, "# empty config\n");
+    let child = std::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .expect("spawn sleep");
+    write_state(
+        &root,
+        serde_json::json!({
+            "pid": child.id(), "running": true, "enabled": true, "interval_seconds": 900,
+            "started_at": "2026-08-13T23:00:00Z", "last_cycle_at": null,
+            "cycles": 0, "last_cycle_ok": null, "exit_at": null, "exit_ok": null,
+            "sources": {"timeline": null, "mail": null, "rss": null}
+        }),
+    );
+    let out = Command::cargo_bin("everyday")
+        .unwrap()
+        .env(config_env_var(), &root)
+        .args(["daemon", "run", "--once"])
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(stdout.contains("already running"), "stdout: {stdout}");
+    let _ = child.kill();
+    let _ = child.wait();
+    let _ = std::fs::remove_dir_all(&root);
+}
