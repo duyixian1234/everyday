@@ -75,21 +75,21 @@ impl Executor for TodoModule {
             cli_action!(
                 "start",
                 "标记进行中",
-                "everyday todo start <page_id> [--account NAME]",
+                "everyday todo start <id> [--account NAME]",
                 &[],
                 Positional::Exactly(1)
             ),
             cli_action!(
                 "complete",
                 "标记完成",
-                "everyday todo complete <page_id> [--account NAME]",
+                "everyday todo complete <id> [--account NAME]",
                 &[],
                 Positional::Exactly(1)
             ),
             cli_action!(
                 "delete",
                 "删除待办",
-                "everyday todo delete <page_id> [--account NAME]",
+                "everyday todo delete <id> [--account NAME]",
                 &[],
                 Positional::Exactly(1)
             ),
@@ -153,21 +153,21 @@ pub(crate) async fn dispatch(
         "start" => {
             let id = positional
                 .first()
-                .ok_or_else(|| AgentError::InvalidArgument("`start` requires <page_id>".into()))?;
+                .ok_or_else(|| AgentError::InvalidArgument("`start` requires <id>".into()))?;
             let r = backend.set_status(id, STATUS_IN_PROGRESS).await?;
             Ok(render_status(r))
         }
         "complete" => {
-            let id = positional.first().ok_or_else(|| {
-                AgentError::InvalidArgument("`complete` requires <page_id>".into())
-            })?;
+            let id = positional
+                .first()
+                .ok_or_else(|| AgentError::InvalidArgument("`complete` requires <id>".into()))?;
             let r = backend.set_status(id, STATUS_DONE).await?;
             Ok(render_status(r))
         }
         "delete" => {
             let id = positional
                 .first()
-                .ok_or_else(|| AgentError::InvalidArgument("`delete` requires <page_id>".into()))?;
+                .ok_or_else(|| AgentError::InvalidArgument("`delete` requires <id>".into()))?;
             let r = backend.delete(id).await?;
             Ok(render_delete(r))
         }

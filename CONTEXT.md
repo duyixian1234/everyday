@@ -7,6 +7,9 @@
 
 ## 核心概念
 
+### 日期序号 ID（date-seq id）
+本地实体主键标识，形如 `{模块前缀}{YYYYMMDD}-{PID}-{当日序号}`（如 `n20260814-1a2b-001` = "2026-08-14 当天进程 1a2b 创建的第 1 条笔记"）。模块前缀：`n`（note）/ `t`（todo）/ `b`（bookmark）/ `m`（memory）/ `ev`（timeline 事件）/ `mc`（email cache）/ `ri`（rss）。`YYYYMMDD` 为创建时刻的**本地时区自然日**；序号为当日该前缀独立从 `001` 起算（超出 999 自然扩展位数）；**PID 段（hex）保证跨进程唯一**——CLI 每次命令都是新进程，无 PID 段时同一天第二次写同前缀必然撞号（SQLite 主键兜底会直接报错）。新格式（v0.17.1 起）与旧格式（`{前缀}{纳秒hex}-{PID}-{计数器}`）共存，均为合法 id；引用一律按精确字符串匹配。见 [R021](docs/adr/R021-date-sequence-id.md)。
+
 ### Timeline
 统一的事件存储层。将 Mail / Calendar / RSS / Todo / Note / Bookmark 等模块产生的事件标准化为**只追加日志（append-only log）**，提供统一查询。Timeline 回答的是"过去发生了什么"，而非"当前状态是什么"。当前状态由日志顺序重放派生。
 
@@ -71,7 +74,7 @@ cal 的窗口刷新模式窗口 = `[last_sync, now + 7天]`（前看 7 天）。
 固定 `~/.config/everyday/timeline.db`，单库聚合所有 source/account 事件。不暴露多账户路径。首版不实现 `[timeline] db_path` 覆盖配置。
 
 ### Schema
-- `events` 表：`id`（代理主键 UUID 短码）、`source`、`account`（NULL for rss）、`event_type`、`timestamp`（RFC3339 UTC）、`title`、`summary`、`ref_id`、`metadata`（JSON）、`created_at`（写入时刻）。
+- `events` 表：`id`（代理主键日期序号 ID）、`source`、`account`（NULL for rss）、`event_type`、`timestamp`（RFC3339 UTC）、`title`、`summary`、`ref_id`、`metadata`（JSON）、`created_at`（写入时刻）。
 - `ux_events_natural` 唯一索引：`(source, COALESCE(account,''), ref_id, event_type, timestamp)`——幂等去重，COALESCE 处理 rss 的 NULL account。
 - `ix_events_time_source` 索引：`(timestamp, source)`——覆盖主查询模式。
 - `sync_state` 表：`(source, COALESCE(account,''))` 主键、`last_sync`、`first_sync_done` 标志。
@@ -159,7 +162,7 @@ Memory 模块（`everyday memory <action>`）存储 agent 关于 user / project 
 单个 memory 事实，形如 `(subject, predicate, object)`。例如 `(user, prefers, rust)`。三个 TEXT 字段；与 RDF / SPARQL 无关系。
 
 ### Memory row
-`memory` 表的一行：`id`（TEXT 短 UUID 主键）、`subject` / `predicate` / `object`（NOT NULL TEXT）、`confidence`（REAL ∈ [0.0, 1.0]，默认 1.0）、`source`（TEXT 自由 provenance 标签，可空）、`created_at`（RFC3339 UTC 毫秒精度）、`deleted_at`（RFC3339 UTC，软删除标记，可空）。无复合自然键；幂等完全由 agent 自己负责。
+`memory` 表的一行：`id`（TEXT 日期序号 ID 主键）、`subject` / `predicate` / `object`（NOT NULL TEXT）、`confidence`（REAL ∈ [0.0, 1.0]，默认 1.0）、`source`（TEXT 自由 provenance 标签，可空）、`created_at`（RFC3339 UTC 毫秒精度）、`deleted_at`（RFC3339 UTC，软删除标记，可空）。无复合自然键；幂等完全由 agent 自己负责。
 
 ### Current state（当前态）
 对每个 `(subject, predicate, object)`，取 `MAX(created_at) WHERE deleted_at IS NULL` 的那一行。所有读命令（`get` / `relation` / `list` / `graph`）默认走当前态视图。`memory history` 是 v1 唯一返回全历史（含 deleted 行）的命令。当前态视图以 SQLite 3.25+ 窗口函数 `ROW_NUMBER() OVER (PARTITION BY subject, predicate, object ORDER BY created_at DESC)` 实现。
@@ -191,7 +194,7 @@ Memory 单实例全局，无 `account` 列。多 agent 隔离靠 subject 命名�
 ### Schema
 ```
 memory(
-    id          TEXT PRIMARY KEY,           -- 短 UUID
+    id          TEXT PRIMARY KEY,           -- 日期序号 ID
     subject     TEXT NOT NULL,
     predicate   TEXT NOT NULL,
     object      TEXT NOT NULL,

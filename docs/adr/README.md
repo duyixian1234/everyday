@@ -125,6 +125,8 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [R017](R017-backend-layout-scope.md) | Backend directory layout (L-B) + action-layer scope boundary | Accepted | 2026-07-12 |
 | [R018](R018-backend-domain-mocks.md) | Backend domain types + in-memory mock backends (DI regression guard) | Accepted | 2026-07-12 |
 | [R019](R019-remove-notion-provider.md) | Remove the Notion provider — note/todo/bookmark become local-only (v0.13 breaking) | Accepted | 2026-08-09 |
+| [R020](R020-env-credential-fallback.md) | Environment-variable credential fallback (opt-in) — controlled exception to R015 | Accepted | 2026-08-09 |
+| [R021](R021-date-sequence-id.md) | Date-sequence IDs — `{prefix}{YYYYMMDD}-{seq}` replaces the nanosecond-hex ID format (v0.17.1) | Accepted | 2026-08-14 |
 
 ## Search (S-series)
 

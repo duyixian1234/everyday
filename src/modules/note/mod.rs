@@ -67,21 +67,21 @@ impl Executor for NoteModule {
             cli_action!(
                 "read",
                 "读取页面内容（默认账户默认页）",
-                "everyday note read [<page_id>] [--account NAME]",
+                "everyday note read [<id>] [--account NAME]",
                 &[],
                 Positional::OptionalSingle
             ),
             cli_action!(
                 "append",
                 "追加内容到页面（默认账户默认页，或从 stdin 读取）",
-                "everyday note append [<page_id>] --text TEXT [--account NAME]",
+                "everyday note append [<id>] --text TEXT [--account NAME]",
                 &[flag!("text", "追加文本（缺省从 stdin 读取）")],
                 Positional::OptionalSingle
             ),
             cli_action!(
                 "update",
                 "更新页面属性",
-                "everyday note update <page_id> --prop K:V ... [--account NAME]",
+                "everyday note update <id> --prop K:V ... [--account NAME]",
                 &[flag!("prop", "属性 K:V（至少一个，可重复）", Multi)],
                 Positional::OptionalSingle
             ),
@@ -187,7 +187,7 @@ async fn dispatch(
         "update" => {
             let page_id = positional
                 .first()
-                .ok_or_else(|| AgentError::InvalidArgument("update requires <page_id>".into()))?
+                .ok_or_else(|| AgentError::InvalidArgument("update requires <id>".into()))?
                 .clone();
             let props = split_props(multi)?;
             let updated = backend.update(&page_id, &props).await?;
@@ -263,7 +263,7 @@ fn resolve_page_id(account: &NoteAccount, positional: &[String]) -> Result<Strin
     }
     account.default_page_id.clone().ok_or_else(|| {
         AgentError::InvalidArgument(
-            "no <page_id> given and no default_page_id set for this account".into(),
+            "no <id> given and no default_page_id set for this account".into(),
         )
     })
 }

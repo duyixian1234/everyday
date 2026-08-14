@@ -154,7 +154,7 @@ pub enum Positional {
     None,
     /// Exactly N positional arguments (e.g. `config set <path> <value>` is `Exactly(2)`).
     Exactly(u8),
-    /// Optional single positional argument (0 or 1, e.g. `note read [<page_id>]`).
+    /// Optional single positional argument (0 or 1, e.g. `note read [<id>]`).
     OptionalSingle,
 }
 
@@ -165,7 +165,7 @@ pub struct ActionArgSpec {
     pub usage: &'static str,
     pub args: &'static [ArgSpec],
     /// Positional-argument declaration (e.g. `config set <path> <value>`,
-    /// `note read <page_id>`). Positionals are captured under the single
+    /// `note read <id>`). Positionals are captured under the single
     /// clap id `args` and reconstructed verbatim by `matches_to_args`.
     pub positional: Positional,
 }

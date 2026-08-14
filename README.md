@@ -234,9 +234,9 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `search` | Search pages / databases by title | `everyday note search --query Q [--limit N]` |
 | `list` | List pages in a database | `everyday note list [--limit N]` |
 | `create` | Create a new page (record) in a database | `everyday note create --title T [--prop K:V ...]` |
-| `read` | Read a page body, aggregated into Markdown | `everyday note read <page_id>` |
-| `append` | Append a text block to the end of a page | `everyday note append [page_id] --text TEXT` |
-| `update` | Modify page properties (meta) | `everyday note update <page_id> --prop K:V ...` |
+| `read` | Read a page body, aggregated into Markdown | `everyday note read <id>` |
+| `append` | Append a text block to the end of a page | `everyday note append [id] --text TEXT` |
+| `update` | Modify page properties (meta) | `everyday note update <id> --prop K:V ...` |
 
 **Option details**:
 
@@ -258,8 +258,8 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 |------|------|------|
 | `list` | List unfinished tasks (by Due ascending) | `everyday todo list [--all]` |
 | `add` | Add a task | `everyday todo add --title T [--due DATE] [--priority P]` |
-| `start` | Mark a task as In Progress | `everyday todo start <page_id>` |
-| `complete` | Mark a task as Done | `everyday todo complete <page_id>` |
+| `start` | Mark a task as In Progress | `everyday todo start <id>` |
+| `complete` | Mark a task as Done | `everyday todo complete <id>` |
 
 **Option details**:
 
@@ -737,17 +737,17 @@ everyday note create \
   --prop "URL:https://..."
 
 # Read a page body (aggregated into Markdown)
-everyday note read <page_id> --json
+everyday note read <id> --json
 
-# Append a quick note to the default scratch page (page_id optional)
+# Append a quick note to the default scratch page (id optional)
 everyday note append --text "### Auto-captured by AI
 Found a competitor link in message 12345: https://..."
 
 # Append via pipe
-echo "Batch-captured content" | everyday note append <page_id>
+echo "Batch-captured content" | everyday note append <id>
 
 # Update page properties
-everyday note update <page_id> --prop "Status:Read"
+everyday note update <id> --prop "Status:Read"
 ```
 
 ### To-dos (local SQLite by default)
@@ -764,9 +764,9 @@ everyday todo list --all --json
 # Add a task
 everyday todo add --title "Write weekly report" --due 2026-07-15 --priority P1
 
-# Status transitions (returns the page id and url)
-everyday todo start <page_id>
-everyday todo complete <page_id>
+# Status transitions (returns the task id)
+everyday todo start <id>
+everyday todo complete <id>
 ```
 
 ### Bookmarks (local SQLite by default)

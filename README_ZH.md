@@ -212,9 +212,9 @@ everyday config set default_account.mail personal
 | `search` | 按标题搜索页面 / 数据库 | `everyday note search --query Q [--limit N]` |
 | `list` | 列出指定数据库下的页面 | `everyday note list [--limit N]` |
 | `create` | 在数据库中新建页面（记录） | `everyday note create --title T [--prop K:V ...]` |
-| `read` | 读取页面正文，聚合成 Markdown | `everyday note read <page_id>` |
-| `append` | 向页面末尾追加文本区块 | `everyday note append [page_id] --text TEXT` |
-| `update` | 修改页面属性（Meta 信息） | `everyday note update <page_id> --prop K:V ...` |
+| `read` | 读取页面正文，聚合成 Markdown | `everyday note read <id>` |
+| `append` | 向页面末尾追加文本区块 | `everyday note append [id] --text TEXT` |
+| `update` | 修改页面属性（Meta 信息） | `everyday note update <id> --prop K:V ...` |
 
 **选项说明**：
 
@@ -236,8 +236,8 @@ everyday config set default_account.mail personal
 |------|------|------|
 | `list` | 列出未完成任务（按 Due 升序） | `everyday todo list [--all]` |
 | `add` | 新增任务 | `everyday todo add --title T [--due DATE] [--priority P]` |
-| `start` | 标记任务为 In Progress | `everyday todo start <page_id>` |
-| `complete` | 标记任务为 Done | `everyday todo complete <page_id>` |
+| `start` | 标记任务为 In Progress | `everyday todo start <id>` |
+| `complete` | 标记任务为 Done | `everyday todo complete <id>` |
 
 **选项说明**：
 
@@ -700,17 +700,17 @@ everyday note create \
   --prop "URL:https://..."
 
 # 读取页面正文（聚合成 Markdown）
-everyday note read <page_id> --json
+everyday note read <id> --json
 
-# 向默认速记页面追加一条闪念（page_id 可选）
+# 向默认速记页面追加一条闪念（id 可选）
 everyday note append --text "### AI 自动捕获
 在 12345 号邮件发现竞品链接：https://..."
 
 # 管道方式追加
-echo "批量捕获的内容" | everyday note append <page_id>
+echo "批量捕获的内容" | everyday note append <id>
 
 # 修改页面属性
-everyday note update <page_id> --prop "状态:已读"
+everyday note update <id> --prop "状态:已读"
 ```
 
 ### 待办（默认本地 SQLite）
@@ -727,9 +727,9 @@ everyday todo list --all --json
 # 新增任务
 everyday todo add --title "写周报" --due 2026-07-15 --priority P1
 
-# 状态切换（返回含 page id 与 url）
-everyday todo start <page_id>
-everyday todo complete <page_id>
+# 状态切换（返回任务 id）
+everyday todo start <id>
+everyday todo complete <id>
 ```
 
 ### 书签（默认本地 SQLite）
