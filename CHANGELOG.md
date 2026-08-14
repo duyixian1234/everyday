@@ -1,3 +1,12 @@
+## [0.17.1] - 2026-08-14
+
+### 🚀 Features
+
+- *(id)* Date-sequence IDs with PID segment — {prefix}{YYYYMMDD}-{pid:x}-{seq} (R021)
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.17.1
 ## [0.17.0] - 2026-08-13
 
 ### 🚀 Features
@@ -20,7 +29,7 @@
 ### ⚙️ Miscellaneous Tasks
 
 - *(typos)* Allowlist /FO tasklist flag (daemon state pid probe)
-
+- Release v0.17.0
 ## [0.16.2] - 2026-08-10
 
 ### 🐛 Bug Fixes
