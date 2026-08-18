@@ -1,3 +1,22 @@
+## [0.17.2] - 2026-08-18
+
+### 🚀 Features
+
+- *(task)* Add command execution and cron scheduling
+
+### 🐛 Bug Fixes
+
+- *(task)* CLI parse collision + scheduler/harness hardening
+
+### 📚 Documentation
+
+- Split README into docs/
+- *(task)* 模块设计 ADR F017 + CONTEXT.md 术语（#17）
+
+### ⚙️ Miscellaneous Tasks
+
+- Remove stale temporary target ignore rules
+- Release v0.17.2
 ## [0.17.1] - 2026-08-14
 
 ### 🚀 Features
