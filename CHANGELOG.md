@@ -1,3 +1,17 @@
+## [0.17.3] - 2026-08-18
+
+### 🐛 Bug Fixes
+
+- *(task)* Relay child output via OS handle on Windows consoles
+- *(task)* Split stdout/stderr branches in Unix relay path
+
+### 🧪 Testing
+
+- *(daemon)* Hoist nested #[test] out of daemon_run_once_json_shape
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.17.3
 ## [0.17.2] - 2026-08-18
 
 ### 🚀 Features
