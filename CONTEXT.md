@@ -428,6 +428,37 @@ daemon 每个周期的完整动作序列：timeline 事件拉取 + mail 缓存�
 ### State file（状态文件）
 `daemon-state.json`，daemon 的运行状态记录：pid / running / enabled / interval / 各周期时间 / 各源最近结果。`daemon status` 读它并探测 pid 存活来判定"运行中"。daemon 退出时保留文件并写入 final 状态（供回看"上次同步到几点"）。
 
+## Task（用户自定义任务）
+
+> 用户自定义命令的配置与执行层。设计决策见 [`docs/adr/F017`](docs/adr/F017-task-module.md)。
+
+### Task（任务）
+用户在 `config.toml` 的 `[tasks.<name>]` 段定义的可执行命令，供 `everyday task run` 手动执行，或由 daemon 调度循环按 cron 表达式自动执行。由 `command`（可执行文件或路径，必填）+ `args`（参数串，可选）构成，**不经 shell 解释**——`command` 直接作为可执行文件启动，`args` 按空白拆分为参数向量。任务名须匹配 `^[A-Za-z0-9][A-Za-z0-9_-]*$`。
+
+### 参数拆分（Arg Splitting）
+`args` 与运行时的 extra args 均按空白拆分为 argv，无引号语义——单个参数内含空格无法表达（v1 已知限制）。**无 shell 意味着无注入面**：配置里写的参数就是最终 argv。
+
+### Extra Args（追加参数）
+`task run <name> -- extra...` 传入的参数。仅当任务 `allow_extra_args=true` 时追加到配置 args 之后；否则拒绝执行。
+
+### 超时（Timeout）
+任务的执行时限，默认 60 秒，`0` = 无超时。超时后杀死整棵进程树并记为 `timeout`；everyday 自身退出码用 124（类 `timeout(1)` 惯例）供调用方识别。
+
+### 捕获输出（Capture Output）
+`capture_output=true` 时，手动 `task run` 的 stdout/stderr **分列**实时透传并持久化到执行记录（每流上限 64KiB，超出截断并标记）。**定时执行无条件捕获**——无人观看终端时，输出只有落库才可事后观测。
+
+### 执行记录（Task Run）
+一次任务执行的不可变记录，存 `~/.config/everyday/task.db`：日期序号 id（前缀 `tk`，见 [R021](docs/adr/R021-date-sequence-id.md)）、任务名、命令与参数（JSON 数组）、实际工作目录、状态（success/failed/timeout）、退出码（超时为空）、时长、捕获输出（可空）。`task history` 查询。
+
+### 调度（Schedule）
+任务的可选 cron 表达式（标准 5 段：分 时 日 月 周，本地时区）。配置了 `schedule` 的任务由 daemon 自动执行；未配置则仅手动。cron 语法在 `task add` 与配置加载时校验。
+
+### 调度循环（Scheduler Loop）
+daemon 内独立于同步周期的循环（同步周期见 F016），约每 30 秒检查一次 cron 到期任务。**不积压**：daemon 关机期间错过的窗口不补跑，每轮至多执行一次，下次触发时刻从当前时刻向后滚动。执行精度受循环节拍限制（到期后约 30 秒内触发）。
+
+### 与 Timeline 的边界
+Task 执行记录是独立于 Timeline 的本地动作日志，v1 不产生 Timeline 事件。Timeline 聚合外部来源（邮件/日历/RSS 等）的"发生事件"；task 执行是本地命令动作，无跨来源同步需求。
+
 ---
 
 ## MCP
