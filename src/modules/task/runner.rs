@@ -248,27 +248,76 @@ where
 async fn relay_chunk(chunk: &[u8], kind: StreamKind, relay: RelayMode) -> Result<()> {
     match relay {
         RelayMode::Silent => Ok(()),
-        RelayMode::Structured => {
-            let mut writer = tokio::io::stderr();
-            writer.write_all(chunk).await?;
-            writer.flush().await?;
-            Ok(())
-        }
+        RelayMode::Structured => write_relay(chunk, true).await,
         RelayMode::Terminal => match kind {
-            StreamKind::Stdout => {
-                let mut writer = tokio::io::stdout();
-                writer.write_all(chunk).await?;
-                writer.flush().await?;
-                Ok(())
-            }
-            StreamKind::Stderr => {
-                let mut writer = tokio::io::stderr();
-                writer.write_all(chunk).await?;
-                writer.flush().await?;
-                Ok(())
-            }
+            StreamKind::Stdout => write_relay(chunk, false).await,
+            StreamKind::Stderr => write_relay(chunk, true).await,
         },
     }
+}
+
+#[cfg(not(windows))]
+async fn write_relay(bytes: &[u8], to_stderr: bool) -> Result<()> {
+    let mut writer = if to_stderr {
+        tokio::io::stderr()
+    } else {
+        tokio::io::stdout()
+    };
+    writer.write_all(bytes).await?;
+    writer.flush().await?;
+    Ok(())
+}
+
+#[cfg(windows)]
+async fn write_relay(bytes: &[u8], to_stderr: bool) -> Result<()> {
+    write_console_raw(bytes, to_stderr)?;
+    Ok(())
+}
+
+/// Write raw bytes to stdout/stderr bypassing Rust std's console-mode UTF-8
+/// check. Child output can be in the console's codepage rather than UTF-8
+/// (e.g. `ipconfig` GBK output on a Chinese Windows console); std's
+/// `Stdout` rejects such bytes with "Windows stdio in console mode does not
+/// support writing non-UTF-8 byte sequences". Writing through the OS handle
+/// (`WriteFile`) lets the console interpret the bytes in its own codepage,
+/// and also works unchanged when stdout is redirected to a pipe or file.
+#[cfg(windows)]
+fn write_console_raw(bytes: &[u8], to_stderr: bool) -> std::io::Result<()> {
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::WriteFile;
+
+    let handle: HANDLE = if to_stderr {
+        std::io::stderr().as_raw_handle() as HANDLE
+    } else {
+        std::io::stdout().as_raw_handle() as HANDLE
+    };
+    let mut written: u32 = 0;
+    let mut offset = 0;
+    while offset < bytes.len() {
+        let remaining = u32::try_from(bytes.len() - offset).unwrap_or(u32::MAX);
+        // SAFETY: `handle` is the process's live stdout/stderr handle, valid
+        // for the process lifetime; the input slice borrows `bytes` for the
+        // duration of the call; a null OVERLAPPED pointer selects a
+        // synchronous write.
+        let ok = unsafe {
+            WriteFile(
+                handle,
+                bytes[offset..].as_ptr(),
+                remaining,
+                &mut written,
+                std::ptr::null_mut(),
+            )
+        };
+        if ok == 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+        if written == 0 {
+            break;
+        }
+        offset += written as usize;
+    }
+    Ok(())
 }
 
 async fn join_capture(task: Option<tokio::task::JoinHandle<Result<String>>>) -> Result<String> {
@@ -339,6 +388,13 @@ mod tests {
         match std::env::var("EVERYDAY_TASK_CHILD_MODE").as_deref() {
             Ok("exit7") => std::process::exit(7),
             Ok("large") => print!("{}", "x".repeat(70 * 1024)),
+            Ok("raw") => {
+                // Non-UTF-8 bytes in the console codepage (GBK for
+                // "Windows IP 配置") — must relay without error.
+                use std::io::Write;
+                let mut out = std::io::stdout();
+                let _ = out.write_all(b"Windows IP \xC5\xE4\xD6\xC3\n");
+            }
             Ok("sleep") => std::thread::sleep(Duration::from_secs(5)),
             Ok("tree-parent") => {
                 let file = std::env::var("EVERYDAY_TASK_CHILD_FILE").unwrap();
@@ -450,6 +506,34 @@ mod tests {
         drop(store);
         let _ = std::fs::remove_file(path);
         let _ = std::fs::remove_file(marker);
+    }
+
+    #[tokio::test]
+    async fn relays_non_utf8_child_output_without_error() {
+        let _guard = CHILD_LOCK.lock().await;
+        set_child_mode("raw");
+        let path = db_path("raw");
+        let _ = std::fs::remove_file(&path);
+        let store = TaskStore::open_path(&path).await.unwrap();
+        let record = run(
+            &store,
+            "raw",
+            &helper_task(10, true),
+            &[],
+            false,
+            RelayMode::Terminal,
+        )
+        .await
+        .unwrap();
+        assert_eq!(record.status, "success");
+        let stdout = record.stdout.unwrap();
+        assert!(
+            stdout.contains('\u{FFFD}'),
+            "GBK bytes must be lossy-captured, got: {stdout:?}"
+        );
+        clear_child_mode();
+        drop(store);
+        let _ = std::fs::remove_file(path);
     }
 
     #[tokio::test]

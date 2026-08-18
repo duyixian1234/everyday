@@ -395,7 +395,9 @@ execution in `~/.config/everyday/task.db`. Design: [F017](adr/F017-task-module.m
   the process tree, records `timeout`, and exits 124.
 - Manual text runs stream child stdout/stderr normally and mirror the child exit
   code. With `--json`, child output goes to stderr and stdout contains one
-  `{"_result": {...}}` envelope.
+  `{"_result": {...}}` envelope. On Windows consoles the relay writes child
+  bytes through the OS handle, so non-UTF-8 output (e.g. GBK `ipconfig`) is
+  shown as-is instead of crashing; captured records are stored as UTF-8 (lossy).
 - `capture_output=true` persists stdout/stderr separately, capped at 64 KiB per
   stream with a truncation marker. Scheduled runs always capture.
 - `schedule` is standard five-field cron in local time. The daemon checks it in

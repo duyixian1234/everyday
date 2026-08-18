@@ -384,7 +384,9 @@ everyday auth login --module webdav --account personal
 - 默认超时 60 秒，`timeout_secs = 0` 表示无限制。超时杀整棵进程树，记录
   `timeout`，everyday 退出 124。
 - 手动文本模式实时透传 stdout/stderr 并镜像子进程退出码；`--json` 时子进程
-  输出改走 stderr，stdout 仅一个 `{"_result": {...}}` 信封。
+  输出改走 stderr，stdout 仅一个 `{"_result": {...}}` 信封。Windows 控制台
+  上透传经 OS 句柄写入，非 UTF-8 输出（如 GBK 的 `ipconfig`）原样显示不崩溃；
+  落库记录按 UTF-8 有损转换。
 - `capture_output=true` 分列保存 stdout/stderr，每流最多 64 KiB并带截断标记；
   定时执行无条件捕获。
 - `schedule` 为本地时区标准 5 段 cron。daemon 用独立 30 秒循环检查，停机错过

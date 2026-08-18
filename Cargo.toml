@@ -86,6 +86,13 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 toml_edit = "0.22"
 croner = "3.0.1"
 
+# Task runner relays raw child bytes to the terminal (F017). On Windows the
+# console may use a non-UTF-8 codepage (e.g. GBK `ipconfig` output), which
+# std's `Stdout` rejects in console mode; the relay writes via the OS handle
+# (`WriteFile`) instead.
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+
 [dev-dependencies]
 tokio-test = "0.4"
 
