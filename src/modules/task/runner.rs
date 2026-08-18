@@ -258,13 +258,16 @@ async fn relay_chunk(chunk: &[u8], kind: StreamKind, relay: RelayMode) -> Result
 
 #[cfg(not(windows))]
 async fn write_relay(bytes: &[u8], to_stderr: bool) -> Result<()> {
-    let mut writer = if to_stderr {
-        tokio::io::stderr()
+    // tokio's Stdout/Stderr are distinct types, so the branches stay split.
+    if to_stderr {
+        let mut writer = tokio::io::stderr();
+        writer.write_all(bytes).await?;
+        writer.flush().await?;
     } else {
-        tokio::io::stdout()
-    };
-    writer.write_all(bytes).await?;
-    writer.flush().await?;
+        let mut writer = tokio::io::stdout();
+        writer.write_all(bytes).await?;
+        writer.flush().await?;
+    }
     Ok(())
 }
 
