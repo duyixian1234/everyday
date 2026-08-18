@@ -120,16 +120,8 @@ impl DaemonModule {
             // never written to daemon stdout. The task store is opened only
             // when the config actually schedules something — daemon users
             // without `[tasks.*].schedule` get no stray task.db side effect.
-            if crate::modules::task::scheduler::any_scheduled(&self.config) {
-                let task_store = crate::modules::task::store::TaskStore::open_default().await?;
-                let task_pass = crate::modules::task::scheduler::run_due_tasks(
-                    &self.config,
-                    &task_store,
-                    chrono::Local::now(),
-                )
-                .await?;
-                log_task_pass(task_pass);
-            }
+            let mut task_scheduler = crate::modules::task::scheduler::Scheduler::new();
+            task_scheduler.run_pass(&self.config).await?;
 
             // One cycle, then render the summary to stdout (the command
             // result — R001). Full shape alignment with `timeline sync`
@@ -297,16 +289,6 @@ fn log_cycle_completed(result: &CycleResult) {
         mail_folders = result.mail.as_ref().map(|a| a.folders).unwrap_or(0),
         mail_envelopes = result.mail.as_ref().map(|a| a.envelopes).unwrap_or(0),
         rss_items = result.rss.as_ref().map(|a| a.items).unwrap_or(0),
-    );
-}
-
-fn log_task_pass(pass: crate::modules::task::scheduler::SchedulerPass) {
-    tracing::info!(
-        target: "everyday",
-        _log = "task_scheduler_pass",
-        scheduled = pass.scheduled,
-        ran = pass.ran,
-        failed = pass.failed,
     );
 }
 

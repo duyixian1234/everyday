@@ -3,6 +3,9 @@
 use std::str::FromStr;
 use std::time::Duration;
 
+#[cfg(test)]
+use std::path::{Path, PathBuf};
+
 use chrono::{DateTime, Local, Utc};
 use croner::Cron;
 use tokio_util::sync::CancellationToken;
@@ -42,7 +45,7 @@ pub fn initial_next_due(expression: &str, now: DateTime<Local>) -> Result<DateTi
 }
 
 /// Whether any configured task carries a non-empty cron schedule.
-pub fn any_scheduled(config: &Config) -> bool {
+fn any_scheduled(config: &Config) -> bool {
     config.tasks.values().any(|task| {
         task.schedule
             .as_deref()
@@ -50,11 +53,11 @@ pub fn any_scheduled(config: &Config) -> bool {
     })
 }
 
-/// Execute every task due at `now`, at most once per task, then roll its state
-/// directly to the first occurrence after `now` (no backlog). A state error on
-/// one task (DB read/write, next-occurrence calculation) is logged and skipped
-/// so a single bad entry cannot abort the whole pass.
-pub async fn run_due_tasks(
+/// Executes every task due at `now`, at most once per task, then rolls its
+/// state directly to the first occurrence after `now` (no backlog). A state
+/// error on one task (DB read/write, next-occurrence calculation) is logged
+/// and skipped so a single bad entry cannot abort the whole pass.
+async fn run_due_tasks(
     config: &Config,
     store: &TaskStore,
     now: DateTime<Local>,
@@ -85,6 +88,75 @@ pub async fn run_due_tasks(
         }
     }
     Ok(pass)
+}
+
+/// Where the store is opened from, resolved lazily on the first `run_pass`.
+enum StoreSource {
+    /// The fixed `~/.config/everyday/task.db` (resolved at open time).
+    Default,
+    /// An explicit path (tests).
+    #[cfg(test)]
+    Path(PathBuf),
+}
+
+/// The daemon's task scheduler orchestration: a resident pass runner that owns
+/// the store lifecycle and pass logging, so the resident loop and `--once`
+/// share one entry point (architecture review, Candidate 1).
+pub struct Scheduler {
+    store: Option<TaskStore>,
+    source: StoreSource,
+}
+
+impl Scheduler {
+    /// Open the fixed `~/.config/everyday/task.db` on demand.
+    pub fn new() -> Self {
+        Self {
+            store: None,
+            source: StoreSource::Default,
+        }
+    }
+
+    /// Open an explicit store path on demand (used by tests).
+    #[cfg(test)]
+    pub fn with_store_path(path: &Path) -> Self {
+        Self {
+            store: None,
+            source: StoreSource::Path(path.to_path_buf()),
+        }
+    }
+
+    /// Run one scheduler pass against `config`: gates on whether anything is
+    /// scheduled, lazily opens the store, runs due tasks, and logs the pass
+    /// summary. A store-open failure is an `Err` (the caller decides whether
+    /// to propagate or continue).
+    pub async fn run_pass(&mut self, config: &Config) -> Result<SchedulerPass> {
+        if !any_scheduled(config) {
+            return Ok(SchedulerPass::default());
+        }
+        if self.store.is_none() {
+            let path = match &self.source {
+                StoreSource::Default => crate::modules::task::store::task_db_path()?,
+                #[cfg(test)]
+                StoreSource::Path(path) => path.clone(),
+            };
+            self.store = Some(TaskStore::open_path(&path).await?);
+        }
+        let store = self.store.as_ref().expect("store opened above");
+        let pass = run_due_tasks(config, store, Local::now()).await?;
+        log_task_pass(pass);
+        Ok(pass)
+    }
+}
+
+/// Emit one `tracing::info!` pass summary (shared by resident and `--once`).
+fn log_task_pass(pass: SchedulerPass) {
+    tracing::info!(
+        target: "everyday",
+        _log = "task_scheduler_pass",
+        scheduled = pass.scheduled,
+        ran = pass.ran,
+        failed = pass.failed,
+    );
 }
 
 /// One task's due check: run at most once if `next_due <= now`, then roll the
@@ -145,41 +217,14 @@ async fn run_due_task(
 /// actually exists.
 pub async fn run_loop(shutdown: CancellationToken) -> Result<()> {
     let mut config = crate::config::Config::load_or_default()?;
-    let mut store: Option<TaskStore> = None;
+    let mut scheduler = Scheduler::new();
     loop {
-        if any_scheduled(&config) {
-            match &store {
-                Some(store) => {
-                    if let Err(error) = run_due_tasks(&config, store, Local::now()).await {
-                        tracing::error!(
-                            target: "everyday",
-                            _error = "task_scheduler_pass_failed",
-                            message = %error.message(),
-                        );
-                    }
-                }
-                None => match TaskStore::open_default().await {
-                    Ok(opened) => {
-                        if let Err(error) = run_due_tasks(&config, &opened, Local::now()).await {
-                            tracing::error!(
-                                target: "everyday",
-                                _error = "task_scheduler_pass_failed",
-                                message = %error.message(),
-                            );
-                        }
-                        store = Some(opened);
-                    }
-                    Err(error) => {
-                        // Transient failure (locked db, full disk, …): keep the
-                        // loop alive and retry next pass.
-                        tracing::error!(
-                            target: "everyday",
-                            _error = "task_db_open_failed",
-                            message = %error.message(),
-                        );
-                    }
-                },
-            }
+        if let Err(error) = scheduler.run_pass(&config).await {
+            tracing::error!(
+                target: "everyday",
+                _error = "task_scheduler_pass_failed",
+                message = %error.message(),
+            );
         }
         // Re-read config for the next pass; a malformed file (mid-edit) keeps
         // the last good config and is reported.
@@ -241,15 +286,18 @@ mod tests {
             .join("target")
             .join(format!("task-scheduler-{}.db", std::process::id()));
         let _ = std::fs::remove_file(&path);
-        let store = TaskStore::open_path(&path).await.unwrap();
         let now = Local::now();
-        store
-            .set_next_due(
-                "missing",
-                (now - chrono::Duration::minutes(1)).with_timezone(&Utc),
-            )
-            .await
-            .unwrap();
+        // Seed the next-due state so the due check fires on the first pass.
+        {
+            let store = TaskStore::open_path(&path).await.unwrap();
+            store
+                .set_next_due(
+                    "missing",
+                    (now - chrono::Duration::minutes(1)).with_timezone(&Utc),
+                )
+                .await
+                .unwrap();
+        }
         let mut config = Config::default();
         config.tasks.insert(
             "missing".into(),
@@ -263,7 +311,8 @@ mod tests {
             },
         );
 
-        let pass = run_due_tasks(&config, &store, now).await.unwrap();
+        let mut scheduler = Scheduler::with_store_path(&path);
+        let pass = scheduler.run_pass(&config).await.unwrap();
         assert_eq!(
             pass,
             SchedulerPass {
@@ -272,11 +321,31 @@ mod tests {
                 failed: 1,
             }
         );
+        let store = TaskStore::open_path(&path).await.unwrap();
         let history = store.history("missing", 10).await.unwrap();
         assert_eq!(history.len(), 1);
         assert!(history[0].capture_output, "scheduled runs always capture");
         assert!(store.next_due("missing").await.unwrap().unwrap() > now.with_timezone(&Utc));
         drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn no_schedule_opens_no_store_and_returns_empty_pass() {
+        let path: PathBuf = std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("task-scheduler-empty-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        // No `[tasks.*]` with a schedule: the store must never be opened.
+        let config = Config::default();
+        let mut scheduler = Scheduler::with_store_path(&path);
+        let pass = scheduler.run_pass(&config).await.unwrap();
+        assert_eq!(pass, SchedulerPass::default());
+        assert!(
+            !path.exists(),
+            "store must not be created when nothing is scheduled"
+        );
         let _ = std::fs::remove_file(path);
     }
 }
