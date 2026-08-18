@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **R022 落地（未发版）** — 统一保留注释的 ConfigEditor（[R022](./docs/adr/R022-config-editor.md)）：config 模块成为 config.toml 唯一写入者，`config set` 升级为保留注释 + 按 path 写入时校验 + 原子写，关闭 F017 的丢失注释分歧；`task add/remove` 改走 ConfigEditor，task/config_edit.rs 移除；`config list` 文本读侧展示原文件、JSON 契约不变。非破坏性（CLI 形状与 JSON 契约未变）。
 - **v0.17.3 已发布** — **Task run Windows 控制台非 UTF-8 输出修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`task run` 透传子进程输出改用 OS 句柄直写（`WriteFile`），中文 Windows 控制台（GBK 代码页，如 `ipconfig`）不再因 Rust std 的 UTF-8 校验崩溃，按控制台代码页原样显示；落库仍 UTF-8 有损。非破坏性。
 - **v0.17.2 已发布** — **Task 用户自定义命令与 cron 调度**（[F017](./docs/adr/F017-task-module.md)）：`task add/run/list/remove/history`、无 shell 直接派生、超时杀进程树、SQLite 历史、独立 daemon cron 循环与 `--once` 接线；集成测试收尾修复：`task add` 位置参数与 `--args` 旗标的 clap id 冲突、`--args` 连字符值被 parse_simple_args 吞掉、spawn 失败 `exit_code` 置 NULL（t3 验收）、调度循环每轮重读 config（`task add/remove` 无需重启 daemon）、task.db 惰性建表。非破坏性。
 - **v0.17.1 已发布** — **日期序号 ID**（[R021](./docs/adr/R021-date-sequence-id.md)）：`{前缀}{YYYYMMDD}-{PID}-{当日序号}`（如 `n20260814-1a2b-001`）取代纳秒 hex，全前缀 n/t/b/m/ev/mc/ri 统一、按天重置、按前缀独立计数；质量门禁暴露「纯内存计数器」跨进程撞号缺陷（CLI 每次命令新进程，同日第二次写同前缀撞 SQLite 主键；memory end-to-end 测试对真实全局 DB 复现）→ 修订为带 PID 段恢复跨进程唯一；旧格式 id 共存不迁移，引用精确字符串匹配；CLI 帮助/错误文本 `<page_id>` → `<id>`（`default_page_id` 配置字段保留）。非破坏性。
@@ -41,6 +42,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-18 | R | [R022](./docs/adr/R022-config-editor.md) | 统一保留注释的 ConfigEditor：config 模块成为 config.toml 唯一写入者（set_dotted / insert_task / remove_task，toml_edit load→mutate→原子写）；`config set` 也升级为保留注释 + 写入时按 path 校验 + 原子写，关闭 F017 的 config-set 丢失注释分歧；task/config_edit.rs 移除；config list 文本读侧展示原文件、JSON 契约不变 |
 | 2026-08-18 | F | [F017](./docs/adr/F017-task-module.md) | Task 模块：`[tasks.<name>]`、无 shell runner、task.db 历史、64 KiB 捕获、进程树超时终止、daemon 独立 cron 调度循环 |
 | 2026-08-13 | F | [F016](./docs/adr/F016-daemon-sync-scheduler.md) | Daemon 自动同步：`everyday daemon run` 常驻进程为唯一允许周期性自动拉取的角色（timeline run_sync + mail 全文件夹缓存 + rss 拉取，顺序执行、完成后 sleep）；`[daemon]` 节（enabled/interval_seconds/sources 向后兼容）；状态文件 daemon-state.json + pid 防重入；`--once`/`status`；优雅退出统一 graceful_shutdown 路径；常驻 stdout 静默、文件日志固定 INFO；不写 SCM 集成代码（docs/daemon.md 三平台示例） |
 | 2026-08-10 | F | [F015](./docs/adr/F015-leveled-logging-tracing.md) | 分级日志（tracing）：默认 WARN 静音，`-v`=INFO（中间件进度），`-vv`=DEBUG 预留；全局 `-v/--verbose`（Count，仿 --json）；自定义 Layer 写 stderr，text 紧凑格式 + JSON `{"_log"}` 形状不变（R001）；middleware 无条件留栈靠 LevelFilter 静音；仅渲染 everyday target；14 处 eprintln 全量迁移 |

@@ -128,6 +128,7 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [R019](R019-remove-notion-provider.md) | Remove the Notion provider — note/todo/bookmark become local-only (v0.13 breaking) | Accepted | 2026-08-09 |
 | [R020](R020-env-credential-fallback.md) | Environment-variable credential fallback (opt-in) — controlled exception to R015 | Accepted | 2026-08-09 |
 | [R021](R021-date-sequence-id.md) | Date-sequence IDs — `{prefix}{YYYYMMDD}-{seq}` replaces the nanosecond-hex ID format (v0.17.1) | Accepted | 2026-08-14 |
+| [R022](R022-config-editor.md) | Unified comment-preserving `ConfigEditor` — config module as the single writer of `config.toml` (closes F017's config-set lossy divergence) | Accepted | 2026-08-18 |
 
 ## Search (S-series)
 

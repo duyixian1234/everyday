@@ -6,8 +6,9 @@
 
 use async_trait::async_trait;
 use std::path::Path;
+use std::str::FromStr;
 
-use crate::config::Config;
+use crate::config::{Config, ConfigEditor};
 use crate::error::{AgentError, Result};
 use crate::modules::{Executor, parse_simple_args};
 use crate::output::{Output, RenderMode};
@@ -88,16 +89,22 @@ pub(crate) async fn run_config(action: &str, args: &[String], mode: RenderMode) 
             Ok(Output::text(p.display().to_string()))
         }
         "list" => {
-            let cfg = Config::load_or_default()?;
+            // Text mode renders the raw comment-preserving document (ADR R022);
+            // JSON mode keeps the parsed `Config` struct (the agent contract).
             match mode {
                 RenderMode::Json => {
+                    let cfg = Config::load_or_default()?;
                     let v = serde_json::to_value(&cfg)?;
                     Ok(Output::Json(v))
                 }
                 RenderMode::Text => {
-                    let toml_str = toml::to_string_pretty(&cfg)
-                        .map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
-                    Ok(Output::text(toml_str))
+                    let path = Config::config_path()?;
+                    let text = if path.exists() {
+                        std::fs::read_to_string(&path)?
+                    } else {
+                        String::new()
+                    };
+                    Ok(Output::text(text))
                 }
             }
         }
@@ -105,10 +112,15 @@ pub(crate) async fn run_config(action: &str, args: &[String], mode: RenderMode) 
             let path = args.first().ok_or_else(|| {
                 AgentError::InvalidArgument("usage: everyday config get <dotted.path>".into())
             })?;
-            let cfg = Config::load_or_default()?;
-            let toml_val: toml::Value = toml::Value::try_from(&cfg)
-                .map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
-            let v = get_dotted(&toml_val, path)?;
+            let cfg_path = Config::config_path()?;
+            let text = if cfg_path.exists() {
+                std::fs::read_to_string(&cfg_path)?
+            } else {
+                String::new()
+            };
+            let doc: toml_edit::DocumentMut = toml_edit::DocumentMut::from_str(&text)
+                .map_err(|e| AgentError::Config(format!("parse: {e}")))?;
+            let v = get_dotted_doc(&doc, path)?;
             Ok(Output::text(value_to_display_string(&v)))
         }
         "set" => {
@@ -124,7 +136,7 @@ pub(crate) async fn run_config(action: &str, args: &[String], mode: RenderMode) 
                     )
                 })?,
             );
-            set_config_path(path, value)?;
+            ConfigEditor::open()?.set_dotted(path, value)?;
             Ok(Output::text(format!("set {path} = {value}")))
         }
         "init" => {
@@ -147,135 +159,51 @@ pub(crate) async fn run_config(action: &str, args: &[String], mode: RenderMode) 
     }
 }
 
-/// Read a toml::Value by walking a dotted path; supports table fields and array indices (e.g. `mail.accounts.0.name`).
-fn get_dotted(root: &toml::Value, path: &str) -> Result<toml::Value> {
-    let mut cur = root.clone();
-    for seg in path.split('.') {
-        cur = if let Some(table) = cur.as_table() {
+/// Read a toml_edit::Value by walking a dotted path against a DocumentMut;
+/// supports table fields and array indices (e.g. `mail.accounts.0.name`).
+fn get_dotted_doc(doc: &toml_edit::DocumentMut, path: &str) -> Result<toml_edit::Value> {
+    let segs: Vec<&str> = path.split('.').collect();
+    let first = segs
+        .first()
+        .ok_or_else(|| AgentError::InvalidArgument(format!("empty path `{path}`")))?;
+    let mut cur: toml_edit::Item =
+        doc.as_table().get(first).cloned().ok_or_else(|| {
+            AgentError::InvalidArgument(format!("path segment '{first}' not found"))
+        })?;
+    for seg in &segs[1..] {
+        cur = if let Ok(idx) = seg.parse::<usize>() {
+            if let Some(arr) = cur.as_array() {
+                let v = arr.get(idx).cloned().ok_or_else(|| {
+                    AgentError::InvalidArgument(format!("array index {idx} out of bounds"))
+                })?;
+                toml_edit::Item::Value(v)
+            } else if let Some(aot) = cur.as_array_of_tables() {
+                let t = aot.get(idx).cloned().ok_or_else(|| {
+                    AgentError::InvalidArgument(format!("array index {idx} out of bounds"))
+                })?;
+                toml_edit::Item::Table(t)
+            } else {
+                return Err(AgentError::InvalidArgument(format!("'{seg}' not an array")));
+            }
+        } else {
+            let table = cur
+                .as_table()
+                .ok_or_else(|| AgentError::InvalidArgument(format!("'{seg}' not a table")))?;
             table.get(seg).cloned().ok_or_else(|| {
                 AgentError::InvalidArgument(format!("path segment '{seg}' not found"))
             })?
-        } else if let Some(arr) = cur.as_array() {
-            let idx: usize = seg.parse().map_err(|_| {
-                AgentError::InvalidArgument(format!("array index '{seg}' not a number"))
-            })?;
-            arr.get(idx).cloned().ok_or_else(|| {
-                AgentError::InvalidArgument(format!("array index {idx} out of bounds"))
-            })?
-        } else {
-            return Err(AgentError::InvalidArgument(format!(
-                "path segment '{seg}' not found"
-            )));
         };
     }
-    Ok(cur)
+    cur.as_value()
+        .cloned()
+        .ok_or_else(|| AgentError::InvalidArgument(format!("path `{path}` is not a scalar value")))
 }
 
-/// Set the value at a dotted path and persist it. The value type is inferred automatically (bool / int / float / string).
-/// Supports table fields and array indices (arrays are extended automatically).
-fn set_config_path(path: &str, raw_value: &str) -> Result<()> {
-    let cfg_path = Config::config_path()?;
-    // Read the existing file into a toml::Value (empty table if absent).
-    let mut root: toml::Value = if cfg_path.exists() {
-        let text = std::fs::read_to_string(&cfg_path)?;
-        if text.trim().is_empty() {
-            toml::Value::Table(toml::value::Table::new())
-        } else {
-            toml::from_str(&text)?
-        }
-    } else {
-        toml::Value::Table(toml::value::Table::new())
-    };
-
-    let new_val = parse_value(raw_value);
-    let segs: Vec<&str> = path.split('.').collect();
-    upsert_dotted(&mut root, &segs, new_val)?;
-
-    let text =
-        toml::to_string_pretty(&root).map_err(|e| AgentError::Config(format!("serialize: {e}")))?;
-    if let Some(parent) = cfg_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::write(&cfg_path, text)?;
-    Ok(())
-}
-
-/// Insert a value into a toml::Value following the path segments; intermediate tables and arrays are created automatically.
-fn upsert_dotted(root: &mut toml::Value, segs: &[&str], val: toml::Value) -> Result<()> {
-    if segs.is_empty() {
-        return Err(AgentError::InvalidArgument("empty path".into()));
-    }
-    let (last, rest) = segs.split_last().unwrap();
-    let mut cur = root;
-    for seg in rest {
-        // Array index (pure number).
-        if let Ok(idx) = seg.parse::<usize>() {
-            cur = ensure_array_index(cur, idx)?;
-        } else {
-            let table = cur
-                .as_table_mut()
-                .ok_or_else(|| AgentError::InvalidArgument(format!("'{seg}' not a table")))?;
-            // If the key is absent, create an empty table (the final segment overwrites).
-            if !table.contains_key(*seg) {
-                table.insert(
-                    (*seg).to_string(),
-                    toml::Value::Table(toml::value::Table::new()),
-                );
-            }
-            cur = table.get_mut(*seg).unwrap();
-        }
-    }
-    if let Ok(idx) = last.parse::<usize>() {
-        let arr = cur
-            .as_array_mut()
-            .ok_or_else(|| AgentError::InvalidArgument(format!("'{last}' not an array")))?;
-        ensure_array_len(arr, idx + 1);
-        arr[idx] = val;
-    } else {
-        let table = cur
-            .as_table_mut()
-            .ok_or_else(|| AgentError::InvalidArgument(format!("'{last}' not a table")))?;
-        table.insert((*last).to_string(), val);
-    }
-    Ok(())
-}
-
-fn ensure_array_index(v: &mut toml::Value, idx: usize) -> Result<&mut toml::Value> {
-    let arr = v
-        .as_array_mut()
-        .ok_or_else(|| AgentError::InvalidArgument("not an array".into()))?;
-    ensure_array_len(arr, idx + 1);
-    Ok(&mut arr[idx])
-}
-
-fn ensure_array_len(arr: &mut Vec<toml::Value>, len: usize) {
-    while arr.len() < len {
-        arr.push(toml::Value::Table(toml::value::Table::new()));
-    }
-}
-
-/// Parse a raw string into the most appropriate toml value type.
-fn parse_value(raw: &str) -> toml::Value {
-    if raw == "true" {
-        return toml::Value::Boolean(true);
-    }
-    if raw == "false" {
-        return toml::Value::Boolean(false);
-    }
-    if let Ok(n) = raw.parse::<i64>() {
-        return toml::Value::Integer(n);
-    }
-    if let Ok(f) = raw.parse::<f64>() {
-        return toml::Value::Float(f);
-    }
-    toml::Value::String(raw.to_string())
-}
-
-/// Convert a toml::Value into a terminal-friendly string.
-fn value_to_display_string(v: &toml::Value) -> String {
+/// Convert a toml_edit::Value into a terminal-friendly string.
+fn value_to_display_string(v: &toml_edit::Value) -> String {
     match v {
-        toml::Value::String(s) => s.clone(),
-        // Other types use toml's Display (consistent with the `list` mode style).
+        toml_edit::Value::String(s) => s.to_string(),
+        // Other types use toml_edit's Display (consistent with `config list`).
         other => other.to_string(),
     }
 }
@@ -290,75 +218,41 @@ fn example_config() -> String {
 mod tests {
     use super::*;
 
-    #[test]
-    fn parse_value_bool() {
-        assert!(matches!(parse_value("true"), toml::Value::Boolean(true)));
-        assert!(matches!(parse_value("false"), toml::Value::Boolean(false)));
-    }
-
-    #[test]
-    fn parse_value_int() {
-        assert!(matches!(parse_value("42"), toml::Value::Integer(42)));
-        assert!(matches!(parse_value("-1"), toml::Value::Integer(-1)));
-    }
-
-    #[test]
-    fn parse_value_float() {
-        assert!(matches!(parse_value("3.14"), toml::Value::Float(_)));
-    }
-
-    #[test]
-    fn parse_value_string() {
-        assert!(matches!(parse_value("hello"), toml::Value::String(s) if s == "hello"));
+    fn doc(text: &str) -> toml_edit::DocumentMut {
+        toml_edit::DocumentMut::from_str(text).unwrap()
     }
 
     #[test]
     fn get_dotted_simple_path() {
-        let v: toml::Value = toml::from_str(
-            r#"
+        let d = doc(r#"
 [default_account]
 mail = "work"
-"#,
-        )
-        .unwrap();
-        assert_eq!(
-            get_dotted(&v, "default_account.mail").unwrap().as_str(),
-            Some("work")
-        );
+"#);
+        let v = get_dotted_doc(&d, "default_account.mail").unwrap();
+        assert_eq!(v.as_str(), Some("work"));
     }
 
     #[test]
     fn get_dotted_array_index() {
-        let v: toml::Value = toml::from_str(
-            r#"
+        let d = doc(r#"
 [[mail.accounts]]
 name = "personal"
 [[mail.accounts]]
 name = "work"
-"#,
-        )
-        .unwrap();
-        assert_eq!(
-            get_dotted(&v, "mail.accounts.1.name").unwrap().as_str(),
-            Some("work")
-        );
+"#);
+        let v = get_dotted_doc(&d, "mail.accounts.1.name").unwrap();
+        assert_eq!(v.as_str(), Some("work"));
     }
 
     #[test]
     fn get_dotted_missing_segment_errors() {
-        let v: toml::Value = toml::from_str("").unwrap();
-        assert!(get_dotted(&v, "missing.key").is_err());
+        let d = doc("");
+        assert!(get_dotted_doc(&d, "missing.key").is_err());
     }
 
     #[test]
-    fn upsert_dotted_creates_intermediate_table() {
-        let mut v = toml::Value::Table(toml::value::Table::new());
-        upsert_dotted(
-            &mut v,
-            &["a", "b", "c"],
-            toml::Value::String("x".to_string()),
-        )
-        .unwrap();
-        assert_eq!(get_dotted(&v, "a.b.c").unwrap().as_str(), Some("x"));
+    fn get_dotted_non_scalar_errors() {
+        let d = doc("[a]\nb = 1\n");
+        assert!(get_dotted_doc(&d, "a").is_err());
     }
 }

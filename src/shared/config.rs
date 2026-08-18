@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
+use toml_edit::DocumentMut;
 
 use crate::error::{AgentError, Result};
 
@@ -512,6 +513,282 @@ pub(crate) fn validate_task_schedule(expression: &str) -> Result<()> {
     croner::Cron::from_str(trimmed)
         .map(|_| ())
         .map_err(|e| AgentError::InvalidArgument(format!("invalid task schedule: {e}")))
+}
+
+// ---- Config editor (ADR R022) ----
+//
+// `ConfigEditor` is the single writer of `config.toml`. Both `config set`
+// (`set_dotted`) and `task add`/`remove` (`insert_task`/`remove_task`) route
+// through it so that every config mutation preserves hand-written comments and
+// is persisted atomically (temp + rename). Previously `config set` re-serialised
+// the file with `toml::to_string_pretty`, dropping comments, while the task
+// module wrote its own `toml_edit` traversal (ADR F017 §"Config write lossiness").
+
+/// Comment-preserving editor for the canonical config file (ADR R022).
+///
+/// All mutations go through a `toml_edit::DocumentMut` round-trip, so
+/// hand-written comments survive, and are persisted atomically (write temp +
+/// rename), matching `daemon/state.rs` / `sync/state.rs`.
+#[derive(Debug)]
+pub struct ConfigEditor {
+    path: PathBuf,
+}
+
+impl ConfigEditor {
+    /// Open an editor bound to the canonical config path.
+    pub fn open() -> Result<Self> {
+        Ok(Self {
+            path: Config::config_path()?,
+        })
+    }
+
+    /// Open an editor bound to an explicit path (used by tests).
+    #[allow(dead_code)] // test seam mirroring TaskStore::open_path
+    pub fn open_path(path: PathBuf) -> Self {
+        Self { path }
+    }
+
+    /// Set a dotted path, coercing the raw string to bool / int / float /
+    /// string. Known paths are validated at write time; unknown paths pass
+    /// through (preserving incremental multi-step setup).
+    pub fn set_dotted(&self, path: &str, raw_value: &str) -> Result<()> {
+        validate_dotted_set(path, raw_value)?;
+        let val = parse_value(raw_value);
+        self.edit(|doc| set_dotted(doc, path, val).map(|_| true))?;
+        Ok(())
+    }
+
+    /// Insert a typed `[tasks.<name>]` entry. Errors if the task already exists.
+    pub fn insert_task(&self, name: &str, task: &TaskConfig) -> Result<()> {
+        validate_task_config(name, task)?;
+        self.edit(|doc| insert_task_into(doc, name, task))?;
+        Ok(())
+    }
+
+    /// Remove a `[tasks.<name>]` entry. Returns whether it existed.
+    pub fn remove_task(&self, name: &str) -> Result<bool> {
+        self.edit(|doc| remove_task_from(doc, name))
+    }
+
+    /// Load the document, run `f`, and persist atomically if the closure
+    /// reported a change.
+    fn edit(&self, f: impl FnOnce(&mut DocumentMut) -> Result<bool>) -> Result<bool> {
+        let text = if self.path.exists() {
+            std::fs::read_to_string(&self.path)?
+        } else {
+            String::new()
+        };
+        let mut doc = DocumentMut::from_str(&text)
+            .map_err(|e| AgentError::Config(format!("failed to parse config for edit: {e}")))?;
+        let changed = f(&mut doc)?;
+        if changed {
+            save_document(&self.path, &doc)?;
+        }
+        Ok(changed)
+    }
+}
+
+/// Parse a raw string into the most appropriate toml_edit value type.
+fn parse_value(raw: &str) -> toml_edit::Value {
+    if raw == "true" {
+        return toml_edit::Value::from(true);
+    }
+    if raw == "false" {
+        return toml_edit::Value::from(false);
+    }
+    if let Ok(n) = raw.parse::<i64>() {
+        return toml_edit::Value::from(n);
+    }
+    if let Ok(f) = raw.parse::<f64>() {
+        return toml_edit::Value::from(f);
+    }
+    toml_edit::Value::from(raw.to_string())
+}
+
+/// Validate a dotted `config set` against registered per-path rules. Unknown
+/// paths pass through unchanged.
+fn validate_dotted_set(path: &str, raw_value: &str) -> Result<()> {
+    // Registered: `tasks.<name>` — validate as a task entry (name / command /
+    // cron). Only `command` and `schedule` are meaningfully settable via a
+    // single dotted value; validate those when present.
+    if let Some(rest) = path.strip_prefix("tasks.") {
+        if let Some(task_name) = rest.split('.').next() {
+            if task_name.is_empty() {
+                return Err(AgentError::InvalidArgument(format!(
+                    "invalid task path `{path}`"
+                )));
+            }
+            // Reuse the same name + cron checks `task add` uses.
+            validate_task_name(task_name)?;
+            if let Some(field) = rest
+                .strip_prefix(task_name)
+                .and_then(|s| s.strip_prefix('.'))
+            {
+                match field {
+                    "command" => {
+                        if raw_value.trim().is_empty() {
+                            return Err(AgentError::InvalidArgument(
+                                "task command must not be empty".into(),
+                            ));
+                        }
+                    }
+                    "schedule" => validate_task_schedule(raw_value)?,
+                    _ => {}
+                }
+            }
+        }
+    } else if path == "daemon.interval_seconds" {
+        let n: i64 = raw_value.parse().map_err(|_| {
+            AgentError::InvalidArgument("daemon.interval_seconds must be an integer".to_string())
+        })?;
+        if n < 1 {
+            return Err(AgentError::InvalidArgument(
+                "daemon.interval_seconds must be >= 1".into(),
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn validate_task_name(name: &str) -> Result<()> {
+    let mut chars = name.chars();
+    let valid_name = chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !valid_name {
+        return Err(AgentError::InvalidArgument(format!(
+            "invalid task name `{name}`; expected ^[A-Za-z0-9][A-Za-z0-9_-]*$"
+        )));
+    }
+    Ok(())
+}
+
+/// Persist a document atomically (temp file + rename). Mirrors the
+/// `daemon/state.rs` / `sync/state.rs` pattern.
+fn save_document(path: &Path, doc: &DocumentMut) -> Result<()> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp = path.with_extension(format!(
+        "tmp{}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    ));
+    std::fs::write(&tmp, doc.to_string())?;
+    std::fs::rename(&tmp, path)?;
+    Ok(())
+}
+
+// ── dotted-path upsert (toml_edit) ──────────────────────────────────────
+
+/// Ensure `cur` is an array (inline array OR array-of-tables) long enough for
+/// `need` elements, auto-extending with empty tables. Mirrors the old
+/// `toml::Value` `ensure_array_len`.
+fn ensure_array_len(cur: &mut toml_edit::Item, need: usize) -> Result<()> {
+    match cur {
+        toml_edit::Item::Value(toml_edit::Value::Array(arr)) => {
+            while arr.len() < need {
+                arr.push(toml_edit::Value::InlineTable(toml_edit::InlineTable::new()));
+            }
+            Ok(())
+        }
+        toml_edit::Item::ArrayOfTables(aot) => {
+            while aot.len() < need {
+                aot.push(toml_edit::Table::new());
+            }
+            Ok(())
+        }
+        _ => Err(AgentError::InvalidArgument("not an array".into())),
+    }
+}
+
+/// Set a dotted path, matching the old `toml::Value` upsert behaviour:
+/// - non-numeric segments walk/create real `[table]` sections (or descend into
+///   an array element's inline table)
+/// - numeric segments walk arrays (`Item::Value(Array)` or `ArrayOfTables`),
+///   auto-extended with empty tables
+/// - the final numeric segment sets an array element; the final non-numeric
+///   segment sets a table key.
+fn set_dotted(doc: &mut DocumentMut, path: &str, val: toml_edit::Value) -> Result<()> {
+    let segs: Vec<&str> = path.split('.').collect();
+    if segs.is_empty() {
+        return Err(AgentError::InvalidArgument("empty path".into()));
+    }
+    let (last, rest) = segs.split_last().unwrap();
+
+    let mut cur = doc.as_item_mut(); // container Item holding the next segment
+    for seg in rest {
+        if let Ok(idx) = seg.parse::<usize>() {
+            ensure_array_len(cur, idx + 1)?;
+            cur = &mut cur[idx]; // Item::IndexMut<usize> — requires an array
+        } else if cur.as_table_mut().is_some() {
+            let table = cur.as_table_mut().unwrap(); // real [table] section
+            if !table.contains_key(seg) {
+                table.insert(seg, toml_edit::Item::Table(toml_edit::Table::new()));
+            }
+            cur = table.get_mut(seg).expect("key just ensured");
+        } else if cur.is_none() || matches!(cur.as_value(), Some(toml_edit::Value::InlineTable(_)))
+        {
+            cur = &mut cur[seg]; // array element (inline table) or unset slot
+        } else {
+            return Err(AgentError::InvalidArgument(format!(
+                "path segment `{seg}` is not a table or array"
+            )));
+        }
+    }
+
+    if let Ok(idx) = last.parse::<usize>() {
+        ensure_array_len(cur, idx + 1)?;
+        cur[idx] = toml_edit::Item::Value(val);
+    } else {
+        cur[last] = toml_edit::Item::Value(val);
+    }
+    Ok(())
+}
+
+// ── typed task insert / remove (toml_edit) ─────────────────────────────
+
+/// Insert a `[tasks.<name>]` table. Returns false if it already existed.
+fn insert_task_into(doc: &mut DocumentMut, name: &str, task: &TaskConfig) -> Result<bool> {
+    if !doc.as_table().contains_key("tasks") {
+        doc["tasks"] = toml_edit::Item::Table(toml_edit::Table::new());
+    }
+    let tasks = doc["tasks"]
+        .as_table_mut()
+        .ok_or_else(|| AgentError::Config("`tasks` must be a TOML table".into()))?;
+    if tasks.contains_key(name) {
+        return Err(AgentError::InvalidArgument(format!(
+            "task `{name}` already exists"
+        )));
+    }
+
+    let mut table = toml_edit::Table::new();
+    table.set_implicit(false);
+    table["command"] = toml_edit::value(&task.command);
+    if !task.args.is_empty() {
+        table["args"] = toml_edit::value(&task.args);
+    }
+    table["allow_extra_args"] = toml_edit::value(task.allow_extra_args);
+    table["timeout_secs"] = toml_edit::value(i64::try_from(task.timeout_secs).unwrap_or(i64::MAX));
+    table["capture_output"] = toml_edit::value(task.capture_output);
+    if let Some(schedule) = task.schedule.as_deref()
+        && !schedule.trim().is_empty()
+    {
+        table["schedule"] = toml_edit::value(schedule);
+    }
+    tasks.insert(name, toml_edit::Item::Table(table));
+    Ok(true)
+}
+
+/// Remove a `[tasks.<name>]` entry. Returns whether it existed.
+fn remove_task_from(doc: &mut DocumentMut, name: &str) -> Result<bool> {
+    let Some(tasks) = doc.get_mut("tasks").and_then(toml_edit::Item::as_table_mut) else {
+        return Ok(false);
+    };
+    Ok(tasks.remove(name).is_some())
 }
 
 // ---- Module config subsets (P2b, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
@@ -1621,5 +1898,118 @@ schedule = "*/5 * * * *"
         let invalid_cron: Config =
             toml::from_str("[tasks.x]\ncommand = \"echo\"\nschedule = \"* * * *\"\n").unwrap();
         assert!(invalid_cron.validate().is_err());
+    }
+
+    // ---- Config editor (ADR R022) ----
+
+    fn editor_path(name: &str) -> std::path::PathBuf {
+        std::env::current_dir()
+            .unwrap()
+            .join("target")
+            .join(format!("config-editor-{}-{name}.toml", std::process::id()))
+    }
+
+    fn helper_task() -> TaskConfig {
+        TaskConfig {
+            command: "echo".into(),
+            args: "hello".into(),
+            allow_extra_args: false,
+            timeout_secs: 10,
+            capture_output: true,
+            schedule: Some("*/5 * * * *".into()),
+        }
+    }
+
+    #[test]
+    fn insert_task_preserves_comments_and_remove_is_independent() {
+        let path = editor_path("comments");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "# keep me\n[daemon]\nenabled = true # inline\n").unwrap();
+        let editor = ConfigEditor::open_path(path.clone());
+        editor.insert_task("hello", &helper_task()).unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# keep me"));
+        assert!(text.contains("enabled = true # inline"));
+        assert!(text.contains("[tasks.hello]"));
+        assert!(editor.remove_task("hello").unwrap());
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# keep me"));
+        assert!(!text.contains("[tasks.hello]"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn insert_duplicate_task_is_rejected() {
+        let path = editor_path("duplicate");
+        std::fs::write(&path, "[tasks.x]\ncommand = \"echo\"\n").unwrap();
+        let editor = ConfigEditor::open_path(path.clone());
+        assert!(editor.insert_task("x", &helper_task()).is_err());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn set_dotted_preserves_comments_and_creates_tables() {
+        let path = editor_path("dotted");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            "# top comment\n[daemon]\n# keep me\ninterval_seconds = 900\n",
+        )
+        .unwrap();
+        let editor = ConfigEditor::open_path(path.clone());
+        editor.set_dotted("daemon.interval_seconds", "60").unwrap();
+        editor.set_dotted("default_account.mail", "work").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert!(text.contains("# top comment"));
+        assert!(text.contains("# keep me"));
+        assert!(text.contains("interval_seconds = 60"));
+        assert!(text.contains("default_account"));
+        // Re-parse and verify the value round-trips.
+        let cfg: Config = toml::from_str(&text).unwrap();
+        assert_eq!(cfg.daemon.interval_seconds, 60);
+        assert_eq!(cfg.default_account.mail.as_deref(), Some("work"));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn set_dotted_extends_array_by_index() {
+        let path = editor_path("array");
+        std::fs::write(&path, "[[mail.accounts]]\nname = \"personal\"\n").unwrap();
+        let editor = ConfigEditor::open_path(path.clone());
+        editor.set_dotted("mail.accounts.1.name", "work").unwrap();
+        let text = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(text.matches("[[mail.accounts]]").count(), 2, "{text}");
+        assert!(text.contains("name = \"personal\""));
+        assert!(text.contains("name = \"work\""));
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn set_dotted_validates_task_and_daemon_paths() {
+        let path = editor_path("validate");
+        std::fs::write(&path, "[tasks.x]\ncommand = \"echo\"\n").unwrap();
+        let editor = ConfigEditor::open_path(path.clone());
+        // Empty command rejected.
+        assert!(editor.set_dotted("tasks.x.command", "  ").is_err());
+        // Invalid cron rejected.
+        assert!(editor.set_dotted("tasks.x.schedule", "* * * *").is_err());
+        // Valid cron accepted.
+        assert!(editor.set_dotted("tasks.x.schedule", "*/5 * * * *").is_ok());
+        // daemon.interval_seconds >= 1.
+        assert!(editor.set_dotted("daemon.interval_seconds", "0").is_err());
+        assert!(editor.set_dotted("daemon.interval_seconds", "30").is_ok());
+        // Unknown path passes through.
+        assert!(editor.set_dotted("some.unknown.key", "value").is_ok());
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn remove_missing_task_returns_false_without_writing() {
+        let path = editor_path("remove-missing");
+        std::fs::write(&path, "# keep\n").unwrap();
+        let editor = ConfigEditor::open_path(path.clone());
+        assert!(!editor.remove_task("nope").unwrap());
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "# keep\n");
+        let _ = std::fs::remove_file(path);
     }
 }

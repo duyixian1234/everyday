@@ -11,7 +11,6 @@ use crate::output::{Output, TypedValue};
 use crate::shared::request_context::RequestContext;
 use crate::util::args::parse_simple_args;
 
-pub mod config_edit;
 pub mod runner;
 pub mod scheduler;
 pub mod store;
@@ -146,7 +145,7 @@ impl TaskModule {
                 .filter(|s| !s.trim().is_empty()),
         };
         validate_task(name, &task)?;
-        config_edit::add_task(name, &task)?;
+        crate::config::ConfigEditor::open()?.insert_task(name, &task)?;
         if crate::util::json_mode::is_json() {
             Ok(Output::Json(serde_json::json!({
                 "name": name,
@@ -247,7 +246,7 @@ impl TaskModule {
         }
         let store = self.task_store().await?;
         store.clear_schedule(name).await?;
-        if !config_edit::remove_task(name)? {
+        if !crate::config::ConfigEditor::open()?.remove_task(name)? {
             return Err(AgentError::InvalidArgument(format!(
                 "task `{name}` not found"
             )));
