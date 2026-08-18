@@ -111,7 +111,8 @@ username = "you@example.com"
 
 # ---- 用户自定义任务（ADR F017）----
 # command 直接作为可执行文件启动，不经过 shell；args 按空白拆分，因此 v1
-# 无法表达“单个参数自身含空格”。task run 可实时透传输出并把每次执行写入 task.db。
+# 无法表达“单个参数自身含空格”。task run 文本模式实时透传输出；`--json` 只捕获
+# 不回声，stdout 仅 `_result` 信封，并把每次执行写入 task.db。
 [tasks.example-version]
 command = "everyday"
 args = "--version"

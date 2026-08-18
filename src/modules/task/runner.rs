@@ -19,7 +19,8 @@ const TRUNCATION_MARKER: &[u8] = b"\n...[truncated at 65536 bytes]";
 pub enum RelayMode {
     /// stdout→stdout and stderr→stderr.
     Terminal,
-    /// Both streams→stderr, preserving stdout for a JSON result.
+    /// No live echo: child output is captured for the `_result` record only,
+    /// leaving stdout free for the single JSON envelope (R001 contract).
     Structured,
     /// Capture only; used by scheduled runs.
     Silent,
@@ -246,13 +247,31 @@ where
     if truncated {
         captured.extend_from_slice(TRUNCATION_MARKER);
     }
-    Ok(String::from_utf8_lossy(&captured).into_owned())
+    Ok(decode_output(&captured))
+}
+
+/// Decode captured child bytes into a readable String.
+///
+/// Child output is usually UTF-8, but Windows system commands emit bytes in
+/// the console codepage (e.g. `ipconfig` → GBK/CP936). Blindly running
+/// `from_utf8_lossy` over such bytes produces U+FFFD mojibake in the stored /
+/// JSON-facing `_result` fields. We prefer strict UTF-8 and fall back to GBK
+/// so a non-UTF-8 stream still decodes to meaningful text.
+fn decode_output(bytes: &[u8]) -> String {
+    match std::str::from_utf8(bytes) {
+        Ok(valid) => valid.to_owned(),
+        Err(_) => {
+            let (decoded, _, _) = encoding_rs::GBK.decode(bytes);
+            decoded.into_owned()
+        }
+    }
 }
 
 async fn relay_chunk(chunk: &[u8], kind: StreamKind, relay: RelayMode) -> Result<()> {
     match relay {
-        RelayMode::Silent => Ok(()),
-        RelayMode::Structured => write_relay(chunk, true).await,
+        // `Structured` and `Silent` never echo: stdout must carry only the
+        // `_result` envelope in `--json`, and scheduled runs have no terminal.
+        RelayMode::Silent | RelayMode::Structured => Ok(()),
         RelayMode::Terminal => match kind {
             StreamKind::Stdout => write_relay(chunk, false).await,
             StreamKind::Stderr => write_relay(chunk, true).await,
@@ -524,8 +543,43 @@ mod tests {
         assert_eq!(record.status, "success");
         let stdout = record.stdout.unwrap();
         assert!(
-            stdout.contains('\u{FFFD}'),
-            "GBK bytes must be lossy-captured, got: {stdout:?}"
+            stdout.contains("Windows IP "),
+            "child output must be captured, got: {stdout:?}"
+        );
+        clear_child_mode();
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn structured_capture_decodes_gbk_as_readable_text() {
+        // `--json` (RelayMode::Structured) must persist a readable output
+        // field. A Windows child such as `ipconfig` emits GBK bytes that are
+        // NOT valid UTF-8; the capture must decode them (as `配置`) instead of
+        // producing U+FFFD mojibake in the JSON `_result.stdout`.
+        let _guard = CHILD_LOCK.lock().await;
+        set_child_mode("raw");
+        let path = db_path("structured-gbk");
+        let _ = std::fs::remove_file(&path);
+        let store = TaskStore::open_path(&path).await.unwrap();
+        let record = run(
+            &store,
+            "raw",
+            &helper_task(10, true),
+            &[],
+            RelayMode::Structured,
+        )
+        .await
+        .unwrap();
+        assert_eq!(record.status, "success");
+        let stdout = record.stdout.unwrap();
+        assert!(
+            stdout.contains("Windows IP 配置"),
+            "GBK bytes must be decoded to readable text, got: {stdout:?}"
+        );
+        assert!(
+            !stdout.contains('\u{FFFD}'),
+            "captured output must not contain U+FFFD mojibake, got: {stdout:?}"
         );
         clear_child_mode();
         drop(store);

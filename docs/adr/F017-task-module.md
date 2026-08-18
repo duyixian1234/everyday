@@ -48,7 +48,7 @@ schedule = ""                # optional cron; empty = manual only
 - Extra args `-- extra...` append to the configured args iff `allow_extra_args=true`; otherwise the run is refused.
 - Timeout default 60 s (`--timeout 0` = none). On timeout: kill the whole process tree (Windows `taskkill /T /F`, Unix process group), record `status=timeout`, everyday exits 124.
 - `capture_output=true`: tee — stream live to the terminal AND persist stdout/stderr as separate columns (64 KiB truncation per stream with a truncation marker). `false`: stream only, not persisted.
-- `task run` output contract: default **passthrough** — the child inherits stdio, everyday's exit code mirrors the child's (124 on timeout). This is the explicit R001 exception: an executor is not a data-returning command. With `--json`: child output is teed to stderr, stdout emits a single `{"_result": {...}}` envelope. The run is recorded in both modes.
+- `task run` output contract: default **passthrough** — the child inherits stdio, everyday's exit code mirrors the child's (124 on timeout). This is the explicit R001 exception: an executor is not a data-returning command. With `--json`: child output is **captured only** (no live echo), and stdout emits a single `{"_result": {...}}` envelope — stdout is the exclusive structured-result channel. The run is recorded in both modes. Captured `stdout`/`stderr` fields decode child bytes as UTF-8 with a GBK fallback so Windows commands (`ipconfig`) don't produce U+FFFD mojibake in the JSON.
 
 ### SQLite storage
 
@@ -86,7 +86,7 @@ schedule = ""                # optional cron; empty = manual only
 - everyday gains its first subprocess-execution capability; `config.toml` becomes a code-execution surface (threat model above).
 - The daemon gains its first concurrent loop alongside the sync cycle; DB access serializes via the single-connection pool.
 - New dependencies: `toml_edit`, `croner`.
-- R001 gains one explicit exception (passthrough `task run`); `--json` keeps the contract.
+- R001 gains one explicit exception (passthrough `task run`); `--json` keeps the contract — child output is captured into `_result`, never echoed to stderr.
 - `cli_contract.rs`, `config.example.toml`, README, `docs/`, and the everyday-cli skill reference updated in the same change.
 - `[daemon]` and `[tasks]` remain independent config sections; no new `daemon` fields required (scheduler cadence fixed at 30 s in v1).
 

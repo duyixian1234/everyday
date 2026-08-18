@@ -1084,6 +1084,7 @@ dependencies = [
  "clap",
  "croner",
  "dirs",
+ "encoding_rs",
  "feed-rs",
  "futures",
  "http",

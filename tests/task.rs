@@ -105,8 +105,9 @@ fn run_json_keeps_stdout_clean_and_history_is_durable() {
         serde_json::from_slice(&out.stdout).expect("stdout must contain only JSON");
     assert_eq!(value["_result"]["status"], "success");
     assert!(
-        String::from_utf8_lossy(&out.stderr).contains("everyday"),
-        "child version output must be redirected to stderr"
+        String::from_utf8_lossy(&out.stderr).trim().is_empty(),
+        "`--json` must not echo child output to stderr; stdout carries the sole _result envelope, got stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
     );
 
     let history = Command::cargo_bin("everyday")

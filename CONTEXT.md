@@ -459,7 +459,7 @@ daemon 每个周期的完整动作序列：timeline 事件拉取 + mail 缓存�
 任务的执行时限，默认 60 秒，`0` = 无超时。超时后杀死整棵进程树并记为 `timeout`；everyday 自身退出码用 124（类 `timeout(1)` 惯例）供调用方识别。
 
 ### 捕获输出（Capture Output）
-`capture_output=true` 时，手动 `task run` 的 stdout/stderr **分列**实时透传并持久化到执行记录（每流上限 64KiB，超出截断并标记）。**定时执行无条件捕获**——无人观看终端时，输出只有落库才可事后观测。
+`capture_output=true` 时，手动 `task run` 的 stdout/stderr **分列**持久化到执行记录（每流上限 64KiB，超出截断并标记）；文本模式同时实时透传。`--json` 模式只捕获不回声，捕获记录按 UTF-8 解码、GBK 兜底，避免 Windows 命令（如 `ipconfig`）的 GBK 输出在 JSON 里乱码。**定时执行无条件捕获**——无人观看终端时，输出只有落库才可事后观测。
 
 ### 执行记录（Task Run）
 一次任务执行的不可变记录，存 `~/.config/everyday/task.db`：日期序号 id（前缀 `tk`，见 [R021](docs/adr/R021-date-sequence-id.md)）、任务名、命令与参数（JSON 数组）、实际工作目录、状态（success/failed/timeout）、退出码（超时为空）、时长、捕获输出（可空）。`task history` 查询。
