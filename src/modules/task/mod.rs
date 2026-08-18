@@ -19,11 +19,27 @@ pub mod store;
 /// Task module backed by `[tasks]` config and `task.db`.
 pub struct TaskModule {
     config: Arc<Config>,
+    /// Lazily-opened task database, shared by every action and `health_check`
+    /// so a resident process reuses one connection instead of re-opening per
+    /// call. `OnceCell` (not a mutex): the module is never accessed
+    /// concurrently — CLI runs are single-shot, MCP tools execute serially,
+    /// and the daemon's scheduler owns a separate store instance.
+    store: tokio::sync::OnceCell<store::TaskStore>,
 }
 
 impl TaskModule {
     pub fn new(config: Arc<Config>) -> Self {
-        Self { config }
+        Self {
+            config,
+            store: tokio::sync::OnceCell::new(),
+        }
+    }
+
+    /// The shared task store, opened once on first use.
+    async fn task_store(&self) -> Result<&store::TaskStore> {
+        self.store
+            .get_or_try_init(store::TaskStore::open_default)
+            .await
     }
 }
 
@@ -99,7 +115,7 @@ impl Executor for TaskModule {
     }
 
     async fn health_check(&self) -> Result<HealthStatus> {
-        match store::TaskStore::open_default().await {
+        match self.task_store().await {
             Ok(_) => Ok(HealthStatus::healthy()),
             Err(error) => Ok(HealthStatus::degraded(format!(
                 "task db: {}",
@@ -156,8 +172,8 @@ impl TaskModule {
         } else {
             runner::RelayMode::Terminal
         };
-        let store = store::TaskStore::open_default().await?;
-        let record = runner::run(&store, name, task, &args[1..], false, relay).await?;
+        let store = self.task_store().await?;
+        let record = runner::run(store, name, task, &args[1..], relay).await?;
         let code = runner::mirrored_exit_code(&record);
         let output = if structured {
             Output::Json(serde_json::json!({ "_result": record }))
@@ -229,7 +245,7 @@ impl TaskModule {
                 "task `{name}` not found"
             )));
         }
-        let store = store::TaskStore::open_default().await?;
+        let store = self.task_store().await?;
         store.clear_schedule(name).await?;
         if !config_edit::remove_task(name)? {
             return Err(AgentError::InvalidArgument(format!(
@@ -255,7 +271,7 @@ impl TaskModule {
             AgentError::InvalidArgument("usage: everyday task history <name> [--limit N]".into())
         })?;
         let limit = parse_usize_flag(&flags, "limit", 20)?;
-        let store = store::TaskStore::open_default().await?;
+        let store = self.task_store().await?;
         let history = store.history(name, limit).await?;
         if crate::util::json_mode::is_json() {
             Ok(Output::Json(serde_json::to_value(history)?))

@@ -177,7 +177,7 @@ async fn run_due_task(
 
     if due <= now.with_timezone(&Utc) {
         pass.ran += 1;
-        match runner::run(store, name, task, &[], true, RelayMode::Silent).await {
+        match runner::run(store, name, task, &[], RelayMode::Silent).await {
             Ok(record) => {
                 let ok = record.status == "success";
                 if !ok {

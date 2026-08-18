@@ -26,12 +26,16 @@ pub enum RelayMode {
 }
 
 /// Execute one configured task and persist its result.
+///
+/// Whether the child's stdout/stderr is captured into the record is derived
+/// from the relay mode and the task config: a scheduled (`Silent`) run always
+/// captures — there is no terminal to watch — while `Terminal` / `Structured`
+/// runs capture only when the task opts in via `capture_output`.
 pub async fn run(
     store: &TaskStore,
     task_name: &str,
     task: &TaskConfig,
     extra_args: &[String],
-    force_capture: bool,
     relay: RelayMode,
 ) -> Result<TaskRunRecord> {
     if !extra_args.is_empty() && !task.allow_extra_args {
@@ -43,7 +47,7 @@ pub async fn run(
     let configured_args: Vec<String> = task.args.split_whitespace().map(str::to_string).collect();
     let mut resolved_args = configured_args.clone();
     resolved_args.extend(extra_args.iter().cloned());
-    let capture_output = force_capture || task.capture_output;
+    let capture_output = relay == RelayMode::Silent || task.capture_output;
     let started_at = chrono::Utc::now();
     let started = Instant::now();
     let cwd = std::env::current_dir()?.display().to_string();
@@ -436,7 +440,6 @@ mod tests {
             "exit",
             &helper_task(10, true),
             &extra,
-            false,
             RelayMode::Silent,
         )
         .await
@@ -459,15 +462,7 @@ mod tests {
         let store = TaskStore::open_path(&path).await.unwrap();
         let mut task = helper_task(10, false);
         task.allow_extra_args = false;
-        let result = run(
-            &store,
-            "fixed",
-            &task,
-            &["extra".into()],
-            false,
-            RelayMode::Silent,
-        )
-        .await;
+        let result = run(&store, "fixed", &task, &["extra".into()], RelayMode::Silent).await;
         assert!(matches!(result, Err(AgentError::InvalidArgument(_))));
         drop(store);
         let _ = std::fs::remove_file(path);
@@ -493,7 +488,6 @@ mod tests {
             "tree",
             &helper_task(1, true),
             &[],
-            false,
             RelayMode::Silent,
         )
         .await
@@ -523,7 +517,6 @@ mod tests {
             "raw",
             &helper_task(10, true),
             &[],
-            false,
             RelayMode::Terminal,
         )
         .await
@@ -551,7 +544,6 @@ mod tests {
             "large",
             &helper_task(10, true),
             &[],
-            false,
             RelayMode::Silent,
         )
         .await
@@ -559,6 +551,72 @@ mod tests {
         let stdout = record.stdout.unwrap();
         assert!(stdout.contains("[truncated at 65536 bytes]"));
         assert!(stdout.len() < 66 * 1024);
+        clear_child_mode();
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn silent_relay_captures_even_when_config_disables() {
+        // Scheduled runs (RelayMode::Silent) must persist output regardless of
+        // the task's `capture_output` — there is no terminal to watch, so the
+        // record is the only observability. Capture is derived from the relay
+        // mode, not from an explicit force flag the caller must remember.
+        let _guard = CHILD_LOCK.lock().await;
+        set_child_mode("exit7");
+        let path = db_path("silent-capture");
+        let _ = std::fs::remove_file(&path);
+        let store = TaskStore::open_path(&path).await.unwrap();
+        let record = run(
+            &store,
+            "silent",
+            &helper_task(10, false),
+            &[],
+            RelayMode::Silent,
+        )
+        .await
+        .unwrap();
+        assert_eq!(record.status, "failed");
+        assert!(
+            record.stdout.is_some(),
+            "Silent (scheduled) runs must always capture output"
+        );
+        assert!(
+            record.stderr.is_some(),
+            "Silent (scheduled) runs must always capture stderr"
+        );
+        clear_child_mode();
+        drop(store);
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn terminal_without_capture_does_not_persist() {
+        // A manual terminal run with `capture_output=false` relays live output
+        // but must not persist it — the record carries no stdout/stderr.
+        let _guard = CHILD_LOCK.lock().await;
+        set_child_mode("exit7");
+        let path = db_path("terminal-nocap");
+        let _ = std::fs::remove_file(&path);
+        let store = TaskStore::open_path(&path).await.unwrap();
+        let record = run(
+            &store,
+            "term",
+            &helper_task(10, false),
+            &[],
+            RelayMode::Terminal,
+        )
+        .await
+        .unwrap();
+        assert_eq!(record.status, "failed");
+        assert!(
+            record.stdout.is_none(),
+            "output must not persist without capture"
+        );
+        assert!(
+            record.stderr.is_none(),
+            "stderr must not persist without capture"
+        );
         clear_child_mode();
         drop(store);
         let _ = std::fs::remove_file(path);
