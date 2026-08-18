@@ -59,7 +59,24 @@ provider = "local"
 name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/bookmarks.db"   # optional, defaults to ~/.config/everyday/bookmark-personal.db
+
+[tasks.build]
+command = "cargo"        # executable/path, never a shell string
+args = "check --all-targets"
+allow_extra_args = false
+timeout_secs = 60        # 0 = no timeout
+capture_output = true
+# schedule = "0 9 * * 1-5" # optional five-field cron, local time
+
+[daemon]
+enabled = true
+interval_seconds = 900
+# sources = ["mail", "rss"]
 ```
+
+`task add` and `task remove` use comment-preserving TOML edits. Task names must
+match `^[A-Za-z0-9][A-Za-z0-9_-]*$`; schedules are validated when config loads.
+Task configuration is a code-execution surface, so only run trusted config.
 
 ### Credential safety
 
@@ -77,4 +94,3 @@ Each module supports multiple named accounts:
 - Defined via arrays such as `[[mail.accounts]]` in the config file
 - `[default_account]` specifies the default account name per module
 - `--account NAME` overrides the default
-

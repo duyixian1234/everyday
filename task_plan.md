@@ -90,6 +90,9 @@
 ### Phase 22: Daemon 自动同步（F016）[done]
 按 ADR [F016](./docs/adr/F016-daemon-sync-scheduler.md) 落地常驻自动同步（v0.17.0）：`everyday daemon run [--once] [--sources ...]` / `daemon status`；`[daemon]` 配置节（enabled / interval_seconds / sources，全字段 `serde(default)` 向后兼容，`enabled=false` 时 run 报错退出）；同步周期 = timeline `run_sync`（复用 orchestrator）+ mail 全文件夹增量缓存（每周期 IMAP LIST 发现，含 Sent/Trash/Junk/Drafts）+ rss 缓存拉取，顺序执行、完成后 sleep 防重叠；状态文件 `daemon-state.json`（pid / running / 周期时间 / sources 结果，退出保留 final 状态）；pid 存活判定 + 防重入；优雅退出统一 `graceful_shutdown` 路径（`--once` 完成 / SIGINT / SIGTERM / Ctrl+C 汇合）；日志：常驻 stdout 静默、stderr 随 `-v`、文件日志 `daemon.log` 固定 INFO 不轮转；`cli_contract` / `config.example.toml` / README / skill reference 同步；`docs/daemon.md` 三平台服务注册示例（nssm / launchd / systemd，Q12 不写 SCM 集成代码）。质量：`--once` 集成测试验证完整退出路径 + 状态落盘；单元测试注入 signal/interval 覆盖调度循环与优雅退出；R001 回归（verbose_logging / mcp_stdio）全绿。
 
+### Phase 23: Task 用户自定义命令与 cron 调度（F017）[done]
+按 ADR [F017](./docs/adr/F017-task-module.md) 落地 `[tasks.<name>]` 配置、`task add/run/list/remove/history`、无 shell 进程树超时终止与 64 KiB 分流捕获、`task.db` 审计历史，以及与同步周期独立的 daemon cron 循环（含 `--once`）。
+
 ---
 
 ## 关键设计决策
@@ -158,6 +161,7 @@ username = "me"
 | `config get/set` 不支持数组索引 | get_dotted/set_dotted 增加 array 分支，数字 seg 访问数组元素 |
 | `http::Uri` 方法是 `host()` 非 `host_str()`（与 url::Url 混淆） | 改用 `base.host()` |
 | `base` 被 `host` 借用后 move 到 `WebDavClient::new` | `host` 转 owned `String`（`.to_string()`）解除借用 |
+| Windows 上 Linux target typecheck 缺 `x86_64-linux-gnu-gcc`，`ring` build script 无法运行 | 保留 Unix 专属代码的 cfg 单测/CI 覆盖；本机完成 Windows 全测试与 all-target clippy |
 | QQ CalDAV 不支持 current-user-principal（PROPFIND 404） | `find_current_user_principal` 失败时降级用 `base_url` 作 calendar home set |
 | libdav `bootstrap_via_service_discovery` fallback DNS SRV（QQ 无 SRV，os error 10054） | `CalDavClient::new(webdav)` 跳过 bootstrap，手动 `find_context_path` 只做 well-known 重定向 |
 | Rust 1.97 clippy `doc_lazy_continuation` / `doc_overindented_list_items` deny-by-default 阻塞 CI | `///` 注释里以 `-`/`*`/`+` 开头的列表项续行必须 2 空格缩进；rustfmt 不重排 doc，含 doc 改动必须本地跑 clippy |

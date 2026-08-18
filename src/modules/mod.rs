@@ -156,6 +156,8 @@ pub enum Positional {
     Exactly(u8),
     /// Optional single positional argument (0 or 1, e.g. `note read [<id>]`).
     OptionalSingle,
+    /// One or more positionals; values after `--` are preserved verbatim.
+    OneOrMore,
 }
 
 /// Argument declaration for a single action (subcommand).
@@ -351,6 +353,12 @@ impl ModuleRegistry {
             Box::new(crate::modules::daemon::DaemonModule::new(config.clone())),
         );
 
+        // User-defined no-shell command runner + execution history (ADR F017).
+        modules.insert(
+            "task",
+            Box::new(crate::modules::task::TaskModule::new(config.clone())),
+        );
+
         let this = Arc::new(Self { modules });
         let _ = mcp_cell.set(this.clone());
         Ok(this)
@@ -425,6 +433,7 @@ pub mod rss;
 pub mod rss_items;
 pub mod search;
 pub mod sync;
+pub mod task;
 pub mod timeline;
 pub mod todo;
 

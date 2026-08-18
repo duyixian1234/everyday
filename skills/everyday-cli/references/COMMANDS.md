@@ -30,6 +30,31 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `health` | ✅ Complete (v0.11.0) | Root-level ops command (not a module): runs every module's local-only `health_check`, one row per module. Exit 0 when all healthy, 1 when any degraded. JSON = array of `{module, healthy, detail}` |
 | `sync` | ✅ Complete (v0.13.0) | Cross-device **file-level** sync to a WebDAV directory (default Jianguoyun): 4 user DBs (bookmark/note/todo/memory) + config.toml. Snapshot + SHA-256 change detection, LWW conflicts with dual `.conflict-<UTC ts>` copies, first-sync direction auto-detection, `--push-only` / `--pull-only` / `--force`, opt-in `auto_sync` after write commands (D003). Auth via `everyday auth login --module webdav --account <name>` (application password → keyring). Design: D001–D003 |
 | `mcp` | ✅ Complete (v0.15.0) | everyday as an **MCP server** over stdio (rmcp 3.x): every `(module, action)` is projected into a tool `<module>_<action>` (schemas from `module_arg_spec`, single source of truth). `serve` blocks until stdin EOF; `tools` prints the projected list + JSON Schemas. MCP clients connect via `{"mcpServers":{"everyday":{"command":"everyday","args":["mcp","serve"]}}}`. Design: F014 |
+| `task` | ✅ Complete (F017) | Named no-shell commands: add / run / list / remove / history; process-tree timeout; 64 KiB-per-stream capture; SQLite audit history; five-field cron via daemon's independent scheduler loop |
+
+---
+
+## task — named no-shell commands ✅ (F017)
+
+Tasks live under `[tasks.<name>]`; every run is recorded in
+`~/.config/everyday/task.db`.
+
+| Command | Example |
+|---------|---------|
+| `task add` | `everyday task add build --command cargo --args "check --all-targets" --capture-output true --json` |
+| `task run` | `everyday task run build --json` |
+| `task run` with extra argv | `everyday task run deploy -- --env staging` |
+| `task list` | `everyday task list --json` |
+| `task remove` | `everyday task remove build --json` |
+| `task history` | `everyday task history build --limit 20 --json` |
+
+`command` is started directly without a shell; configured `args` is
+whitespace-split. Extra argv is rejected unless `allow_extra_args=true`.
+Timeout defaults to 60s (`0` = none), kills the process tree, and exits 124.
+Text mode streams child output and mirrors its exit code. JSON mode routes child
+output to stderr and emits `{"_result": ...}` on stdout. Scheduled runs always
+capture; daemon checks five-field local-time cron schedules every 30s, skips
+missed windows, and includes a pass in `daemon run --once`.
 
 ---
 

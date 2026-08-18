@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **未发布** — **Task 用户自定义命令与 cron 调度**（[F017](./docs/adr/F017-task-module.md)）：`task add/run/list/remove/history`、无 shell 直接派生、超时杀进程树、SQLite 历史、独立 daemon cron 循环与 `--once` 接线。
 - **v0.17.1 已发布** — **日期序号 ID**（[R021](./docs/adr/R021-date-sequence-id.md)）：`{前缀}{YYYYMMDD}-{PID}-{当日序号}`（如 `n20260814-1a2b-001`）取代纳秒 hex，全前缀 n/t/b/m/ev/mc/ri 统一、按天重置、按前缀独立计数；质量门禁暴露「纯内存计数器」跨进程撞号缺陷（CLI 每次命令新进程，同日第二次写同前缀撞 SQLite 主键；memory end-to-end 测试对真实全局 DB 复现）→ 修订为带 PID 段恢复跨进程唯一；旧格式 id 共存不迁移，引用精确字符串匹配；CLI 帮助/错误文本 `<page_id>` → `<id>`（`default_page_id` 配置字段保留）。非破坏性。
 - **v0.17.0 已发布** — **Daemon 常驻自动同步**（[F016](./docs/adr/F016-daemon-sync-scheduler.md)，GOAI 破例升 minor）：`everyday daemon run` 前台常驻为唯一允许周期性拉取的角色（timeline run_sync + mail 服务器全部文件夹缓存 + rss 拉取，顺序执行、完成后 sleep、失败照跑）；`[daemon]` 节（enabled/interval_seconds/sources，serde(default) 向后兼容）；状态文件 `daemon-state.json`（pid/running/周期时间/各源结果，原子写三时机）+ pid 存活防重入（`tasklist` CSV 引号 PID 匹配，语言无关）；`daemon status`（文本+JSON）；`--once` 输出对齐 timeline sync（顶层 ok + 每源对象）；`daemon.log` 固定 INFO 文件日志（不随 -v）；优雅退出统一 `graceful_shutdown`（--once/SIGINT/SIGTERM/Ctrl+C 汇合）；常驻 stdout 静默。L005/D003 铁律不变。
 - **v0.16.2 已发布** — **R020 修订：`[auth] env_credentials` 对 no-Config hot path 生效**：`mail list` / `cal` / `sync` 等调用点（`get_credential_with_user`，P2b 无完整 Config）此前只认 `EVERYDAY_ENV_CREDENTIALS` 环境开关，config 字段无效；现 main 启动时把 config 字段镜像到进程级开关（`sync_env_credentials_from_config`），双通道对全部模块生效（[R020](./docs/adr/R020-env-credential-fallback.md) amendment）。非破坏性。
@@ -39,6 +40,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-18 | F | [F017](./docs/adr/F017-task-module.md) | Task 模块：`[tasks.<name>]`、无 shell runner、task.db 历史、64 KiB 捕获、进程树超时终止、daemon 独立 cron 调度循环 |
 | 2026-08-13 | F | [F016](./docs/adr/F016-daemon-sync-scheduler.md) | Daemon 自动同步：`everyday daemon run` 常驻进程为唯一允许周期性自动拉取的角色（timeline run_sync + mail 全文件夹缓存 + rss 拉取，顺序执行、完成后 sleep）；`[daemon]` 节（enabled/interval_seconds/sources 向后兼容）；状态文件 daemon-state.json + pid 防重入；`--once`/`status`；优雅退出统一 graceful_shutdown 路径；常驻 stdout 静默、文件日志固定 INFO；不写 SCM 集成代码（docs/daemon.md 三平台示例） |
 | 2026-08-10 | F | [F015](./docs/adr/F015-leveled-logging-tracing.md) | 分级日志（tracing）：默认 WARN 静音，`-v`=INFO（中间件进度），`-vv`=DEBUG 预留；全局 `-v/--verbose`（Count，仿 --json）；自定义 Layer 写 stderr，text 紧凑格式 + JSON `{"_log"}` 形状不变（R001）；middleware 无条件留栈靠 LevelFilter 静音；仅渲染 everyday target；14 处 eprintln 全量迁移 |
 | 2026-08-10 | F | [F014](./docs/adr/F014-mcp-module.md) | MCP 模块：everyday 作 MCP server（stdio，rmcp 3.x）；每个 (module, action) 协议投影为 MCP tool `<module>_<action>`（schema 复用 module_arg_spec）；JSON 文本输出 + isError；mcp 模块注入 Arc<ModuleRegistry>（后置注入）；Mutex 串行；serve/tools 动作；无配置面 |

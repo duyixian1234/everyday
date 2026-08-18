@@ -39,6 +39,15 @@ impl RequestContext {
             caller: "cli",
         }
     }
+
+    /// A fresh context for an MCP tool invocation.
+    pub fn mcp(request_id: String) -> Self {
+        Self {
+            request_id,
+            deadline: None,
+            caller: "mcp",
+        }
+    }
 }
 
 /// Generate a process-unique request id: `cli-<unix_nanos>-<pid>`.

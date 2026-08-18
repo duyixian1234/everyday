@@ -6,7 +6,9 @@
 //! **Secrets are never stored in the config file** — they live in the OS
 //! keyring (see the security red line in [agents.md](../../agents.md)).
 
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
@@ -157,6 +159,10 @@ pub struct Config {
     /// Daemon auto-sync configuration (resident process, ADR F016).
     #[serde(default)]
     pub daemon: DaemonConfig,
+
+    /// User-defined executable tasks, keyed by task name (ADR F017).
+    #[serde(default)]
+    pub tasks: HashMap<String, TaskConfig>,
 }
 
 /// Per-module default account names.
@@ -440,6 +446,74 @@ fn default_interval_seconds() -> u64 {
     900
 }
 
+// ---- User-defined tasks ----
+
+/// One user-defined command runnable manually or by the daemon scheduler.
+///
+/// `command` is an executable path/name, never a shell expression. `args` is
+/// whitespace-split into argv; arguments containing spaces are intentionally
+/// unsupported in v1 (ADR F017).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TaskConfig {
+    /// Executable file or path.
+    pub command: String,
+    /// Optional whitespace-separated configured arguments.
+    #[serde(default)]
+    pub args: String,
+    /// Whether `task run <name> -- ...` may append runtime arguments.
+    #[serde(default)]
+    pub allow_extra_args: bool,
+    /// Execution timeout in seconds. Zero disables the timeout.
+    #[serde(default = "default_task_timeout_secs")]
+    pub timeout_secs: u64,
+    /// Persist captured stdout/stderr for manual runs.
+    #[serde(default)]
+    pub capture_output: bool,
+    /// Optional standard five-field cron expression in local time.
+    #[serde(default)]
+    pub schedule: Option<String>,
+}
+
+fn default_task_timeout_secs() -> u64 {
+    60
+}
+
+/// Validate one task entry independently of the full config.
+pub(crate) fn validate_task_config(name: &str, task: &TaskConfig) -> Result<()> {
+    let mut chars = name.chars();
+    let valid_name = chars.next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && chars.all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+    if !valid_name {
+        return Err(AgentError::InvalidArgument(format!(
+            "invalid task name `{name}`; expected ^[A-Za-z0-9][A-Za-z0-9_-]*$"
+        )));
+    }
+    if task.command.trim().is_empty() {
+        return Err(AgentError::InvalidArgument(format!(
+            "task `{name}` command must not be empty"
+        )));
+    }
+    if let Some(schedule) = task.schedule.as_deref()
+        && !schedule.trim().is_empty()
+    {
+        validate_task_schedule(schedule)?;
+    }
+    Ok(())
+}
+
+/// Validate standard five-field cron syntax.
+pub(crate) fn validate_task_schedule(expression: &str) -> Result<()> {
+    let trimmed = expression.trim();
+    if trimmed.split_whitespace().count() != 5 {
+        return Err(AgentError::InvalidArgument(
+            "task schedule must contain exactly 5 cron fields: min hour dom mon dow".into(),
+        ));
+    }
+    croner::Cron::from_str(trimmed)
+        .map(|_| ())
+        .map_err(|e| AgentError::InvalidArgument(format!("invalid task schedule: {e}")))
+}
+
 // ---- Module config subsets (P2b, [F012](../../docs/adr/F012-architecture-deepening-phase.md)) ----
 //
 // Each business module receives only its own config section at construction,
@@ -640,6 +714,9 @@ impl Config {
             return Err(AgentError::Config(
                 "daemon.interval_seconds must be >= 1".into(),
             ));
+        }
+        for (name, task) in &self.tasks {
+            validate_task_config(name, task).map_err(|e| AgentError::Config(e.message()))?;
         }
         Ok(())
     }
@@ -1513,5 +1590,36 @@ sources = ["mail", "rss"]
             "{}",
             err.message()
         );
+    }
+
+    // ---- Task config (ADR F017) ----
+
+    #[test]
+    fn task_defaults_and_schedule_parse() {
+        let cfg: Config = toml::from_str(
+            r#"
+[tasks.build]
+command = "cargo"
+args = "check --all-targets"
+schedule = "*/5 * * * *"
+"#,
+        )
+        .unwrap();
+        cfg.validate().unwrap();
+        let task = &cfg.tasks["build"];
+        assert_eq!(task.timeout_secs, 60);
+        assert!(!task.allow_extra_args);
+        assert!(!task.capture_output);
+    }
+
+    #[test]
+    fn invalid_task_config_is_rejected() {
+        let invalid_name: Config =
+            toml::from_str("[tasks.\"bad name\"]\ncommand = \"echo\"\n").unwrap();
+        assert!(invalid_name.validate().is_err());
+
+        let invalid_cron: Config =
+            toml::from_str("[tasks.x]\ncommand = \"echo\"\nschedule = \"* * * *\"\n").unwrap();
+        assert!(invalid_cron.validate().is_err());
     }
 }

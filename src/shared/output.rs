@@ -86,7 +86,7 @@ const I64_EXACT_MAX: f64 = 9_007_199_254_740_992.0;
 
 /// Module execution result.
 ///
-/// The four variants cover the typical output scenarios of a CLI tool:
+/// The variants cover the typical output scenarios of a CLI tool:
 /// - [`Output::Text`]: free-form text (e.g. cleaned-up Markdown)
 /// - [`Output::Json`]: structured data (AI-friendly)
 /// - [`Output::Records`]: tabular data — rendered as an aligned table in
@@ -94,6 +94,8 @@ const I64_EXACT_MAX: f64 = 9_007_199_254_740_992.0;
 /// - [`Output::TypedRecords`]: tabular data with typed cells — the same
 ///   rendering as `Records`, but JSON mode preserves numeric/boolean/null
 ///   types instead of converting everything to strings ([F012] P6)
+/// - [`Output::ExitCode`]: wraps another output while requesting a non-default
+///   process exit code (used by task subprocess execution)
 #[derive(Debug, Clone)]
 pub enum Output {
     /// Plain text. Emitted verbatim in both modes.
@@ -116,6 +118,12 @@ pub enum Output {
         headers: Vec<String>,
         rows: Vec<Vec<TypedValue>>,
     },
+
+    /// Render another output value but request a specific process exit code.
+    ///
+    /// Used by `task run` to mirror the child process exit status while still
+    /// returning a normal structured result through the module interface.
+    ExitCode { output: Box<Output>, code: i32 },
 }
 
 /// Render mode.
@@ -141,6 +149,14 @@ impl Output {
     /// Build a tabular output with typed cells (JSON mode preserves types).
     pub fn typed_records(headers: Vec<String>, rows: Vec<Vec<TypedValue>>) -> Self {
         Self::TypedRecords { headers, rows }
+    }
+
+    /// Attach an explicit process exit code to this output.
+    pub fn with_exit_code(self, code: i32) -> Self {
+        Self::ExitCode {
+            output: Box::new(self),
+            code,
+        }
     }
 
     /// Render into a string under the given mode.
@@ -172,6 +188,7 @@ impl Output {
             (Output::TypedRecords { headers, rows }, RenderMode::Json) => {
                 typed_records_to_json(&headers, &rows)
             }
+            (Output::ExitCode { output, .. }, mode) => output.render(mode),
         }
     }
 }
@@ -206,6 +223,7 @@ pub fn mode_from_json_flag(json: bool) -> RenderMode {
 /// Reduce a `Result<Output>` into `(exit_code, output_string)`.
 pub fn finalize(result: Result<Output>, mode: RenderMode) -> (i32, String) {
     match result {
+        Ok(Output::ExitCode { output, code }) => (code, output.render(mode)),
         Ok(out) => (0, out.render(mode)),
         Err(err) => (1, render_error(&err, mode)),
     }
@@ -411,5 +429,18 @@ mod tests {
     fn finalize_err_returns_nonzero() {
         let (code, _) = finalize(Err(AgentError::Other("x".into())), RenderMode::Text);
         assert_ne!(code, 0);
+    }
+
+    #[test]
+    fn explicit_exit_code_preserves_rendered_output() {
+        let (code, text) = finalize(
+            Ok(Output::Json(json!({"_result": {"status": "failed"}})).with_exit_code(7)),
+            RenderMode::Json,
+        );
+        assert_eq!(code, 7);
+        assert_eq!(
+            serde_json::from_str::<Value>(&text).unwrap()["_result"]["status"],
+            "failed"
+        );
     }
 }

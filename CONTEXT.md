@@ -8,7 +8,21 @@
 ## 核心概念
 
 ### 日期序号 ID（date-seq id）
-本地实体主键标识，形如 `{模块前缀}{YYYYMMDD}-{PID}-{当日序号}`（如 `n20260814-1a2b-001` = "2026-08-14 当天进程 1a2b 创建的第 1 条笔记"）。模块前缀：`n`（note）/ `t`（todo）/ `b`（bookmark）/ `m`（memory）/ `ev`（timeline 事件）/ `mc`（email cache）/ `ri`（rss）。`YYYYMMDD` 为创建时刻的**本地时区自然日**；序号为当日该前缀独立从 `001` 起算（超出 999 自然扩展位数）；**PID 段（hex）保证跨进程唯一**——CLI 每次命令都是新进程，无 PID 段时同一天第二次写同前缀必然撞号（SQLite 主键兜底会直接报错）。新格式（v0.17.1 起）与旧格式（`{前缀}{纳秒hex}-{PID}-{计数器}`）共存，均为合法 id；引用一律按精确字符串匹配。见 [R021](docs/adr/R021-date-sequence-id.md)。
+本地实体主键标识，形如 `{模块前缀}{YYYYMMDD}-{PID}-{当日序号}`（如 `n20260814-1a2b-001` = "2026-08-14 当天进程 1a2b 创建的第 1 条笔记"）。模块前缀：`n`（note）/ `t`（todo）/ `b`（bookmark）/ `m`（memory）/ `ev`（timeline 事件）/ `mc`（email cache）/ `ri`（rss）/ `tk`（task run）。`YYYYMMDD` 为创建时刻的**本地时区自然日**；序号为当日该前缀独立从 `001` 起算（超出 999 自然扩展位数）；**PID 段（hex）保证跨进程唯一**——CLI 每次命令都是新进程，无 PID 段时同一天第二次写同前缀必然撞号（SQLite 主键兜底会直接报错）。新格式（v0.17.1 起）与旧格式（`{前缀}{纳秒hex}-{PID}-{计数器}`）共存，均为合法 id；引用一律按精确字符串匹配。见 [R021](docs/adr/R021-date-sequence-id.md)。
+
+### Task（用户自定义任务）
+`[tasks.<name>]` 中的一条命名命令定义。`command` 是直接启动的可执行文件或路径，
+`args` 是按空白拆分的固定 argv；执行不经过 shell、无变量插值。任务可手动运行，也可
+通过 5 段 cron `schedule` 由 daemon 的独立调度循环触发。
+
+### Task Run（任务执行记录）
+一次 task 执行的不可变审计记录，主键前缀 `tk`，存于 `task.db`。记录命令、配置参数、
+额外参数、最终 argv、cwd、开始时间、耗时、退出码及 `success` / `failed` / `timeout`
+状态；捕获开启时另存 stdout/stderr（每流最多 64 KiB）。
+
+### Task Schedule State（任务调度状态）
+每个有 cron 的 task 的下一次到期时间。daemon 每轮对到期任务最多执行一次，然后直接
+滚动到 `cron.after(now)`；停机期间错过的窗口不形成补跑队列。
 
 ### Timeline
 统一的事件存储层。将 Mail / Calendar / RSS / Todo / Note / Bookmark 等模块产生的事件标准化为**只追加日志（append-only log）**，提供统一查询。Timeline 回答的是"过去发生了什么"，而非"当前状态是什么"。当前状态由日志顺序重放派生。

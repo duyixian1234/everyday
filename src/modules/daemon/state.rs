@@ -159,7 +159,7 @@ pub fn state_path() -> Result<PathBuf> {
 }
 
 /// Where the daemon file log lives: `<config_dir>/everyday/daemon.log`
-/// (ADR [F016](../../docs/adr/F016-daemon-sync-scheduler.md) t4 — fixed
+/// (ADR [F016](../../../docs/adr/F016-daemon-sync-scheduler.md) t4 — fixed
 /// INFO, append, no rotation).
 pub fn daemon_log_path() -> Result<PathBuf> {
     Ok(config_everyday_dir()?.join("daemon.log"))

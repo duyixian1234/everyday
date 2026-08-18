@@ -82,6 +82,10 @@ rmcp = { version = "3.1.2", features = ["server", "transport-io"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
+# Task module (F017): comment-preserving config edits + five-field cron parsing.
+toml_edit = "0.22"
+croner = "3.0.1"
+
 [dev-dependencies]
 tokio-test = "0.4"
 

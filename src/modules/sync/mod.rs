@@ -196,6 +196,7 @@ pub fn is_write_action(module: &str, action: &str) -> bool {
             | ("note", "create" | "append" | "update")
             | ("todo", "add" | "start" | "complete" | "delete")
             | ("cal", "add" | "delete")
+            | ("task", "add" | "remove")
             | ("config", "set")
     )
 }

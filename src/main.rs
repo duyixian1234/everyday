@@ -70,7 +70,9 @@ async fn main() {
     }
 
     let (code, output) = run(matches, mode).await;
-    println!("{output}");
+    if !output.is_empty() {
+        println!("{output}");
+    }
     std::process::exit(code);
 }
 

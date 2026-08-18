@@ -1,6 +1,6 @@
 ---
 name: everyday-cli
-description: Operates the everyday local Rust CLI for agent automation — IMAP/SMTP email (list, read, search, send), CalDAV calendar (calendars, list, add, delete events), RSS feeds (follow, list, digest), bookmarks (local SQLite, add, list, tag-filter), notes and todo tasks (search, list, create, read, append, update, delete), unified event timeline (today, yesterday, week, month, sync), cross-module unified search (everyday search query "<q>" --module a,b,c --since 7d --limit N), cross-device WebDAV file sync (everyday sync, --push-only/--pull-only/--force, auth login --module webdav), credential lifecycle via the consolidated `auth` module (login / logout / verify / list), structured agent memory notebook (memory add / get / relation / list / delete / graph / history), config management, and an MCP server over stdio (everyday mcp serve — every module/action becomes an MCP tool `<module>_<action>`; everyday mcp tools lists the projected tools). Use when the user asks to check/read/send email, manage calendar events, read RSS digests, save bookmarks, capture notes/todos, persist structured facts to the agent's own memory, query an aggregated timeline of recent activity, search across all integrations in one shot, sync data files across devices via WebDAV, manage credentials, run everyday commands, or connect an MCP-capable agent to everyday. Always pass --json for machine-readable output.
+description: Operates the everyday local Rust CLI for agent automation — email, calendar, RSS, local notes/todos/bookmarks, timeline, search, WebDAV sync, credentials, structured memory, named no-shell task execution with SQLite history and cron scheduling, config management, daemon sync, and MCP stdio tools. Use for everyday commands and integrations. Always pass --json for machine-readable output.
 license: MIT
 ---
 
@@ -24,7 +24,7 @@ Verify with `everyday --version`. Full per-platform steps: repo root [README.md]
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `config` · `sync` (+ root-level `health`)
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `task` · `config` · `sync` · `daemon` · `mcp` (+ root-level `health`)
 
 ## Rules (follow exactly)
 
@@ -36,6 +36,7 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline
 6. **`timeline today --json` is the aggregated activity snapshot.** Prefer it over per-module polling unless the user explicitly asks for a specific module.
 7. **`memory` is the agent's own structured notebook.** Use `everyday memory add` to persist stable facts about the user, projects, or the world; use `memory get <SUBJECT>` to recall them. Subject naming is a convention, not enforced — see [references/MEMORY.md](references/MEMORY.md). Memory facts automatically participate in `everyday search`.
 8. **`sync` is cross-device file-level sync** (`everyday sync`). It syncs the 4 user DBs (bookmark/note/todo/memory) + `config.toml` to the WebDAV directory (default Jianguoyun). Bidirectional by default; `--push-only` / `--pull-only` / `--force` override. Conflicts are Last-Write-Wins with dual `.conflict-<UTC ts>` copies (local + remote). Configure `[[webdav.accounts]]` in `config.toml` (name/url/username) and store the **application password** (not the login password): `everyday auth login --module webdav --account <name>`. Sync state lives in `sync-state.json`; never sync caches (mail_cache/rss-items/timeline).
+9. **`task run` executes configured code.** Treat `[tasks]` as a trusted code-execution surface. Commands run directly without a shell; use `--json` so child output is redirected to stderr and stdout remains a single `_result` envelope. Review [references/COMMANDS.md](references/COMMANDS.md) before adding schedules.
 
 ## First-time setup (only if config is missing)
 

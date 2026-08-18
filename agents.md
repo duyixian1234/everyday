@@ -42,6 +42,8 @@ shell 做不到的事"。
 | `auth` | 凭据 / login 收拢到顶层 auth 模块 | [R013](./docs/adr/R013-auth-module-consolidation.md) – [R015](./docs/adr/R015-auth-credential-io.md) |
 | `sync` | WebDAV 跨设备文件级同步 | [D001](./docs/adr/D001-webdav-file-sync.md) – [D003](./docs/adr/D003-auto-sync-cli-boundary.md) |
 | `mcp` | MCP server（stdio）：把各模块 (module, action) 投影为 MCP tools | [F014](./docs/adr/F014-mcp-module.md) |
+| `daemon` | 常驻同步 + 独立 cron 任务调度循环 | [F016](./docs/adr/F016-daemon-sync-scheduler.md)、[F017](./docs/adr/F017-task-module.md) |
+| `task` | 用户自定义无 shell 命令执行、历史与 cron 调度 | [F017](./docs/adr/F017-task-module.md) |
 
 ## 文档约定
 

@@ -373,6 +373,35 @@ equivalent `mcpServers` block in Claude Code / CodeBuddy):
   up on the **next session start**, not mid-session.
 - stdout is reserved for JSON-RPC; all logging goes to stderr.
 
+### task — named command execution and cron scheduling
+
+Runs commands configured under `[tasks.<name>]` without a shell and stores every
+execution in `~/.config/everyday/task.db`. Design: [F017](adr/F017-task-module.md).
+
+| Command | Description | Usage |
+|------|------|------|
+| `add` | Add a task while preserving config comments; duplicate names fail | `everyday task add <name> --command <cmd> [--args <s>] [--allow-extra-args true\|false] [--timeout N] [--capture-output true\|false] [--schedule "cron"]` |
+| `run` | Run now; optional extra argv requires `allow_extra_args=true` | `everyday task run <name> [-- extra...]` |
+| `list` | List configured tasks | `everyday task list [--json]` |
+| `remove` | Remove config and cron state, retaining run history | `everyday task remove <name>` |
+| `history` | Show newest execution records | `everyday task history <name> [--limit N] [--json]` |
+
+**Execution contract**
+
+- `command` is spawned directly; `args` is whitespace-split. No shell,
+  interpolation, pipes, or redirection. A single argument containing spaces
+  cannot be represented in v1.
+- Timeout defaults to 60 seconds; `timeout_secs = 0` disables it. Timeout kills
+  the process tree, records `timeout`, and exits 124.
+- Manual text runs stream child stdout/stderr normally and mirror the child exit
+  code. With `--json`, child output goes to stderr and stdout contains one
+  `{"_result": {...}}` envelope.
+- `capture_output=true` persists stdout/stderr separately, capped at 64 KiB per
+  stream with a truncation marker. Scheduled runs always capture.
+- `schedule` is standard five-field cron in local time. The daemon checks it in
+  an independent 30-second loop; missed downtime windows are skipped. `daemon
+  run --once` also performs one due-task pass.
+
 ### daemon — resident auto-sync (NEW in v0.17.0)
 
 Runs a background process that **pulls** mail / rss / timeline events on a
@@ -397,6 +426,8 @@ operations guide: [daemon.md](daemon.md).
 - Each cycle (sequential, best-effort): timeline event pull + mail envelope
   cache sync (**all server folders**) + rss cache pull. A failing action is
   recorded, never fatal.
+- Scheduled tasks run in a separate 30-second loop, independent of the sync
+  interval. Their output is captured in `task.db`.
 - `daemon run` is a **foreground resident process** — install it with the OS
   service manager (`nssm` / `launchd` / `systemd`); see
   [daemon.md](daemon.md). State and logs live in
@@ -456,4 +487,3 @@ silent.
 - The auto-sync success notice (`warning: auto_sync_pushed: N file(s) pushed`) is info-level and appears with `-v`; failures (`auto_sync_failed`) are always visible.
 - In JSON mode stderr lines are structured: `{"_log": ...}` (middleware progress), `{"_warning": ...}` (partial failures: init failure / auto_sync / search provider / timeline sync), `{"_error": ...}` (fatal).
 - The stdout contract is unchanged: the command result (including `--json`) is the only thing on stdout.
-

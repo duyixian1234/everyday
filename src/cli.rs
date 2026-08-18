@@ -55,6 +55,13 @@ fn add_positional(mut cmd: Command, positional: Positional) -> Command {
                     .num_args(n as usize),
             );
         }
+        Positional::OneOrMore => {
+            cmd = cmd.arg(
+                Arg::new("args")
+                    .help("positional arguments; use `--` before extra values")
+                    .num_args(1..),
+            );
+        }
     }
     cmd
 }
@@ -116,7 +123,7 @@ pub(crate) fn build_root_command(registry: &ModuleRegistry) -> Command {
         .about("The Rust-powered hands for your AI Agent")
         .long_about(
             "Unified CLI: everyday <module> <action> [options].\n\
-                 Modules: mail, cal, rss, note, todo, bookmark, timeline, memory, config, auth.",
+                 Modules: mail, cal, rss, note, todo, bookmark, timeline, memory, search, auth, sync, config, task, daemon, mcp.",
         )
         .arg(
             Arg::new("json")
@@ -210,7 +217,9 @@ pub(crate) fn matches_to_args(m: &ArgMatches, spec: &ActionArgSpec) -> Vec<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::Config;
     use crate::modules::{ArgKind, Positional};
+    use std::sync::Arc;
 
     fn single_action_spec() -> ModuleArgSpec {
         static A: &[ArgSpec] = &[ArgSpec {
@@ -298,6 +307,45 @@ mod tests {
             cmd.clone()
                 .try_get_matches_from(["bookmark", "list"])
                 .is_ok()
+        );
+    }
+
+    #[test]
+    fn task_run_keeps_global_json_and_trailing_extra_args_distinct() {
+        let registry = ModuleRegistry::build(Arc::new(Config::default())).unwrap();
+        let cmd = build_root_command(&registry);
+        let matches = cmd
+            .clone()
+            .try_get_matches_from(["everyday", "task", "run", "x", "--json"])
+            .unwrap();
+        assert!(matches.get_flag("json"));
+        let run = matches
+            .subcommand_matches("task")
+            .unwrap()
+            .subcommand_matches("run")
+            .unwrap();
+        assert_eq!(
+            run.get_many::<String>("args")
+                .unwrap()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["x"]
+        );
+
+        let matches = cmd
+            .try_get_matches_from(["everyday", "task", "run", "x", "--", "--env", "prod"])
+            .unwrap();
+        let run = matches
+            .subcommand_matches("task")
+            .unwrap()
+            .subcommand_matches("run")
+            .unwrap();
+        assert_eq!(
+            run.get_many::<String>("args")
+                .unwrap()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["x", "--env", "prod"]
         );
     }
 }

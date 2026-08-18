@@ -61,7 +61,10 @@ fn action_schema(action: &ActionArgSpec) -> serde_json::Value {
         properties.insert(a.name.to_string(), prop);
     }
 
-    let positional_required = matches!(action.positional, Positional::Exactly(_));
+    let positional_required = matches!(
+        action.positional,
+        Positional::Exactly(_) | Positional::OneOrMore
+    );
     if !matches!(action.positional, Positional::None) {
         properties.insert(
             "args".to_string(),
@@ -98,6 +101,7 @@ fn is_write(module: &str, action: &str) -> bool {
                 | ("rss", "follow" | "unfollow")
                 | ("auth", "login" | "logout")
                 | ("timeline", "sync")
+                | ("task", "run")
         )
 }
 
@@ -220,7 +224,7 @@ impl ToolRegistry {
             .copied()
             .ok_or_else(|| AgentError::InvalidArgument(format!("unknown tool: {name}")))?;
         let args = args_from_json(spec, arguments)?;
-        let ctx = RequestContext::cli(crate::shared::request_context::generate_request_id());
+        let ctx = RequestContext::mcp(crate::shared::request_context::generate_request_id());
 
         let module_obj = self.registry.get(module)?;
         let _guard = self.lock.lock().await;
@@ -395,6 +399,8 @@ mod tests {
             t.description
         );
         let t = tool_named(&tools, "memory_add");
+        assert!(t.description.contains("[WRITE]"));
+        let t = tool_named(&tools, "task_run");
         assert!(t.description.contains("[WRITE]"));
         let t = tool_named(&tools, "config_path");
         assert!(!t.description.contains("[WRITE]"));

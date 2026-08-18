@@ -123,6 +123,7 @@ everyday mail list --unread --limit 10 --json
 | `sync` | WebDAV 跨设备同步 | `everyday sync` |
 | `mcp` | 将 everyday 暴露为 MCP server | `everyday mcp` |
 | `daemon` | 常驻自动同步 | `everyday daemon` |
+| `task` | 命名命令执行、历史与 cron 调度 | `everyday task` |
 
 > 完整模块命令表、选项与输出模式见 [docs/commands_zh.md](docs/commands_zh.md)。
 

@@ -146,6 +146,7 @@ everyday mail list --unread --limit 10 --json
 | `sync` | WebDAV file sync | `everyday sync` |
 | `mcp` | expose everyday as an MCP server | `everyday mcp` |
 | `daemon` | resident auto-sync | `everyday daemon` |
+| `task` | named no-shell commands, history and cron schedules | `everyday task` |
 
 > Complete per-module tables, options and output modes:
 > [docs/commands.md](docs/commands.md).

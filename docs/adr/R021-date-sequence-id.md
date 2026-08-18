@@ -13,7 +13,7 @@ The format is machine-perfect but human-hostile: an id cannot be read aloud, ret
 
 Replace the format with a **date-sequence id**: `{prefix}{YYYYMMDD}-{pid:x}-{seq}`, where:
 
-- `{prefix}` — the unchanged module discriminator (`n`/`t`/`b`/`m`/`ev`/`mc`/`ri`)
+- `{prefix}` — the module discriminator (`n`/`t`/`b`/`m`/`ev`/`mc`/`ri`, plus `tk` for task executions introduced by [F017](F017-task-module.md))
 - `{YYYYMMDD}` — the **local-timezone calendar date** of creation (`chrono::Local`), e.g. `20260814`
 - `{pid:x}` — the creating process's PID in hex (e.g. `1a2b`), the **cross-process uniqueness component** (see Revision below)
 - `{seq}` — zero-padded 3-digit ordinal (≥ 001; extends to 4+ digits if a prefix ever exceeds 999 ids in one day per process)

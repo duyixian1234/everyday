@@ -73,7 +73,7 @@ pub trait Executor: Send + Sync {
 }
 ```
 
-Adding a module only takes: create a file + implement the trait + register one line. See [`agents.md`](agents.md).
+Adding a module only takes: create a file + implement the trait + register one line. See [`agents.md`](../agents.md).
 
 ## Implementation Status
 
@@ -92,4 +92,3 @@ Adding a module only takes: create a file + implement the trait + register one l
 | `memory` | ✅ Fully available (NEW in v0.10.0) | append-only `(subject, predicate, object)` triple notebook with confidence/source + graph + Searchable |
 | `health` | ✅ Fully available (NEW in v0.11.0) | root-level ops command: every module's local-only health check, exit 0/1 |
 | `sync` | ✅ Fully available (NEW in v0.13.0) | bidirectional WebDAV file sync: 4 user DBs + config.toml, LWW conflicts with dual copies, `--push-only` / `--pull-only` / `--force`, opt-in auto_sync |
-

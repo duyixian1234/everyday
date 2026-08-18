@@ -115,6 +115,18 @@ impl DaemonModule {
         state::write(&initial);
 
         if once {
+            // F017: `--once` includes one cron scheduler pass before the sync
+            // summary. Scheduled task output is captured into task.db and
+            // never written to daemon stdout.
+            let task_store = crate::modules::task::store::TaskStore::open_default().await?;
+            let task_pass = crate::modules::task::scheduler::run_due_tasks(
+                &self.config,
+                &task_store,
+                chrono::Local::now(),
+            )
+            .await?;
+            log_task_pass(task_pass);
+
             // One cycle, then render the summary to stdout (the command
             // result — R001). Full shape alignment with `timeline sync`
             // (t4). Per-cycle + exit state in one write for --once (t3);
@@ -163,6 +175,21 @@ impl DaemonModule {
         let state_guard = Arc::new(Mutex::new(initial));
         let guard_for_loop = state_guard.clone();
         let config = self.config.clone();
+        let scheduler_shutdown = shutdown.clone();
+        let scheduler_config = self.config.clone();
+        let scheduler_handle = tokio::spawn(async move {
+            let result =
+                crate::modules::task::scheduler::run_loop(scheduler_config, scheduler_shutdown)
+                    .await;
+            if let Err(error) = &result {
+                tracing::error!(
+                    target: "everyday",
+                    _error = "task_scheduler_failed",
+                    message = %error.message(),
+                );
+            }
+            result
+        });
         run_cycles(
             move |_| {
                 let cfg = config.clone();
@@ -190,10 +217,20 @@ impl DaemonModule {
             CycleLoopOptions {
                 once: false,
                 interval,
-                shutdown,
+                shutdown: shutdown.clone(),
             },
         )
         .await;
+        shutdown.cancel();
+        match scheduler_handle.await {
+            Ok(Ok(())) => {}
+            Ok(Err(_)) => {}
+            Err(error) => tracing::error!(
+                target: "everyday",
+                _error = "task_scheduler_join_failed",
+                message = %error,
+            ),
+        }
 
         // Reached only when a stop signal cancelled the loop — graceful
         // shutdown (t5): write the final state, then exit 0.
@@ -257,6 +294,16 @@ fn log_cycle_completed(result: &CycleResult) {
         mail_folders = result.mail.as_ref().map(|a| a.folders).unwrap_or(0),
         mail_envelopes = result.mail.as_ref().map(|a| a.envelopes).unwrap_or(0),
         rss_items = result.rss.as_ref().map(|a| a.items).unwrap_or(0),
+    );
+}
+
+fn log_task_pass(pass: crate::modules::task::scheduler::SchedulerPass) {
+    tracing::info!(
+        target: "everyday",
+        _log = "task_scheduler_pass",
+        scheduled = pass.scheduled,
+        ran = pass.ran,
+        failed = pass.failed,
     );
 }
 

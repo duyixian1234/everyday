@@ -58,7 +58,24 @@ provider = "local"
 name = "personal"
 provider = "local"
 # db_path = "/absolute/path/to/bookmarks.db"   # 可选，缺省 ~/.config/everyday/bookmark-personal.db
+
+[tasks.build]
+command = "cargo"        # 可执行文件/路径，不是 shell 字符串
+args = "check --all-targets"
+allow_extra_args = false
+timeout_secs = 60        # 0 = 无超时
+capture_output = true
+# schedule = "0 9 * * 1-5" # 可选 5 段 cron，本地时区
+
+[daemon]
+enabled = true
+interval_seconds = 900
+# sources = ["mail", "rss"]
 ```
+
+`task add` / `task remove` 用保留注释的 TOML 编辑。任务名必须匹配
+`^[A-Za-z0-9][A-Za-z0-9_-]*$`；配置加载时会校验 cron。`[tasks]` 是代码执行面，
+只运行可信配置。
 
 ### 凭证安全
 
@@ -76,4 +93,3 @@ provider = "local"
 - 配置文件中通过 `[[mail.accounts]]` 等数组定义
 - `[default_account]` 指定各模块的默认账户名
 - `--account NAME` 覆盖默认账户
-

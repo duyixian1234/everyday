@@ -51,7 +51,10 @@ fn config_path_in(root: &Path) -> PathBuf {
 
 /// Unique temp root for one test (pid + test name avoids parallel collisions).
 fn temp_root(test: &str) -> PathBuf {
-    std::env::temp_dir().join(format!("everyday-t1-{}-{test}", std::process::id()))
+    std::env::current_dir()
+        .unwrap()
+        .join("target")
+        .join(format!("everyday-t1-{}-{test}", std::process::id()))
 }
 
 fn write_config(root: &Path, content: &str) {
@@ -161,6 +164,45 @@ fn daemon_run_once_json_shape() {
     let v: serde_json::Value = serde_json::from_str(stdout.trim()).expect("stdout must be JSON");
     for key in ["timeline", "mail", "rss"] {
         assert!(v.get(key).is_some(), "JSON missing `{key}`: {stdout}");
+    }
+
+    #[test]
+    fn daemon_run_once_executes_due_scheduled_task() {
+        let root = temp_root("once-task");
+        write_config(
+            &root,
+            r#"
+    [tasks.missing]
+    command = "everyday-command-that-does-not-exist"
+    schedule = "* * * * *"
+    "#,
+        );
+        let out = Command::cargo_bin("everyday")
+            .unwrap()
+            .env(config_env_var(), &root)
+            .args(["daemon", "run", "--once"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            out.status.code(),
+            Some(0),
+            "{}",
+            String::from_utf8_lossy(&out.stdout)
+        );
+
+        let history = Command::cargo_bin("everyday")
+            .unwrap()
+            .env(config_env_var(), &root)
+            .args(["task", "history", "missing", "--json"])
+            .output()
+            .unwrap();
+        assert_eq!(history.status.code(), Some(0));
+        let rows: serde_json::Value =
+            serde_json::from_slice(&history.stdout).expect("task history must be JSON");
+        assert_eq!(rows.as_array().map(Vec::len), Some(1));
+        assert_eq!(rows[0]["status"], "failed");
+        assert_eq!(rows[0]["capture_output"], true);
+        let _ = std::fs::remove_dir_all(&root);
     }
     let _ = std::fs::remove_dir_all(&root);
 }

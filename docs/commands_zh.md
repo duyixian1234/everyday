@@ -364,6 +364,32 @@ everyday auth login --module webdav --account personal
 - server 是**长驻进程**：配置 / 数据库变更在**下次会话启动**时生效，会话中途不感知。
 - stdout 专供 JSON-RPC；日志全部走 stderr。
 
+### task — 命名命令执行与 cron 调度
+
+执行 `[tasks.<name>]` 中配置的命令，不经过 shell；每次执行都记录到
+`~/.config/everyday/task.db`。设计：[F017](adr/F017-task-module.md)。
+
+| 命令 | 说明 | 用法 |
+|------|------|------|
+| `add` | 保留配置注释地新增任务；重名报错 | `everyday task add <name> --command <cmd> [--args <s>] [--allow-extra-args true\|false] [--timeout N] [--capture-output true\|false] [--schedule "cron"]` |
+| `run` | 立即执行；仅 `allow_extra_args=true` 可追加 argv | `everyday task run <name> [-- extra...]` |
+| `list` | 列出任务配置 | `everyday task list [--json]` |
+| `remove` | 删除配置与调度状态，保留执行历史 | `everyday task remove <name>` |
+| `history` | 查询最近执行记录 | `everyday task history <name> [--limit N] [--json]` |
+
+**执行契约**
+
+- `command` 直接派生；`args` 按空白拆分。无 shell、插值、管道或重定向；v1
+  无法表达“单个参数自身包含空格”。
+- 默认超时 60 秒，`timeout_secs = 0` 表示无限制。超时杀整棵进程树，记录
+  `timeout`，everyday 退出 124。
+- 手动文本模式实时透传 stdout/stderr 并镜像子进程退出码；`--json` 时子进程
+  输出改走 stderr，stdout 仅一个 `{"_result": {...}}` 信封。
+- `capture_output=true` 分列保存 stdout/stderr，每流最多 64 KiB并带截断标记；
+  定时执行无条件捕获。
+- `schedule` 为本地时区标准 5 段 cron。daemon 用独立 30 秒循环检查，停机错过
+  的窗口不补跑；`daemon run --once` 也执行一轮到期任务。
+
 ### daemon — 常驻自动同步（v0.17.0 新增）
 
 后台常驻进程，按计划**拉取** mail / rss / timeline 事件，使 `timeline`、`search`、
@@ -385,6 +411,7 @@ everyday auth login --module webdav --account personal
   `sources`（空 = 全部）。`enabled = false` 时 `run` 拒绝启动（exit 1）。
 - 每个周期（顺序执行，best-effort）：timeline 事件拉取 + mail 信封缓存同步
   （**服务器全部文件夹**）+ rss 缓存拉取。失败动作记录、不致命。
+- 定时任务由独立 30 秒循环执行，不依赖同步间隔；输出捕获到 `task.db`。
 - `daemon run` 是**前台常驻进程**——用 OS 服务管理器安装（`nssm` / `launchd` /
   `systemd`），见 [daemon.md](daemon.md)。状态与日志位于
   `~/.config/everyday/daemon-state.json` 与 `daemon.log`。
@@ -440,4 +467,3 @@ stderr 承载全部日志；stdout 只输出命令结果（[R001](adr/R001-threa
 - auto_sync 成功通知（`warning: auto_sync_pushed: N file(s) pushed`）是 info 级，随 `-v` 出现；失败通知（`auto_sync_failed`）默认可见。
 - JSON 模式下 stderr 为结构化行：`{"_log": ...}`（中间件进度）、`{"_warning": ...}`（部分失败：init 失败 / auto_sync / search provider / timeline sync）、`{"_error": ...}`（致命错误）。
 - stdout 契约不变：命令结果（含 `--json`）是 stdout 的唯一内容。
-
