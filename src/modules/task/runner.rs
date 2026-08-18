@@ -126,7 +126,10 @@ pub async fn run(
                 capture_output,
                 cwd,
                 status: "failed".into(),
-                exit_code: Some(1),
+                // The child never started, so there is no exit code to
+                // mirror (NULL per ADR F017; `mirrored_exit_code` treats
+                // it as 1 so everyday still exits non-zero).
+                exit_code: None,
                 timed_out: false,
                 stdout: capture_output.then(String::new),
                 stderr: capture_output.then_some(message),
@@ -178,9 +181,18 @@ async fn kill_process_tree(child: &mut Child) {
     }
     const SIGKILL: i32 = 9;
     if let Some(pid) = child.id() {
-        // The child is the leader of a dedicated process group.
+        // The child is the leader of a dedicated process group. A failure to
+        // kill the group is surfaced as a warning; the direct child is still
+        // reaped by `start_kill` + `wait` below.
         unsafe {
-            kill(-(pid as i32), SIGKILL);
+            let result = kill(-(pid as i32), SIGKILL);
+            if result != 0 {
+                let error = std::io::Error::last_os_error();
+                tracing::warn!(
+                    target: "everyday",
+                    "failed to kill process group of {pid}: {error}",
+                );
+            }
         }
     }
     let _ = child.start_kill();

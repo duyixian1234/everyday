@@ -18,6 +18,7 @@ fn value_flag(spec: &ArgSpec) -> Arg {
         .help(spec.help)
         .value_name(spec.name)
         .num_args(1)
+        .allow_hyphen_values(spec.allow_hyphen_values)
 }
 
 /// Boolean switch: `--name` (no value).
@@ -43,21 +44,21 @@ fn add_positional(mut cmd: Command, positional: Positional) -> Command {
         Positional::None => {}
         Positional::OptionalSingle => {
             cmd = cmd.arg(
-                Arg::new("args")
+                Arg::new("positional")
                     .help("positional arguments")
                     .num_args(0..=1),
             );
         }
         Positional::Exactly(n) => {
             cmd = cmd.arg(
-                Arg::new("args")
+                Arg::new("positional")
                     .help("positional arguments")
                     .num_args(n as usize),
             );
         }
         Positional::OneOrMore => {
             cmd = cmd.arg(
-                Arg::new("args")
+                Arg::new("positional")
                     .help("positional arguments; use `--` before extra values")
                     .num_args(1..),
             );
@@ -181,7 +182,7 @@ pub(crate) fn matches_to_args(m: &ArgMatches, spec: &ActionArgSpec) -> Vec<Strin
     // Positionals exist only when the action declared them; reading "args"
     // otherwise would panic.
     if !matches!(spec.positional, Positional::None)
-        && let Some(vals) = m.get_many::<String>("args")
+        && let Some(vals) = m.get_many::<String>("positional")
     {
         for v in vals {
             out.push(v.clone());
@@ -197,8 +198,15 @@ pub(crate) fn matches_to_args(m: &ArgMatches, spec: &ActionArgSpec) -> Vec<Strin
             }
             ArgKind::Value => {
                 if let Some(v) = m.get_one::<String>(a.name) {
-                    out.push(format!("--{}", a.name));
-                    out.push(v.clone());
+                    // `parse_simple_args` treats any `--`-prefixed token as a
+                    // flag, so a hyphen-leading value (e.g. `--args "--release"`)
+                    // would collapse to "true". The `=` form round-trips it.
+                    if a.allow_hyphen_values {
+                        out.push(format!("--{}={v}", a.name));
+                    } else {
+                        out.push(format!("--{}", a.name));
+                        out.push(v.clone());
+                    }
                 }
             }
             ArgKind::Multi => {
@@ -226,6 +234,7 @@ mod tests {
             name: "flag-a",
             help: "h",
             kind: ArgKind::Bool,
+            allow_hyphen_values: false,
         }];
         static ACTS: &[ActionArgSpec] = &[ActionArgSpec {
             name: "query",
@@ -286,7 +295,7 @@ mod tests {
             .try_get_matches_from(["search", "hello"])
             .unwrap();
         assert_eq!(
-            m3.get_one::<String>("args").map(String::as_str),
+            m3.get_one::<String>("positional").map(String::as_str),
             Some("hello")
         );
         // Explicit action form still works: `search query "hello"`.
@@ -325,7 +334,7 @@ mod tests {
             .subcommand_matches("run")
             .unwrap();
         assert_eq!(
-            run.get_many::<String>("args")
+            run.get_many::<String>("positional")
                 .unwrap()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
@@ -341,11 +350,73 @@ mod tests {
             .subcommand_matches("run")
             .unwrap();
         assert_eq!(
-            run.get_many::<String>("args")
+            run.get_many::<String>("positional")
                 .unwrap()
                 .map(String::as_str)
                 .collect::<Vec<_>>(),
             vec!["x", "--env", "prod"]
+        );
+    }
+
+    #[test]
+    fn task_add_positional_and_args_flag_coexist() {
+        // Regression: `task add` carries both a positional (the task name) and
+        // a `--args` flag. These used to share the clap id "args", which made
+        // clap's debug assertions panic on parse.
+        let registry = ModuleRegistry::build(Arc::new(Config::default())).unwrap();
+        let cmd = build_root_command(&registry);
+        let matches = cmd
+            .try_get_matches_from([
+                "everyday",
+                "task",
+                "add",
+                "build",
+                "--command",
+                "cargo",
+                "--args",
+                "--release --jobs 4",
+                "--capture-output",
+                "true",
+            ])
+            .unwrap();
+        let add = matches
+            .subcommand_matches("task")
+            .unwrap()
+            .subcommand_matches("add")
+            .unwrap();
+        assert_eq!(
+            add.get_many::<String>("positional")
+                .unwrap()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            vec!["build"]
+        );
+        assert_eq!(
+            add.get_one::<String>("command").map(String::as_str),
+            Some("cargo")
+        );
+        assert_eq!(
+            add.get_one::<String>("args").map(String::as_str),
+            Some("--release --jobs 4")
+        );
+        assert_eq!(
+            add.get_one::<String>("capture-output").map(String::as_str),
+            Some("true")
+        );
+        // The reconstructed module arg vector must round-trip the hyphen-
+        // leading `--args` value via `--args=...` (see matches_to_args).
+        let spec = registry
+            .get("task")
+            .unwrap()
+            .module_arg_spec()
+            .actions
+            .iter()
+            .find(|a| a.name == "add")
+            .unwrap();
+        let args = matches_to_args(add, spec);
+        assert!(
+            args.iter().any(|a| a == "--args=--release --jobs 4"),
+            "reconstructed args missing `--args=...` form: {args:?}"
         );
     }
 }

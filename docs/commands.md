@@ -427,7 +427,9 @@ operations guide: [daemon.md](daemon.md).
   cache sync (**all server folders**) + rss cache pull. A failing action is
   recorded, never fatal.
 - Scheduled tasks run in a separate 30-second loop, independent of the sync
-  interval. Their output is captured in `task.db`.
+  interval. Their output is captured in `task.db`. The scheduler re-reads
+  `config.toml` every pass, so `task add` / `task remove` take effect without
+  restarting the daemon.
 - `daemon run` is a **foreground resident process** — install it with the OS
   service manager (`nssm` / `launchd` / `systemd`); see
   [daemon.md](daemon.md). State and logs live in

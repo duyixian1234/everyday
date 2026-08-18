@@ -117,15 +117,19 @@ impl DaemonModule {
         if once {
             // F017: `--once` includes one cron scheduler pass before the sync
             // summary. Scheduled task output is captured into task.db and
-            // never written to daemon stdout.
-            let task_store = crate::modules::task::store::TaskStore::open_default().await?;
-            let task_pass = crate::modules::task::scheduler::run_due_tasks(
-                &self.config,
-                &task_store,
-                chrono::Local::now(),
-            )
-            .await?;
-            log_task_pass(task_pass);
+            // never written to daemon stdout. The task store is opened only
+            // when the config actually schedules something — daemon users
+            // without `[tasks.*].schedule` get no stray task.db side effect.
+            if crate::modules::task::scheduler::any_scheduled(&self.config) {
+                let task_store = crate::modules::task::store::TaskStore::open_default().await?;
+                let task_pass = crate::modules::task::scheduler::run_due_tasks(
+                    &self.config,
+                    &task_store,
+                    chrono::Local::now(),
+                )
+                .await?;
+                log_task_pass(task_pass);
+            }
 
             // One cycle, then render the summary to stdout (the command
             // result — R001). Full shape alignment with `timeline sync`
@@ -176,11 +180,10 @@ impl DaemonModule {
         let guard_for_loop = state_guard.clone();
         let config = self.config.clone();
         let scheduler_shutdown = shutdown.clone();
-        let scheduler_config = self.config.clone();
         let scheduler_handle = tokio::spawn(async move {
-            let result =
-                crate::modules::task::scheduler::run_loop(scheduler_config, scheduler_shutdown)
-                    .await;
+            // The scheduler re-reads config.toml every pass, so `task add /
+            // remove` takes effect without restarting the daemon.
+            let result = crate::modules::task::scheduler::run_loop(scheduler_shutdown).await;
             if let Err(error) = &result {
                 tracing::error!(
                     target: "everyday",

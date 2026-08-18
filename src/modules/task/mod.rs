@@ -41,7 +41,7 @@ impl Executor for TaskModule {
                 "everyday task add <name> --command <cmd> [--args <s>] [--allow-extra-args <bool>] [--timeout <secs>] [--capture-output <bool>] [--schedule <cron>]",
                 &[
                     flag!("command", "可执行文件或路径（不经 shell）"),
-                    flag!("args", "配置参数字符串（按空白拆分）"),
+                    flag!("args", "配置参数字符串（按空白拆分）", Value, Hyphen),
                     flag!("allow-extra-args", "是否允许 run 时追加参数（true/false）"),
                     flag!("timeout", "超时秒数；0 表示无限制"),
                     flag!(

@@ -1,7 +1,6 @@
 //! Cron parsing and the daemon's independent task scheduling loop.
 
 use std::str::FromStr;
-use std::sync::Arc;
 use std::time::Duration;
 
 use chrono::{DateTime, Local, Utc};
@@ -25,7 +24,6 @@ pub struct SchedulerPass {
 }
 
 fn parse_schedule(expression: &str) -> Result<Cron> {
-    crate::config::validate_task_schedule(expression)?;
     Cron::from_str(expression.trim())
         .map_err(|e| AgentError::InvalidArgument(format!("invalid task schedule: {e}")))
 }
@@ -43,8 +41,19 @@ pub fn initial_next_due(expression: &str, now: DateTime<Local>) -> Result<DateTi
     next_after(expression, now - chrono::Duration::minutes(1))
 }
 
+/// Whether any configured task carries a non-empty cron schedule.
+pub fn any_scheduled(config: &Config) -> bool {
+    config.tasks.values().any(|task| {
+        task.schedule
+            .as_deref()
+            .is_some_and(|s| !s.trim().is_empty())
+    })
+}
+
 /// Execute every task due at `now`, at most once per task, then roll its state
-/// directly to the first occurrence after `now` (no backlog).
+/// directly to the first occurrence after `now` (no backlog). A state error on
+/// one task (DB read/write, next-occurrence calculation) is logged and skipped
+/// so a single bad entry cannot abort the whole pass.
 pub async fn run_due_tasks(
     config: &Config,
     store: &TaskStore,
@@ -65,54 +74,123 @@ pub async fn run_due_tasks(
             continue;
         };
         pass.scheduled += 1;
-        let persisted = store.next_due(name).await?;
-        let due = match persisted {
-            Some(due) => due,
-            None => initial_next_due(expression, now)?.with_timezone(&Utc),
-        };
-
-        if due <= now.with_timezone(&Utc) {
-            pass.ran += 1;
-            match runner::run(store, name, task, &[], true, RelayMode::Silent).await {
-                Ok(record) => {
-                    let ok = record.status == "success";
-                    if !ok {
-                        pass.failed += 1;
-                    }
-                    tracing::info!(
-                        target: "everyday",
-                        _log = "scheduled_task_completed",
-                        task = %name,
-                        status = %record.status,
-                        exit_code = record.exit_code,
-                        duration_ms = record.duration_ms,
-                    );
-                }
-                Err(error) => {
-                    pass.failed += 1;
-                    tracing::error!(
-                        target: "everyday",
-                        _error = "scheduled_task_failed",
-                        task = %name,
-                        message = %error.message(),
-                    );
-                }
-            }
-            let next = next_after(expression, now)?.with_timezone(&Utc);
-            store.set_next_due(name, next).await?;
-        } else if persisted.is_none() {
-            store.set_next_due(name, due).await?;
+        if let Err(error) = run_due_task(store, name, task, expression, now, &mut pass).await {
+            pass.failed += 1;
+            tracing::error!(
+                target: "everyday",
+                _error = "scheduled_task_state_failed",
+                task = %name,
+                message = %error.message(),
+            );
         }
     }
     Ok(pass)
 }
 
+/// One task's due check: run at most once if `next_due <= now`, then roll the
+/// persisted state forward to `cron.after(now)`.
+async fn run_due_task(
+    store: &TaskStore,
+    name: &str,
+    task: &crate::config::TaskConfig,
+    expression: &str,
+    now: DateTime<Local>,
+    pass: &mut SchedulerPass,
+) -> Result<()> {
+    let persisted = store.next_due(name).await?;
+    let due = match persisted {
+        Some(due) => due,
+        None => initial_next_due(expression, now)?.with_timezone(&Utc),
+    };
+
+    if due <= now.with_timezone(&Utc) {
+        pass.ran += 1;
+        match runner::run(store, name, task, &[], true, RelayMode::Silent).await {
+            Ok(record) => {
+                let ok = record.status == "success";
+                if !ok {
+                    pass.failed += 1;
+                }
+                tracing::info!(
+                    target: "everyday",
+                    _log = "scheduled_task_completed",
+                    task = %name,
+                    status = %record.status,
+                    exit_code = record.exit_code,
+                    duration_ms = record.duration_ms,
+                );
+            }
+            Err(error) => {
+                pass.failed += 1;
+                tracing::error!(
+                    target: "everyday",
+                    _error = "scheduled_task_failed",
+                    task = %name,
+                    message = %error.message(),
+                );
+            }
+        }
+        let next = next_after(expression, now)?.with_timezone(&Utc);
+        store.set_next_due(name, next).await?;
+    } else if persisted.is_none() {
+        store.set_next_due(name, due).await?;
+    }
+    Ok(())
+}
+
 /// Independent resident loop. It shares only the daemon cancellation token;
-/// its cadence is intentionally unrelated to the sync cycle interval.
-pub async fn run_loop(config: Arc<Config>, shutdown: CancellationToken) -> Result<()> {
-    let store = TaskStore::open_default().await?;
+/// its cadence is intentionally unrelated to the sync cycle interval. The
+/// config file is re-read every pass so task edits take effect without a
+/// daemon restart, and the task database is opened only once a schedule
+/// actually exists.
+pub async fn run_loop(shutdown: CancellationToken) -> Result<()> {
+    let mut config = crate::config::Config::load_or_default()?;
+    let mut store: Option<TaskStore> = None;
     loop {
-        run_due_tasks(&config, &store, Local::now()).await?;
+        if any_scheduled(&config) {
+            match &store {
+                Some(store) => {
+                    if let Err(error) = run_due_tasks(&config, store, Local::now()).await {
+                        tracing::error!(
+                            target: "everyday",
+                            _error = "task_scheduler_pass_failed",
+                            message = %error.message(),
+                        );
+                    }
+                }
+                None => match TaskStore::open_default().await {
+                    Ok(opened) => {
+                        if let Err(error) = run_due_tasks(&config, &opened, Local::now()).await {
+                            tracing::error!(
+                                target: "everyday",
+                                _error = "task_scheduler_pass_failed",
+                                message = %error.message(),
+                            );
+                        }
+                        store = Some(opened);
+                    }
+                    Err(error) => {
+                        // Transient failure (locked db, full disk, …): keep the
+                        // loop alive and retry next pass.
+                        tracing::error!(
+                            target: "everyday",
+                            _error = "task_db_open_failed",
+                            message = %error.message(),
+                        );
+                    }
+                },
+            }
+        }
+        // Re-read config for the next pass; a malformed file (mid-edit) keeps
+        // the last good config and is reported.
+        match crate::config::Config::load_or_default() {
+            Ok(next) => config = next,
+            Err(error) => tracing::error!(
+                target: "everyday",
+                _error = "task_config_reload_failed",
+                message = %error.message(),
+            ),
+        }
         tokio::select! {
             _ = tokio::time::sleep(SCHEDULER_INTERVAL) => {}
             _ = shutdown.cancelled() => break,

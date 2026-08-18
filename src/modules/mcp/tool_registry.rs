@@ -470,6 +470,7 @@ mod tests {
             name: "tag",
             help: "repeatable tag",
             kind: ArgKind::Multi,
+            allow_hyphen_values: false,
         }];
         let synthetic = ActionArgSpec {
             name: "x",

@@ -70,6 +70,11 @@ async fn main() {
     }
 
     let (code, output) = run(matches, mode).await;
+    // Empty text results are suppressed: `task run` passthrough emits the
+    // child's output directly to stdout (R001 exception) and returns an empty
+    // `Output`, and a resident `daemon run` is stdout-silent by contract
+    // (F016). Printing an empty line would break both. No other module
+    // returns an empty text output, so this has no wider blast radius.
     if !output.is_empty() {
         println!("{output}");
     }

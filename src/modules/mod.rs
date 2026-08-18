@@ -145,6 +145,9 @@ pub struct ArgSpec {
     pub name: &'static str,
     pub help: &'static str,
     pub kind: ArgKind,
+    /// Accept values that start with `-` (e.g. `--args "--release"`). Off by
+    /// default so a typo'd flag is never silently swallowed as a value.
+    pub allow_hyphen_values: bool,
 }
 
 /// Positional-argument shape.
@@ -214,7 +217,8 @@ macro_rules! cli_action {
 /// Declare one flag with compact syntax (P1, [F012](../../docs/adr/F012-architecture-deepening-phase.md)).
 ///
 /// Default kind is [`ArgKind::Value`] (`--name VALUE`); pass `Bool` for a
-/// switch (`--name`) or `Multi` for a repeatable value flag.
+/// switch (`--name`) or `Multi` for a repeatable value flag. `Value, Hyphen`
+/// additionally allows values that start with `-`.
 #[macro_export]
 macro_rules! flag {
     ($name:literal, $help:literal) => {
@@ -222,6 +226,7 @@ macro_rules! flag {
             name: $name,
             help: $help,
             kind: $crate::modules::ArgKind::Value,
+            allow_hyphen_values: false,
         }
     };
     ($name:literal, $help:literal, Bool) => {
@@ -229,6 +234,7 @@ macro_rules! flag {
             name: $name,
             help: $help,
             kind: $crate::modules::ArgKind::Bool,
+            allow_hyphen_values: false,
         }
     };
     ($name:literal, $help:literal, Multi) => {
@@ -236,6 +242,15 @@ macro_rules! flag {
             name: $name,
             help: $help,
             kind: $crate::modules::ArgKind::Multi,
+            allow_hyphen_values: false,
+        }
+    };
+    ($name:literal, $help:literal, Value, Hyphen) => {
+        $crate::modules::ArgSpec {
+            name: $name,
+            help: $help,
+            kind: $crate::modules::ArgKind::Value,
+            allow_hyphen_values: true,
         }
     };
 }

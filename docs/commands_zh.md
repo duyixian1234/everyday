@@ -411,7 +411,8 @@ everyday auth login --module webdav --account personal
   `sources`（空 = 全部）。`enabled = false` 时 `run` 拒绝启动（exit 1）。
 - 每个周期（顺序执行，best-effort）：timeline 事件拉取 + mail 信封缓存同步
   （**服务器全部文件夹**）+ rss 缓存拉取。失败动作记录、不致命。
-- 定时任务由独立 30 秒循环执行，不依赖同步间隔；输出捕获到 `task.db`。
+- 定时任务由独立 30 秒循环执行，不依赖同步间隔；输出捕获到 `task.db`。调度
+  循环每轮重读 `config.toml`，`task add` / `task remove` 无需重启 daemon 即生效。
 - `daemon run` 是**前台常驻进程**——用 OS 服务管理器安装（`nssm` / `launchd` /
   `systemd`），见 [daemon.md](daemon.md)。状态与日志位于
   `~/.config/everyday/daemon-state.json` 与 `daemon.log`。
