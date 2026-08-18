@@ -1,3 +1,15 @@
+## [0.17.4] - 2026-08-18
+
+### 🚜 Refactor
+
+- *(task)* Consolidate scheduler pass into a Scheduler context
+- *(task)* Deepen task execution behind the module interface
+- *(config)* Unify config writes on a comment-preserving ConfigEditor
+- *(output)* Move exit code off Output onto RequestContext
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.17.4
 ## [0.17.3] - 2026-08-18
 
 ### 🐛 Bug Fixes

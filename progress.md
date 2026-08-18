@@ -10,8 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
-- **R023 落地（未发版）** — 退出码移到 RequestContext（[R023](./docs/adr/R023-exit-code-on-request-context.md)）：`Output::ExitCode` 变体与 `with_exit_code()` 移除，`Output` 回归纯值类型；`task run` 改调 `ctx.set_exit_code(mirrored)`，`finalize(result, ctx, mode)` 在 CLI 边界读退出码；MCP 直接渲染 `Output`、无进程退出、读 `_result` 的 status/exit_code。非破坏性（CLI 形状与 JSON 契约未变）。
-- **R022 落地（未发版）** — 统一保留注释的 ConfigEditor（[R022](./docs/adr/R022-config-editor.md)）：config 模块成为 config.toml 唯一写入者，`config set` 升级为保留注释 + 按 path 写入时校验 + 原子写，关闭 F017 的丢失注释分歧；`task add/remove` 改走 ConfigEditor，task/config_edit.rs 移除；`config list` 文本读侧展示原文件、JSON 契约不变。非破坏性（CLI 形状与 JSON 契约未变）。
+- **v0.17.4 已发布** — **配置与输出架构重构收口**（[R022](./docs/adr/R022-config-editor.md) + [R023](./docs/adr/R023-exit-code-on-request-context.md)）：ConfigEditor 统一 config.toml 唯一写入者——`config set` 升级为保留注释 + 按 path 写入时校验 + 原子写，关闭 F017 的丢失注释分歧，`task add/remove` 改走 ConfigEditor（task/config_edit.rs 移除），`config list` 文本读侧展示原文件、JSON 契约不变；退出码从 `Output::ExitCode` 变体移到 `RequestContext` 的 `OnceLock<i32>` 槽，`Output` 回归纯值类型，`task run` 改调 `ctx.set_exit_code`、`finalize` 在 CLI 边界读退出码，MCP 直接渲染 `Output` 不受影响；task 执行深化到模块接口、调度器合并为 Scheduler context。非破坏性（CLI 形状与 JSON 契约未变）。
 - **v0.17.3 已发布** — **Task run Windows 控制台非 UTF-8 输出修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`task run` 透传子进程输出改用 OS 句柄直写（`WriteFile`），中文 Windows 控制台（GBK 代码页，如 `ipconfig`）不再因 Rust std 的 UTF-8 校验崩溃，按控制台代码页原样显示；落库仍 UTF-8 有损。非破坏性。
 - **v0.17.2 已发布** — **Task 用户自定义命令与 cron 调度**（[F017](./docs/adr/F017-task-module.md)）：`task add/run/list/remove/history`、无 shell 直接派生、超时杀进程树、SQLite 历史、独立 daemon cron 循环与 `--once` 接线；集成测试收尾修复：`task add` 位置参数与 `--args` 旗标的 clap id 冲突、`--args` 连字符值被 parse_simple_args 吞掉、spawn 失败 `exit_code` 置 NULL（t3 验收）、调度循环每轮重读 config（`task add/remove` 无需重启 daemon）、task.db 惰性建表。非破坏性。
 - **v0.17.1 已发布** — **日期序号 ID**（[R021](./docs/adr/R021-date-sequence-id.md)）：`{前缀}{YYYYMMDD}-{PID}-{当日序号}`（如 `n20260814-1a2b-001`）取代纳秒 hex，全前缀 n/t/b/m/ev/mc/ri 统一、按天重置、按前缀独立计数；质量门禁暴露「纯内存计数器」跨进程撞号缺陷（CLI 每次命令新进程，同日第二次写同前缀撞 SQLite 主键；memory end-to-end 测试对真实全局 DB 复现）→ 修订为带 PID 段恢复跨进程唯一；旧格式 id 共存不迁移，引用精确字符串匹配；CLI 帮助/错误文本 `<page_id>` → `<id>`（`default_page_id` 配置字段保留）。非破坏性。
@@ -89,6 +88,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.17.4** | `v0.17.4` | 配置与输出架构重构收口：ConfigEditor 统一 config.toml 唯一写入者（保留注释 + 原子写 + 按 path 校验，config set/task add-remove 走同一 seam）；退出码从 `Output` 移到 `RequestContext`（Output 回归纯值，MCP 不受影响）；task 执行深化到模块接口 + 调度器合并 Scheduler context；CLI 形状与 JSON 契约未变 | [R022](./docs/adr/R022-config-editor.md), [R023](./docs/adr/R023-exit-code-on-request-context.md) |
 | **v0.17.3** | `v0.17.3` | Task run Windows 控制台非 UTF-8 输出修复：透传改用 OS 句柄直写（WriteFile），GBK 控制台输出不再崩溃；新增非 UTF-8 中继回归测试 | [F017](./docs/adr/F017-task-module.md) |
 | **v0.17.2** | `v0.17.2` | Task 用户自定义命令与 cron 调度：`[tasks.<name>]` 配置、`task add/run/list/remove/history`、无 shell 派生 + 进程树超时终止 + 64 KiB 捕获、task.db 审计历史、daemon 独立 30s cron 调度循环（不积压）、`--once` 接线；集成测试修复 CLI 解析冲突与调度加固 | [F017](./docs/adr/F017-task-module.md) |
 | **v0.16.1** | `v0.16.1` | 日志迁移收尾：warning 站点全迁 tracing（_warning+warning_text，text 逐字节/JSON 形状不变，auto_sync 成功降 info，timeline JSON 结构化）；mcp serve 迁移（_error 第三系）；README 双语契约段 | [F015](./docs/adr/F015-leveled-logging-tracing.md) |
