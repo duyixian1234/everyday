@@ -1,3 +1,8 @@
+## [0.17.5] - 2026-08-18
+
+### 🐛 Bug Fixes
+
+- *(task)* Task run --json emits only _result and decodes GBK cleanly
 ## [0.17.4] - 2026-08-18
 
 ### 🚜 Refactor

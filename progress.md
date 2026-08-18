@@ -10,7 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
-- **（未发版）`task run --json` 输出契约收口 + 捕获编码修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`--json` 模式改为只捕获不回声——stdout 是唯一输出（单个 `_result` 信封），子进程原始输出不再泄漏到 stderr；捕获记录解码由 `from_utf8_lossy` 改为 UTF-8 优先 + GBK 兜底（新增 `encoding_rs` 依赖），修复中文 Windows 下 `ipconfig` 的 GBK 输出在 `_result.stdout/stderr` 里的 U+FFFD 乱码。契约变更（`--json` 不再 tee 到 stderr），非破坏性但改文档。
+- **v0.17.5 已发布** — **`task run --json` 输出契约收口 + 捕获编码修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`--json` 模式改为只捕获不回声——stdout 是唯一输出（单个 `_result` 信封），子进程原始输出不再泄漏到 stderr；捕获记录解码由 `from_utf8_lossy` 改为 UTF-8 优先 + GBK 兜底（新增 `encoding_rs` 依赖），修复中文 Windows 下 `ipconfig` 的 GBK 输出在 `_result.stdout/stderr` 里的 U+FFFD 乱码。契约变更（`--json` 不再 tee 到 stderr），非破坏性但改文档。
 - **v0.17.4 已发布** — **配置与输出架构重构收口**（[R022](./docs/adr/R022-config-editor.md) + [R023](./docs/adr/R023-exit-code-on-request-context.md)）：ConfigEditor 统一 config.toml 唯一写入者——`config set` 升级为保留注释 + 按 path 写入时校验 + 原子写，关闭 F017 的丢失注释分歧，`task add/remove` 改走 ConfigEditor（task/config_edit.rs 移除），`config list` 文本读侧展示原文件、JSON 契约不变；退出码从 `Output::ExitCode` 变体移到 `RequestContext` 的 `OnceLock<i32>` 槽，`Output` 回归纯值类型，`task run` 改调 `ctx.set_exit_code`、`finalize` 在 CLI 边界读退出码，MCP 直接渲染 `Output` 不受影响；task 执行深化到模块接口、调度器合并为 Scheduler context。非破坏性（CLI 形状与 JSON 契约未变）。
 - **v0.17.3 已发布** — **Task run Windows 控制台非 UTF-8 输出修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`task run` 透传子进程输出改用 OS 句柄直写（`WriteFile`），中文 Windows 控制台（GBK 代码页，如 `ipconfig`）不再因 Rust std 的 UTF-8 校验崩溃，按控制台代码页原样显示；落库仍 UTF-8 有损。非破坏性。
 - **v0.17.2 已发布** — **Task 用户自定义命令与 cron 调度**（[F017](./docs/adr/F017-task-module.md)）：`task add/run/list/remove/history`、无 shell 直接派生、超时杀进程树、SQLite 历史、独立 daemon cron 循环与 `--once` 接线；集成测试收尾修复：`task add` 位置参数与 `--args` 旗标的 clap id 冲突、`--args` 连字符值被 parse_simple_args 吞掉、spawn 失败 `exit_code` 置 NULL（t3 验收）、调度循环每轮重读 config（`task add/remove` 无需重启 daemon）、task.db 惰性建表。非破坏性。
@@ -89,6 +89,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.17.5** | `v0.17.5` | `task run --json` 输出契约收口 + 捕获编码修复：`--json` 只捕获不回声（stdout 唯一 `_result` 信封）；捕获记录 UTF-8 优先 + GBK 兜底解码，修复 `ipconfig` GBK 输出在 JSON/task.db 里的 U+FFFD 乱码；新增 encoding_rs 依赖 | [F017](./docs/adr/F017-task-module.md) |
 | **v0.17.4** | `v0.17.4` | 配置与输出架构重构收口：ConfigEditor 统一 config.toml 唯一写入者（保留注释 + 原子写 + 按 path 校验，config set/task add-remove 走同一 seam）；退出码从 `Output` 移到 `RequestContext`（Output 回归纯值，MCP 不受影响）；task 执行深化到模块接口 + 调度器合并 Scheduler context；CLI 形状与 JSON 契约未变 | [R022](./docs/adr/R022-config-editor.md), [R023](./docs/adr/R023-exit-code-on-request-context.md) |
 | **v0.17.3** | `v0.17.3` | Task run Windows 控制台非 UTF-8 输出修复：透传改用 OS 句柄直写（WriteFile），GBK 控制台输出不再崩溃；新增非 UTF-8 中继回归测试 | [F017](./docs/adr/F017-task-module.md) |
 | **v0.17.2** | `v0.17.2` | Task 用户自定义命令与 cron 调度：`[tasks.<name>]` 配置、`task add/run/list/remove/history`、无 shell 派生 + 进程树超时终止 + 64 KiB 捕获、task.db 审计历史、daemon 独立 30s cron 调度循环（不积压）、`--once` 接线；集成测试修复 CLI 解析冲突与调度加固 | [F017](./docs/adr/F017-task-module.md) |
