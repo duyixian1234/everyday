@@ -198,7 +198,7 @@ async fn run(matches: ArgMatches, mode: RenderMode) -> (i32, String) {
     // Lifecycle (P3): graceful shutdown after the action completes.
     registry.shutdown_all();
 
-    finalize(result, mode)
+    finalize(result, &ctx, mode)
 }
 
 /// `everyday health` (P3, [F012](../docs/adr/F012-architecture-deepening-phase.md)):

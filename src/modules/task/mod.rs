@@ -173,13 +173,16 @@ impl TaskModule {
         };
         let store = self.task_store().await?;
         let record = runner::run(store, name, task, &args[1..], relay).await?;
-        let code = runner::mirrored_exit_code(&record);
+        // Mirror the child's exit status on the request context so the CLI
+        // process exits with it; MCP ignores it (no process exit), reading
+        // `status`/`exit_code` from `_result` instead ([R023]).
+        ctx.set_exit_code(runner::mirrored_exit_code(&record));
         let output = if structured {
             Output::Json(serde_json::json!({ "_result": record }))
         } else {
             Output::text("")
         };
-        Ok(output.with_exit_code(code))
+        Ok(output)
     }
 
     fn list(&self) -> Result<Output> {

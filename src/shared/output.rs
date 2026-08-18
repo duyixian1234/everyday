@@ -8,6 +8,7 @@
 use serde_json::{Value, json};
 
 use crate::error::{AgentError, Result};
+use crate::shared::request_context::RequestContext;
 
 /// A typed cell value for tabular output.
 ///
@@ -94,8 +95,10 @@ const I64_EXACT_MAX: f64 = 9_007_199_254_740_992.0;
 /// - [`Output::TypedRecords`]: tabular data with typed cells — the same
 ///   rendering as `Records`, but JSON mode preserves numeric/boolean/null
 ///   types instead of converting everything to strings ([F012] P6)
-/// - [`Output::ExitCode`]: wraps another output while requesting a non-default
-///   process exit code (used by task subprocess execution)
+///
+/// `Output` carries only the *value* a command produced. The process exit
+/// code is a host concern, announced by a module on the [`RequestContext`]
+/// and read at the CLI boundary ([R023]).
 #[derive(Debug, Clone)]
 pub enum Output {
     /// Plain text. Emitted verbatim in both modes.
@@ -118,12 +121,6 @@ pub enum Output {
         headers: Vec<String>,
         rows: Vec<Vec<TypedValue>>,
     },
-
-    /// Render another output value but request a specific process exit code.
-    ///
-    /// Used by `task run` to mirror the child process exit status while still
-    /// returning a normal structured result through the module interface.
-    ExitCode { output: Box<Output>, code: i32 },
 }
 
 /// Render mode.
@@ -149,14 +146,6 @@ impl Output {
     /// Build a tabular output with typed cells (JSON mode preserves types).
     pub fn typed_records(headers: Vec<String>, rows: Vec<Vec<TypedValue>>) -> Self {
         Self::TypedRecords { headers, rows }
-    }
-
-    /// Attach an explicit process exit code to this output.
-    pub fn with_exit_code(self, code: i32) -> Self {
-        Self::ExitCode {
-            output: Box::new(self),
-            code,
-        }
     }
 
     /// Render into a string under the given mode.
@@ -188,7 +177,6 @@ impl Output {
             (Output::TypedRecords { headers, rows }, RenderMode::Json) => {
                 typed_records_to_json(&headers, &rows)
             }
-            (Output::ExitCode { output, .. }, mode) => output.render(mode),
         }
     }
 }
@@ -221,10 +209,13 @@ pub fn mode_from_json_flag(json: bool) -> RenderMode {
 }
 
 /// Reduce a `Result<Output>` into `(exit_code, output_string)`.
-pub fn finalize(result: Result<Output>, mode: RenderMode) -> (i32, String) {
+///
+/// The exit code comes from the request context ([R023]): a module may have
+/// announced an explicit code (e.g. `task run` mirrors the child's status);
+/// otherwise a plain success is `0` and an error is `1`.
+pub fn finalize(result: Result<Output>, ctx: &RequestContext, mode: RenderMode) -> (i32, String) {
     match result {
-        Ok(Output::ExitCode { output, code }) => (code, output.render(mode)),
-        Ok(out) => (0, out.render(mode)),
+        Ok(out) => (ctx.effective_exit_code(), out.render(mode)),
         Err(err) => (1, render_error(&err, mode)),
     }
 }
@@ -421,20 +412,25 @@ mod tests {
 
     #[test]
     fn finalize_ok_returns_zero() {
-        let (code, _) = finalize(Ok(Output::text("ok")), RenderMode::Text);
+        let ctx = RequestContext::cli("req".into());
+        let (code, _) = finalize(Ok(Output::text("ok")), &ctx, RenderMode::Text);
         assert_eq!(code, 0);
     }
 
     #[test]
     fn finalize_err_returns_nonzero() {
-        let (code, _) = finalize(Err(AgentError::Other("x".into())), RenderMode::Text);
+        let ctx = RequestContext::cli("req".into());
+        let (code, _) = finalize(Err(AgentError::Other("x".into())), &ctx, RenderMode::Text);
         assert_ne!(code, 0);
     }
 
     #[test]
-    fn explicit_exit_code_preserves_rendered_output() {
+    fn announced_exit_code_is_used_and_output_preserved() {
+        let ctx = RequestContext::cli("req".into());
+        ctx.set_exit_code(7);
         let (code, text) = finalize(
-            Ok(Output::Json(json!({"_result": {"status": "failed"}})).with_exit_code(7)),
+            Ok(Output::Json(json!({"_result": {"status": "failed"}}))),
+            &ctx,
             RenderMode::Json,
         );
         assert_eq!(code, 7);
