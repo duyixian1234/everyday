@@ -556,6 +556,87 @@ mod tests {
         let _ = std::fs::remove_file(path);
     }
 
+    #[tokio::test]
+    async fn query_items_since_keeps_fractional_second_entry_at_boundary() {
+        // Regression: the `--since` window must compare chronologically, not
+        // lexicographically. An entry at 14:00:00.5 (stored as
+        // "…T14:00:00.5Z") is strictly after a whole-second bound of
+        // 14:00:00 ("…T14:00:00Z") and must be kept — a naive string `>=`
+        // comparison drops it ('Z' > '.').
+        let (pool, path) = tmp_pool().await;
+        let feed = RssFeed {
+            name: "a".into(),
+            url: "https://a/feed".into(),
+            category: None,
+        };
+        let t = Utc.with_ymd_and_hms(2026, 7, 9, 14, 0, 0).unwrap()
+            + chrono::Duration::milliseconds(500);
+        upsert_items(
+            &pool,
+            &feed,
+            &[rss::EntryForCache {
+                guid: "a1".into(),
+                title: "half-second".into(),
+                summary: "s".into(),
+                link: "https://a/1".into(),
+                author: "".into(),
+                published: Some(t),
+            }],
+        )
+        .await
+        .unwrap();
+        let since = Utc.with_ymd_and_hms(2026, 7, 9, 14, 0, 0).unwrap();
+        let rows = query_items(&pool, &["a"], Some(since), 10).await.unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "entry at 14:00:00.5 must survive a 14:00:00 since bound"
+        );
+        assert_eq!(rows[0].title, "half-second");
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn query_items_orders_same_second_by_fraction() {
+        let (pool, path) = tmp_pool().await;
+        let feed = RssFeed {
+            name: "a".into(),
+            url: "https://a/feed".into(),
+            category: None,
+        };
+        let whole = Utc.with_ymd_and_hms(2026, 7, 9, 14, 0, 0).unwrap();
+        let frac = whole + chrono::Duration::milliseconds(500);
+        upsert_items(
+            &pool,
+            &feed,
+            &[
+                rss::EntryForCache {
+                    guid: "w".into(),
+                    title: "whole-second".into(),
+                    summary: "".into(),
+                    link: "https://a/w".into(),
+                    author: "".into(),
+                    published: Some(whole),
+                },
+                rss::EntryForCache {
+                    guid: "f".into(),
+                    title: "fractional".into(),
+                    summary: "".into(),
+                    link: "https://a/f".into(),
+                    author: "".into(),
+                    published: Some(frac),
+                },
+            ],
+        )
+        .await
+        .unwrap();
+        // Newest first: the .5s entry precedes the whole-second one.
+        let rows = query_items(&pool, &["a"], None, 10).await.unwrap();
+        assert_eq!(rows[0].title, "fractional");
+        assert_eq!(rows[1].title, "whole-second");
+        let _ = std::fs::remove_file(path);
+    }
+
     /// Verify the search SQL template (the one used by `search_for_search`)
     /// against a populated cache: title / summary GLOB + OR-of-tokens +
     /// case-insensitive via lower().

@@ -30,10 +30,11 @@ use crate::output::Output;
 pub struct RssEntryRow {
     pub feed: String,
     pub title: String,
-    /// Feed summary直出, truncated to ~200 chars (the digest JSON contract;
-    /// text mode truncates further at render time). `fetch` carries it but
-    /// its render layer does not output it — the info-level difference
-    /// between digest and fetch (F008 amendment).
+    /// Feed summary passed through verbatim, truncated to ~200 chars (the
+    /// digest JSON contract; text mode truncates further at render time).
+    /// `fetch` carries it but its render layer does not output it — the
+    /// info-level difference between digest and fetch
+    /// [F008](../../docs/adr/F008-rss-module.md) amendment.
     pub summary: String,
     pub published: String,
     pub author: String,
@@ -327,11 +328,7 @@ impl RealRssBackend {
         }
 
         rows.sort_by(|a, b| cmp_opt_dt_desc(&a.sort_key, &b.sort_key));
-        // `--since`: keep only entries published at/after the window; undated
-        // entries are dropped (timeline rss provider window semantics).
-        if let Some(since) = opts.since {
-            rows.retain(|r| r.sort_key.is_some_and(|dt| dt >= since));
-        }
+        rows = filter_rows_by_since(rows, opts.since);
         rows.truncate(opts.limit);
         Ok(rows)
     }
@@ -434,6 +431,8 @@ fn render_list(feeds: Vec<RssFeed>) -> Output {
 /// `rss digest` rows: feed / title / summary / published / author / link.
 /// The summary cell is truncated to ~80 chars in text mode (table readability)
 /// but carries the full ~200 chars in JSON (downstream agent input).
+const DIGEST_TEXT_SUMMARY_LIMIT: usize = 80;
+
 fn render_digest(rows: Vec<RssEntryRow>) -> Output {
     let out_rows = rows
         .into_iter()
@@ -441,7 +440,7 @@ fn render_digest(rows: Vec<RssEntryRow>) -> Output {
             vec![
                 crate::output::TypedValue::text(r.feed),
                 crate::output::TypedValue::text(r.title),
-                crate::output::TypedValue::truncated_text(r.summary, 80),
+                crate::output::TypedValue::truncated_text(r.summary, DIGEST_TEXT_SUMMARY_LIMIT),
                 crate::output::TypedValue::text(r.published),
                 crate::output::TypedValue::text(r.author),
                 crate::output::TypedValue::text(r.link),
@@ -609,15 +608,29 @@ impl RssBackend for RealRssBackend {
     }
 }
 
-/// Cache-first source decision for `digest` (the fallback rule):
+/// Cache-first source decision for `digest` (the fallback rule
+/// [F008](../../docs/adr/F008-rss-module.md) amendment):
 /// - `--fresh` → always live;
-/// - cache unavailable (`None`) or empty → live (表空/过滤无结果 → 回退实时);
+/// - cache unavailable (`None`) or empty → live (empty / filtered-to-nothing
+///   cache falls back to a realtime fetch);
 /// - cache has rows → read the cache directly.
 fn digest_cache_source(cached: Option<Vec<RssEntryRow>>, fresh: bool) -> Option<Vec<RssEntryRow>> {
     if fresh {
         return None;
     }
     cached.filter(|rows| !rows.is_empty())
+}
+
+/// Apply the `--since` window to a live-fetch row list: keep entries published
+/// at/after the bound; drop entries without a published time. With no window
+/// the list passes through unchanged (undated entries sort last).
+fn filter_rows_by_since(rows: Vec<RssEntryRow>, since: Option<DateTime<Utc>>) -> Vec<RssEntryRow> {
+    let Some(since) = since else {
+        return rows;
+    };
+    rows.into_iter()
+        .filter(|r| r.sort_key.is_some_and(|dt| dt >= since))
+        .collect()
 }
 
 // ============ Config read/write (localized edit of rss.feeds) ============
@@ -786,10 +799,11 @@ async fn fetch_one(client: &reqwest::Client, feed: &RssFeed) -> FetchedFeed {
 
 // ============ Entry row construction ============
 
-/// Feed summary直出, truncated to ~200 chars — the digest row / JSON contract
-/// (the item cache stores up to 500; timeline uses 200 too, so the data口径
-/// matches across digest / timeline / search). No ellipsis: JSON is consumed
-/// by downstream agents, and text mode appends one at render time.
+/// Feed summary passed through verbatim, truncated to ~200 chars — the digest
+/// row / JSON contract (the item cache stores up to 500; timeline uses 200
+/// too, so the data source agrees across digest / timeline / search
+/// [F008](../../docs/adr/F008-rss-module.md) amendment). No ellipsis: JSON is
+/// consumed by downstream agents, and text mode appends one at render time.
 pub fn summary_for_row(content: &str) -> String {
     crate::util::strings::truncate_chars(content, 200).to_string()
 }
@@ -987,9 +1001,20 @@ mod tests {
             }])
         }
         async fn fetch(&self, name: &str, _limit: usize) -> Result<Vec<RssEntryRow>> {
-            Err(AgentError::InvalidArgument(format!(
-                "feed '{name}' not found"
-            )))
+            if name != "hn" {
+                return Err(AgentError::InvalidArgument(format!(
+                    "feed '{name}' not found"
+                )));
+            }
+            Ok(vec![RssEntryRow {
+                feed: "hn".into(),
+                title: "t".into(),
+                summary: "s".into(),
+                published: "2026-08-05".into(),
+                author: "author".into(),
+                link: "https://x".into(),
+                sort_key: None,
+            }])
         }
         async fn fetch_url(&self, url: &str, _limit: usize) -> Result<Vec<RssEntryRow>> {
             Ok(vec![RssEntryRow {
@@ -1106,6 +1131,22 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn dispatch_fetch_name_path_renders_rows() {
+        let mock = MockRssBackend::default();
+        let mut flags = HashMap::new();
+        flags.insert("name".into(), "hn".into());
+        let out = dispatch(&mock, "fetch", &flags, &[]).await.unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                // fetch columns unchanged: no feed, no summary.
+                assert_eq!(headers, vec!["title", "published", "author", "link"]);
+                assert_eq!(rows, vec![vec!["t", "2026-08-05", "author", "https://x"]]);
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn dispatch_fetch_url_positional_renders_rows() {
         let mock = MockRssBackend::default();
         let out = dispatch(
@@ -1157,13 +1198,43 @@ mod tests {
         assert!(digest_cache_source(Some(vec![row.clone()]), true).is_none());
         // Cache unavailable (None) -> live.
         assert!(digest_cache_source(None, false).is_none());
-        // Cache empty (表空) -> live.
+        // Cache empty -> live.
         assert!(digest_cache_source(Some(Vec::new()), false).is_none());
         // Non-empty cache hit -> read the cache directly.
         assert_eq!(
             digest_cache_source(Some(vec![row.clone()]), false).map(|r| r.len()),
             Some(1)
         );
+    }
+
+    #[test]
+    fn filter_rows_by_since_window_semantics() {
+        let base = Utc.with_ymd_and_hms(2026, 7, 9, 14, 0, 0).unwrap();
+        let mk = |title: &str, at: Option<DateTime<Utc>>| RssEntryRow {
+            feed: "a".into(),
+            title: title.into(),
+            summary: String::new(),
+            published: at
+                .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "—".into()),
+            author: String::new(),
+            link: String::new(),
+            sort_key: at,
+        };
+        let rows = vec![
+            mk("later", Some(base + chrono::Duration::hours(1))),
+            mk("equal", Some(base)),
+            mk("earlier", Some(base - chrono::Duration::hours(1))),
+            mk("undated", None),
+        ];
+        // Window: keep published >= bound; the boundary entry survives;
+        // undated entries are dropped.
+        let kept = filter_rows_by_since(rows.clone(), Some(base));
+        let titles: Vec<&str> = kept.iter().map(|r| r.title.as_str()).collect();
+        assert_eq!(titles, vec!["later", "equal"]);
+        // No window: everything passes through, including undated.
+        let kept = filter_rows_by_since(rows, None);
+        assert_eq!(kept.len(), 4);
     }
 
     #[tokio::test]
