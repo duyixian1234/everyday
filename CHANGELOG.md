@@ -1,8 +1,29 @@
+## [0.17.6] - 2026-08-19
+
+### 🚀 Features
+
+- *(rss)* Digest summary column + --since + cache-first; fetch dual entry
+
+### 🐛 Bug Fixes
+
+- *(util)* Gen_id tracks day per prefix to stop parallel-test file collisions
+
+### 🚜 Refactor
+
+- *(rss)* Code-review fixes — english comments + since/fetch tests
+
+### 📚 Documentation
+
+- RSS digest/fetch 区分度设计（F008 amendment + CONTEXT.md RSS 节）
 ## [0.17.5] - 2026-08-18
 
 ### 🐛 Bug Fixes
 
 - *(task)* Task run --json emits only _result and decodes GBK cleanly
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.17.5
 ## [0.17.4] - 2026-08-18
 
 ### 🚜 Refactor

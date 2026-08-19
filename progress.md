@@ -10,7 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
-- **v0.17.6 进行中** — **RSS digest/fetch 区分度**（[F008](./docs/adr/F008-rss-module.md) amendment，2026-08-19）：digest 输出加摘要列（feed/title/summary/published/author/link，文本 80/JSON 200 截断，新增 `TypedValue::TruncatedText`）；`--since` 复用 timeline 时长解析按 published 过滤；digest 数据源改为本地 rss-items 缓存优先（`--fresh` 强刷，表空/无结果回退实时）；fetch 双入口（`--name N` 写缓存 / `<url>` stateless 不写缓存）。非破坏性。
+- **v0.17.6 已发布** — **RSS digest/fetch 区分度**（[F008](./docs/adr/F008-rss-module.md) amendment，2026-08-19）：digest 输出加摘要列（feed/title/summary/published/author/link，文本 80/JSON 200 截断，新增 `TypedValue::TruncatedText`）；`--since` 复用 timeline 时长解析按 published 过滤；digest 数据源改为本地 rss-items 缓存优先（`--fresh` 强刷，表空/无结果回退实时）；fetch 双入口（`--name N` 写缓存 / `<url>` stateless 不写缓存）。非破坏性。
 - **v0.17.5 已发布** — **`task run --json` 输出契约收口 + 捕获编码修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`--json` 模式改为只捕获不回声——stdout 是唯一输出（单个 `_result` 信封），子进程原始输出不再泄漏到 stderr；捕获记录解码由 `from_utf8_lossy` 改为 UTF-8 优先 + GBK 兜底（新增 `encoding_rs` 依赖），修复中文 Windows 下 `ipconfig` 的 GBK 输出在 `_result.stdout/stderr` 里的 U+FFFD 乱码。契约变更（`--json` 不再 tee 到 stderr），非破坏性但改文档。
 - **v0.17.4 已发布** — **配置与输出架构重构收口**（[R022](./docs/adr/R022-config-editor.md) + [R023](./docs/adr/R023-exit-code-on-request-context.md)）：ConfigEditor 统一 config.toml 唯一写入者——`config set` 升级为保留注释 + 按 path 写入时校验 + 原子写，关闭 F017 的丢失注释分歧，`task add/remove` 改走 ConfigEditor（task/config_edit.rs 移除），`config list` 文本读侧展示原文件、JSON 契约不变；退出码从 `Output::ExitCode` 变体移到 `RequestContext` 的 `OnceLock<i32>` 槽，`Output` 回归纯值类型，`task run` 改调 `ctx.set_exit_code`、`finalize` 在 CLI 边界读退出码，MCP 直接渲染 `Output` 不受影响；task 执行深化到模块接口、调度器合并为 Scheduler context。非破坏性（CLI 形状与 JSON 契约未变）。
 - **v0.17.3 已发布** — **Task run Windows 控制台非 UTF-8 输出修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`task run` 透传子进程输出改用 OS 句柄直写（`WriteFile`），中文 Windows 控制台（GBK 代码页，如 `ipconfig`）不再因 Rust std 的 UTF-8 校验崩溃，按控制台代码页原样显示；落库仍 UTF-8 有损。非破坏性。
@@ -91,6 +91,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.17.6** | `v0.17.6` | RSS digest/fetch 区分度：digest 摘要列（文本 80/JSON 200 截断）+ `--since` 时间窗（复用 timeline 时长解析）+ 本地 rss-items 缓存优先（`--fresh` 强刷、空/无结果回退实时）；fetch 双入口（`--name` 订阅源写缓存 / `<url>` stateless 调试不写缓存）；新增 `TypedValue::TruncatedText`；CLI 帮助与 docs/commands×2/skill 命令表同步 | [F008](./docs/adr/F008-rss-module.md)（amendment） |
 | **v0.17.5** | `v0.17.5` | `task run --json` 输出契约收口 + 捕获编码修复：`--json` 只捕获不回声（stdout 唯一 `_result` 信封）；捕获记录 UTF-8 优先 + GBK 兜底解码，修复 `ipconfig` GBK 输出在 JSON/task.db 里的 U+FFFD 乱码；新增 encoding_rs 依赖 | [F017](./docs/adr/F017-task-module.md) |
 | **v0.17.4** | `v0.17.4` | 配置与输出架构重构收口：ConfigEditor 统一 config.toml 唯一写入者（保留注释 + 原子写 + 按 path 校验，config set/task add-remove 走同一 seam）；退出码从 `Output` 移到 `RequestContext`（Output 回归纯值，MCP 不受影响）；task 执行深化到模块接口 + 调度器合并 Scheduler context；CLI 形状与 JSON 契约未变 | [R022](./docs/adr/R022-config-editor.md), [R023](./docs/adr/R023-exit-code-on-request-context.md) |
 | **v0.17.3** | `v0.17.3` | Task run Windows 控制台非 UTF-8 输出修复：透传改用 OS 句柄直写（WriteFile），GBK 控制台输出不再崩溃；新增非 UTF-8 中继回归测试 | [F017](./docs/adr/F017-task-module.md) |
