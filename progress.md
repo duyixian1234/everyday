@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.17.6 进行中** — **RSS digest/fetch 区分度**（[F008](./docs/adr/F008-rss-module.md) amendment，2026-08-19）：digest 输出加摘要列（feed/title/summary/published/author/link，文本 80/JSON 200 截断，新增 `TypedValue::TruncatedText`）；`--since` 复用 timeline 时长解析按 published 过滤；digest 数据源改为本地 rss-items 缓存优先（`--fresh` 强刷，表空/无结果回退实时）；fetch 双入口（`--name N` 写缓存 / `<url>` stateless 不写缓存）。非破坏性。
 - **v0.17.5 已发布** — **`task run --json` 输出契约收口 + 捕获编码修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`--json` 模式改为只捕获不回声——stdout 是唯一输出（单个 `_result` 信封），子进程原始输出不再泄漏到 stderr；捕获记录解码由 `from_utf8_lossy` 改为 UTF-8 优先 + GBK 兜底（新增 `encoding_rs` 依赖），修复中文 Windows 下 `ipconfig` 的 GBK 输出在 `_result.stdout/stderr` 里的 U+FFFD 乱码。契约变更（`--json` 不再 tee 到 stderr），非破坏性但改文档。
 - **v0.17.4 已发布** — **配置与输出架构重构收口**（[R022](./docs/adr/R022-config-editor.md) + [R023](./docs/adr/R023-exit-code-on-request-context.md)）：ConfigEditor 统一 config.toml 唯一写入者——`config set` 升级为保留注释 + 按 path 写入时校验 + 原子写，关闭 F017 的丢失注释分歧，`task add/remove` 改走 ConfigEditor（task/config_edit.rs 移除），`config list` 文本读侧展示原文件、JSON 契约不变；退出码从 `Output::ExitCode` 变体移到 `RequestContext` 的 `OnceLock<i32>` 槽，`Output` 回归纯值类型，`task run` 改调 `ctx.set_exit_code`、`finalize` 在 CLI 边界读退出码，MCP 直接渲染 `Output` 不受影响；task 执行深化到模块接口、调度器合并为 Scheduler context。非破坏性（CLI 形状与 JSON 契约未变）。
 - **v0.17.3 已发布** — **Task run Windows 控制台非 UTF-8 输出修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`task run` 透传子进程输出改用 OS 句柄直写（`WriteFile`），中文 Windows 控制台（GBK 代码页，如 `ipconfig`）不再因 Rust std 的 UTF-8 校验崩溃，按控制台代码页原样显示；落库仍 UTF-8 有损。非破坏性。
@@ -43,6 +44,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-19 | F | [F008](./docs/adr/F008-rss-module.md)（amendment） | RSS digest/fetch 区分度：digest 摘要列 + `--since` + 缓存优先（`--fresh` 强刷、空/无结果回退实时）；fetch 双入口（`--name` 写缓存 / `<url>` stateless）；纠正既有漂移（订阅存 config.toml、`--category`、`--since` 补实现）；非破坏性 patch v0.17.6 |
 | 2026-08-18 | R | [R023](./docs/adr/R023-exit-code-on-request-context.md) | 退出码移到 RequestContext：`Output::ExitCode` 变体与 `with_exit_code()` 移除，`Output` 回归纯值类型；`task run` 改调 `ctx.set_exit_code(mirrored)`；`finalize(result, ctx, mode)` 在 CLI 边界读退出码；`RequestContext` 新增 `OnceLock<i32>` 退出码槽（内部可变，保持 `&` 流动且 Send+Sync）；MCP 直接渲染、无进程退出 |
 | 2026-08-18 | R | [R022](./docs/adr/R022-config-editor.md) | 统一保留注释的 ConfigEditor：config 模块成为 config.toml 唯一写入者（set_dotted / insert_task / remove_task，toml_edit load→mutate→原子写）；`config set` 也升级为保留注释 + 写入时按 path 校验 + 原子写，关闭 F017 的 config-set 丢失注释分歧；task/config_edit.rs 移除；config list 文本读侧展示原文件、JSON 契约不变 |
 | 2026-08-18 | F | [F017](./docs/adr/F017-task-module.md) | Task 模块：`[tasks.<name>]`、无 shell runner、task.db 历史、64 KiB 捕获、进程树超时终止、daemon 独立 cron 调度循环 |

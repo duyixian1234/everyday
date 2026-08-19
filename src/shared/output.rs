@@ -20,6 +20,14 @@ use crate::shared::request_context::RequestContext;
 pub enum TypedValue {
     /// String cell (JSON: string).
     Text(String),
+    /// String cell truncated for text-mode tables but kept verbatim in JSON
+    /// (e.g. `rss digest` summary: text ~80 chars, JSON full ~200 chars).
+    TruncatedText {
+        /// Full value (JSON output).
+        full: String,
+        /// Text-mode display limit (in chars); longer values get an ellipsis.
+        text_limit: usize,
+    },
     /// Numeric cell (JSON: number). Integral values render without a
     /// decimal point in text mode.
     Number(f64),
@@ -33,6 +41,15 @@ impl TypedValue {
     /// Build a text cell.
     pub fn text<S: Into<String>>(s: S) -> Self {
         Self::Text(s.into())
+    }
+
+    /// Build a text cell that is truncated for text-mode tables (`limit`
+    /// chars + ellipsis when longer) but emitted verbatim in JSON.
+    pub fn truncated_text<S: Into<String>>(full: S, text_limit: usize) -> Self {
+        Self::TruncatedText {
+            full: full.into(),
+            text_limit,
+        }
     }
 
     /// Build a numeric cell.
@@ -54,6 +71,16 @@ impl TypedValue {
     pub fn as_display(&self) -> String {
         match self {
             Self::Text(s) => s.clone(),
+            Self::TruncatedText { full, text_limit } => {
+                if full.chars().count() > *text_limit {
+                    format!(
+                        "{}…",
+                        crate::util::strings::truncate_chars(full, *text_limit)
+                    )
+                } else {
+                    full.clone()
+                }
+            }
             Self::Number(n) => n.to_string(),
             Self::Boolean(b) => b.to_string(),
             Self::Null => String::new(),
@@ -69,6 +96,7 @@ impl TypedValue {
     pub fn to_json(&self) -> Value {
         match self {
             Self::Text(s) => Value::String(s.clone()),
+            Self::TruncatedText { full, .. } => Value::String(full.clone()),
             Self::Number(n) => {
                 if n.is_finite() && n.fract() == 0.0 && n.abs() < I64_EXACT_MAX {
                     json!(*n as i64)
@@ -399,6 +427,30 @@ mod tests {
         assert_eq!(TypedValue::Boolean(true).to_json(), json!(true));
         // f64 beyond i64's exact range keeps floating-point serialization.
         assert_eq!(TypedValue::Number(1e300).to_json(), json!(1e300));
+    }
+
+    #[test]
+    fn truncated_text_truncates_in_text_mode_only() {
+        let full = "x".repeat(85);
+        let cell = TypedValue::truncated_text(full.clone(), 80);
+        // Text mode: 80 chars + ellipsis.
+        let display = cell.as_display();
+        assert_eq!(display.chars().count(), 81);
+        assert_eq!(display, format!("{}…", "x".repeat(80)));
+        // JSON mode: full value verbatim.
+        assert_eq!(cell.to_json(), serde_json::json!(full));
+    }
+
+    #[test]
+    fn truncated_text_exact_limit_and_empty_unchanged() {
+        // Exactly at the limit: no truncation, no ellipsis.
+        let exact = "y".repeat(80);
+        let cell = TypedValue::truncated_text(exact.clone(), 80);
+        assert_eq!(cell.as_display(), exact);
+        // Empty stays empty.
+        let cell = TypedValue::truncated_text("", 80);
+        assert_eq!(cell.as_display(), "");
+        assert_eq!(cell.to_json(), serde_json::json!(""));
     }
 
     #[test]

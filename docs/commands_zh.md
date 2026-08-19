@@ -79,7 +79,9 @@ everyday config set default_account.mail personal
 |------|------|------|------|
 | `follow` | 添加订阅源 | ✅ 可用 | `everyday rss follow --name N --url URL [--category C]` |
 | `list` | 列出订阅源 | ✅ 可用 | `everyday rss list` |
-| `digest` | 聚合近期内容 | ✅ 可用 | `everyday rss digest [--limit N]` |
+| `unfollow` | 取消订阅 | ✅ 可用 | `everyday rss unfollow --name N` |
+| `digest` | 聚合阅读视图（摘要列，缓存优先） | ✅ 可用 | `everyday rss digest [--limit N] [--name FEED] [--category C] [--since 30m\|7d\|YYYY-MM-DD] [--fresh]` |
+| `fetch` | 抓取单个订阅源（`--name N` 写缓存）或任意 URL（`<url>` 调试不写缓存） | ✅ 可用 | `everyday rss fetch (--name N \| <url>) [--limit N]` |
 
 ### note — 笔记与知识库（本地 SQLite）
 

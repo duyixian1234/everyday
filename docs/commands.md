@@ -80,7 +80,9 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 |------|------|------|------|
 | `follow` | Add a feed | ✅ Available | `everyday rss follow --name N --url URL [--category C]` |
 | `list` | List feeds | ✅ Available | `everyday rss list` |
-| `digest` | Aggregate recent items | ✅ Available | `everyday rss digest [--limit N]` |
+| `unfollow` | Remove a feed | ✅ Available | `everyday rss unfollow --name N` |
+| `digest` | Aggregate reading view (summary column, cache-first) | ✅ Available | `everyday rss digest [--limit N] [--name FEED] [--category C] [--since 30m\|7d\|YYYY-MM-DD] [--fresh]` |
+| `fetch` | Fetch one feed (`--name N` subscription + cache, or `<url>` stateless debug) | ✅ Available | `everyday rss fetch (--name N \| <url>) [--limit N]` |
 
 ### note — notes & knowledge base (local SQLite)
 

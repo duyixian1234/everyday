@@ -16,7 +16,7 @@
 //!   surface to the user).
 //! - [`RssSearchProvider`] queries this cache via GLOB on title / summary.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -54,16 +54,16 @@ fn rss_items_db_path() -> Result<PathBuf> {
     Ok(dir.join("everyday").join("rss-items.db"))
 }
 
-/// Open the RSS items db (creating if needed) and ensure tables exist.
-pub async fn open() -> Result<SqlitePool> {
-    let path = rss_items_db_path()?;
+/// Open the RSS items db at an explicit path (creating if needed) and ensure
+/// tables exist. Used by [`open`] and by callers that point at a test db.
+pub async fn open_at(path: &Path) -> Result<SqlitePool> {
     if let Some(parent) = path.parent()
         && !parent.as_os_str().is_empty()
     {
         std::fs::create_dir_all(parent)?;
     }
     let opts = SqliteConnectOptions::new()
-        .filename(&path)
+        .filename(path)
         .create_if_missing(true);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
@@ -72,6 +72,11 @@ pub async fn open() -> Result<SqlitePool> {
     pool.execute(CREATE_RSS_ITEMS_SQL).await?;
     pool.execute(IX_RSS_ITEMS_PUB_SQL).await?;
     Ok(pool)
+}
+
+/// Open the default RSS items db (`~/.config/everyday/rss-items.db`).
+pub async fn open() -> Result<SqlitePool> {
+    open_at(&rss_items_db_path()?).await
 }
 
 /// Insert or replace a single fetched entry. `INSERT OR REPLACE` is used
@@ -130,6 +135,81 @@ pub async fn upsert_items(
         }
     }
     Ok(count)
+}
+
+/// Query the digest rows from the item cache (cache-first digest path).
+///
+/// Filters by the feed-name set (category/name are resolved to names by the
+/// caller from `[[rss.feeds]]` — the cache table has no category column),
+/// the `--since` window (undated entries are dropped when a window is set),
+/// and `limit`. Ordering matches the live path: `published` descending,
+/// undated entries last.
+pub async fn query_items(
+    pool: &SqlitePool,
+    feed_names: &[&str],
+    since: Option<DateTime<Utc>>,
+    limit: usize,
+) -> Result<Vec<rss::RssEntryRow>> {
+    if feed_names.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut sql = String::from(
+        "SELECT feed_name, title, summary, link, author, published \
+         FROM rss_items WHERE feed_name IN (",
+    );
+    let mut n = 0usize;
+    for (i, _) in feed_names.iter().enumerate() {
+        if i > 0 {
+            sql.push_str(", ");
+        }
+        n += 1;
+        sql.push_str(&format!("?{n}"));
+    }
+    sql.push(')');
+    if since.is_some() {
+        n += 1;
+        // Undated entries (empty/NULL published) can't be judged against the
+        // window and are dropped — timeline rss provider window semantics.
+        sql.push_str(&format!(" AND published != '' AND published >= ?{n}"));
+    }
+    n += 1;
+    sql.push_str(&format!(
+        " ORDER BY (published = '' OR published IS NULL), published DESC, fetched_at DESC \
+         LIMIT ?{n}"
+    ));
+
+    let mut query = sqlx::query(&sql);
+    for name in feed_names {
+        query = query.bind(name);
+    }
+    if let Some(s) = since {
+        query = query.bind(s.to_rfc3339());
+    }
+    query = query.bind(limit as i64);
+
+    let rows = query.fetch_all(pool).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        let published_raw: String = r.get("published");
+        let sort_key = if published_raw.is_empty() {
+            None
+        } else {
+            crate::util::datetime::parse_rfc3339(&published_raw)
+        };
+        out.push(rss::RssEntryRow {
+            feed: r.get("feed_name"),
+            title: r.get("title"),
+            // The cache stores up to 500 chars; the digest row contract is ~200.
+            summary: rss::summary_for_row(&r.get::<String, _>("summary")),
+            published: sort_key
+                .map(|d| d.format("%Y-%m-%d %H:%M UTC").to_string())
+                .unwrap_or_else(|| "—".into()),
+            author: r.get("author"),
+            link: r.get("link"),
+            sort_key,
+        });
+    }
+    Ok(out)
 }
 
 /// Cross-module search (Phase 11): return RSS hits whose `title` or
@@ -363,6 +443,116 @@ mod tests {
         assert_eq!(row.get::<String, _>("summary"), "new summary");
         assert_eq!(row.get::<String, _>("author"), "new");
 
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn query_items_filters_by_feed_names_since_limit_and_orders() {
+        let (pool, path) = tmp_pool().await;
+        let feed_a = RssFeed {
+            name: "a".into(),
+            url: "https://a/feed".into(),
+            category: None,
+        };
+        let feed_b = RssFeed {
+            name: "b".into(),
+            url: "https://b/feed".into(),
+            category: None,
+        };
+        let t_new = Utc.with_ymd_and_hms(2026, 7, 9, 14, 0, 0).unwrap();
+        let t_old = Utc.with_ymd_and_hms(2026, 7, 8, 14, 0, 0).unwrap();
+        upsert_items(
+            &pool,
+            &feed_a,
+            &[
+                rss::EntryForCache {
+                    guid: "a1".into(),
+                    title: "a-new".into(),
+                    summary: "s1".into(),
+                    link: "https://a/1".into(),
+                    author: "".into(),
+                    published: Some(t_new),
+                },
+                rss::EntryForCache {
+                    guid: "a2".into(),
+                    title: "a-undated".into(),
+                    summary: "s2".into(),
+                    link: "https://a/2".into(),
+                    author: "".into(),
+                    published: None,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+        upsert_items(
+            &pool,
+            &feed_b,
+            &[rss::EntryForCache {
+                guid: "b1".into(),
+                title: "b-old".into(),
+                summary: "s3".into(),
+                link: "https://b/1".into(),
+                author: "".into(),
+                published: Some(t_old),
+            }],
+        )
+        .await
+        .unwrap();
+
+        // Feed-name filter: only feed a; dated (newest) first, undated last.
+        let rows = query_items(&pool, &["a"], None, 10).await.unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].title, "a-new");
+        assert_eq!(rows[0].published, "2026-07-09 14:00 UTC");
+        assert_eq!(rows[1].title, "a-undated");
+        assert_eq!(rows[1].published, "—");
+        assert!(rows[1].sort_key.is_none());
+
+        // --since window: entries at/after the bound kept (boundary == since
+        // included); earlier and undated entries dropped.
+        let rows = query_items(&pool, &["a", "b"], Some(t_old), 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].title, "a-new");
+        assert_eq!(rows[1].title, "b-old");
+
+        // A later bound drops the older dated entry too.
+        let t_mid = Utc.with_ymd_and_hms(2026, 7, 9, 0, 0, 0).unwrap();
+        let rows = query_items(&pool, &["a", "b"], Some(t_mid), 10)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "a-new");
+
+        // No matching feed names -> empty.
+        assert!(
+            query_items(&pool, &["nope"], None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // Empty name set (defensive) -> empty.
+        assert!(query_items(&pool, &[], None, 10).await.unwrap().is_empty());
+
+        // limit truncates after ordering.
+        let rows = query_items(&pool, &["a"], None, 1).await.unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].title, "a-new");
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn query_items_empty_table_returns_empty() {
+        let (pool, path) = tmp_pool().await;
+        assert!(
+            query_items(&pool, &["a"], None, 10)
+                .await
+                .unwrap()
+                .is_empty()
+        );
         let _ = std::fs::remove_file(path);
     }
 

@@ -261,8 +261,8 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → creden
 | `rss follow` | Add a feed to config | `everyday rss follow --name N --url URL [--category C]` |
 | `rss list` | List followed feeds | `everyday rss list` |
 | `rss unfollow` | Remove a feed | `everyday rss unfollow --name N` |
-| `rss digest` | Aggregate recent items across feeds (sorted by date) | `everyday rss digest [--limit N] [--name FEED] [--category C]` |
-| `rss fetch` | Fetch one feed and list its entries | `everyday rss fetch --name N [--limit N]` |
+| `rss digest` | Aggregate reading view: summary column, cache-first (use `--fresh` to force live), `--since` window | `everyday rss digest [--limit N] [--name FEED] [--category C] [--since 30m\|7d\|YYYY-MM-DD] [--fresh]` |
+| `rss fetch` | Fetch one feed: `--name N` subscription (writes cache) or `<url>` stateless debug (no cache write) | `everyday rss fetch (--name N \| <url>) [--limit N]` |
 
 ---
 
