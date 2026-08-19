@@ -8,24 +8,28 @@ use std::collections::HashMap;
 use std::sync::LazyLock;
 use std::sync::Mutex;
 
-/// Per-process ID state: the last-observed local calendar day (`YYYYMMDD` as
-/// u64) and the per-prefix ordinal counters for that day.
+/// Per-process ID state: per-prefix `(last-observed-day, counter)` pairs.
 ///
-/// Counters reset when the observed day changes, keeping ids short and
+/// Counters reset when that prefix observes a new day, keeping ids short and
 /// self-explanatory (`n20260814-1a2b-001` = "the 1st note by process 1a2b on
 /// 2026-08-14") while remaining unique. The PID segment — restored in the
 /// R021 revision below — keeps ids unique **across processes**: the CLI is
 /// one-shot per command, so two `everyday todo add` runs on the same day
 /// would otherwise both start their ordinal at 001 and collide on
 /// `t20260814-001` (surfaced by the SQLite `PRIMARY KEY` constraint).
+///
+/// The day is tracked **per prefix**: one prefix observing a new day must not
+/// reset another prefix's counter. A single shared `day` field caused exactly
+/// that — `util::id` tests injecting a fixed day cleared the whole counter
+/// map, resetting e.g. the timeline tests' `tl` counter mid-run and making
+/// two parallel tests pick the same temp-file name.
 struct IdState {
-    day: u64,
-    counters: HashMap<String, u64>,
+    /// prefix → (last-observed local day, ordinal).
+    counters: HashMap<String, (u64, u64)>,
 }
 
 static STATE: LazyLock<Mutex<IdState>> = LazyLock::new(|| {
     Mutex::new(IdState {
-        day: 0,
         counters: HashMap::new(),
     })
 });
@@ -52,13 +56,12 @@ pub fn gen_id(prefix: &str) -> String {
 /// Core generator with the day injected (tests pin a fixed day).
 fn gen_id_for_day(prefix: &str, day: u64) -> String {
     let mut state = STATE.lock().unwrap();
-    if state.day != day {
-        state.day = day;
-        state.counters.clear();
+    let entry = state.counters.entry(prefix.to_string()).or_insert((day, 0));
+    if entry.0 != day {
+        *entry = (day, 0);
     }
-    let seq = state.counters.entry(prefix.to_string()).or_insert(0);
-    *seq += 1;
-    format!("{prefix}{day}-{:x}-{seq:03}", std::process::id())
+    entry.1 += 1;
+    format!("{prefix}{day}-{:x}-{:03}", std::process::id(), entry.1)
 }
 
 #[cfg(test)]
