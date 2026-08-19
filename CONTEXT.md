@@ -405,6 +405,26 @@ mail_cache.db **独立**于 timeline.db，不跨数据库 JOIN。Timeline 的 ma
 
 ---
 
+## RSS（订阅聚合）
+
+> RSS/Atom 订阅模块。设计决策见 [`docs/adr/F008`](docs/adr/F008-rss-module.md)（2026-08-19 amendment：digest 摘要列 + `--since`、fetch 双入口、订阅存储纠正）。
+
+### Feed（订阅源）
+`[[rss.feeds]]` 中的一条订阅（`name` / `url` / `category` 可空）。订阅列表是用户状态，存于 config.toml；RSS 无凭据（AuthStrategy::None）。
+
+### Digest（聚合摘要）
+跨 feed 的聚合浏览视图（`everyday rss digest`）。默认读本地条目缓存（毫秒级）；`--fresh` 实时抓取并更新缓存；表空或过滤后无结果时回退实时抓取。支持可选时间窗（`--since`，时长语法 `30m|7d`，按 `published` 过滤）：有时间窗时无 published 的条目剔除，无时间窗时保留（排末位）。每行含作者提供的摘要（summary）。
+
+### Fetch（单源抓取）
+单源抓取动作（`everyday rss fetch`），双入口：
+- `--name N`：从订阅列表解析 URL 抓取，写条目缓存（等价 daemon 单源拉取）。
+- 裸 URL（位置参数）：stateless 调试——任意 URL 直接抓取解析，不查订阅列表、不写缓存。
+
+### RSS item cache（条目缓存）
+`rss-items.db` 的 `rss_items` 表（guid 主键）。写入者：`digest` / `fetch --name` / daemon 周期拉取；读者：`digest`（默认路径）与 `search`。无 staleness 阈值——新鲜度由 daemon（常驻时）与 `--fresh`（手动时）负责，查询路径零网络。
+
+---
+
 ## WebDAV 设备同步
 
 > 跨设备文件级同步层。决策见 [`docs/adr/D001`](docs/adr/D001-webdav-file-sync.md) [`D002`](docs/adr/D002-snapshot-hash-state.md) [`D003`](docs/adr/D003-auto-sync-cli-boundary.md)。
