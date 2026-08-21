@@ -14,7 +14,7 @@
 use std::collections::HashMap;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Local, Utc};
 use http::Uri;
 use hyper_rustls::HttpsConnectorBuilder;
 use hyper_util::client::legacy::Client as HyperClient;
@@ -724,7 +724,7 @@ fn build_event_row(href: &str, event: &Event) -> Option<EventRow> {
 /// (local-time order).
 ///
 /// - `Date` variant pads 00:00:00 (all-day event).
-/// - `Utc` takes naive_utc (normalized to the UTC instant).
+/// - `Utc` normalizes to the local wall-clock time (L006: local-time display).
 /// - `Floating` / `WithTimezone` take the naive part (local time, more intuitive for
 ///   "today's events").
 ///
@@ -734,7 +734,11 @@ fn build_event_row(href: &str, event: &Event) -> Option<EventRow> {
 fn date_perhaps_time_to_naive(dpt: &DatePerhapsTime) -> Option<chrono::NaiveDateTime> {
     match dpt {
         DatePerhapsTime::Date(d) => d.and_hms_opt(0, 0, 0),
-        DatePerhapsTime::DateTime(CalendarDateTime::Utc(dt)) => Some(dt.naive_utc()),
+        // UTC instants normalize to the local wall-clock time so sort/filter
+        // compare against `Local::now()` consistently (L006: local-time display).
+        DatePerhapsTime::DateTime(CalendarDateTime::Utc(dt)) => {
+            Some(dt.with_timezone(&Local).naive_local())
+        }
         DatePerhapsTime::DateTime(CalendarDateTime::Floating(dt)) => Some(*dt),
         DatePerhapsTime::DateTime(CalendarDateTime::WithTimezone { date_time, .. }) => {
             Some(*date_time)
@@ -746,8 +750,10 @@ fn date_perhaps_time_to_naive(dpt: &DatePerhapsTime) -> Option<chrono::NaiveDate
 fn format_date_perhaps_time(dpt: &DatePerhapsTime) -> String {
     match dpt {
         DatePerhapsTime::Date(d) => d.format("%Y-%m-%d").to_string(),
+        // UTC instants render as local wall-clock time; floating / TZID
+        // events keep their naive wall-clock time (L006: local-time display).
         DatePerhapsTime::DateTime(CalendarDateTime::Utc(dt)) => {
-            dt.format("%Y-%m-%d %H:%M").to_string()
+            dt.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string()
         }
         DatePerhapsTime::DateTime(CalendarDateTime::Floating(dt)) => {
             dt.format("%Y-%m-%d %H:%M").to_string()
@@ -1071,7 +1077,7 @@ impl Searchable for CalSearchProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::{TimeZone, Utc};
+    use chrono::{Local, TimeZone, Utc};
 
     // ---- P1 service layer (F012) ----
 
@@ -1268,7 +1274,7 @@ mod tests {
         );
         assert_eq!(
             date_perhaps_time_to_naive(&DatePerhapsTime::DateTime(CalendarDateTime::Utc(utc))),
-            Some(ndt)
+            Some(utc.with_timezone(&Local).naive_local())
         );
         assert_eq!(
             date_perhaps_time_to_naive(&DatePerhapsTime::DateTime(CalendarDateTime::Floating(ndt))),
@@ -1298,7 +1304,7 @@ mod tests {
         assert_eq!(row.summary, "meeting");
         assert_eq!(row.href, "/cal/ev.ics");
         assert!(row.start.contains("2026-07-09"));
-        assert_eq!(row.sort_key, dt.naive_utc());
+        assert_eq!(row.sort_key, dt.with_timezone(&Local).naive_local());
     }
 
     #[test]
@@ -1323,7 +1329,7 @@ mod tests {
         assert_eq!(ev.get_summary(), Some("测试会议"));
         let start = ev.get_start().expect("has start");
         let start_ndt = date_perhaps_time_to_naive(&start).unwrap();
-        assert_eq!(start_ndt, dt.naive_utc());
+        assert_eq!(start_ndt, dt.with_timezone(&Local).naive_local());
     }
 
     #[test]
