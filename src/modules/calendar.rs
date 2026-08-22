@@ -752,9 +752,10 @@ fn format_date_perhaps_time(dpt: &DatePerhapsTime) -> String {
         DatePerhapsTime::Date(d) => d.format("%Y-%m-%d").to_string(),
         // UTC instants render as local wall-clock time; floating / TZID
         // events keep their naive wall-clock time (L006: local-time display).
-        DatePerhapsTime::DateTime(CalendarDateTime::Utc(dt)) => {
-            dt.with_timezone(&Local).format("%Y-%m-%d %H:%M").to_string()
-        }
+        DatePerhapsTime::DateTime(CalendarDateTime::Utc(dt)) => dt
+            .with_timezone(&Local)
+            .format("%Y-%m-%d %H:%M")
+            .to_string(),
         DatePerhapsTime::DateTime(CalendarDateTime::Floating(dt)) => {
             dt.format("%Y-%m-%d %H:%M").to_string()
         }
