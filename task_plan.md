@@ -93,6 +93,12 @@
 ### Phase 23: Task 用户自定义命令与 cron 调度（F017）[done]
 按 ADR [F017](./docs/adr/F017-task-module.md) 落地 `[tasks.<name>]` 配置、`task add/run/list/remove/history`、无 shell 进程树超时终止与 64 KiB 分流捕获、`task.db` 审计历史，以及与同步周期独立的 daemon cron 循环（含 `--once`）。
 
+### Phase 24: Mail 补遗 — `search --cached` + `cache gc`（M006 / M007）[plan]
+按 ADR [M006](./docs/adr/M006-mail-search-cached.md) / [M007](./docs/adr/M007-mail-cache-gc.md) 落地两块 mail 模块补全，单主题多 patch 节奏：
+- **v0.18.0（M006）**：`mail search --query Q --cached` 本地缓存搜索——显式 opt-in，默认仍走 IMAP `SEARCH TEXT`（保全 body/header 召回）；stale > 15min 先同步再查本地（沿袭 `mail list`）；复用 `search_envelopes`（subject/from/to，token-OR GLOB，同跨模块 `search`）；`--cached` 走 P6 类型化渲染（uid 数字 / unread 布尔），默认路径保留历史纯字符串契约。
+- **v0.18.1（M007）**：`mail cache gc` 幽灵清理——显式手动命令，daemon 保持纯拉取铁律；服务端对账（连 IMAP LIST + SELECT 比对 UID）判定幽灵，`UIDVALIDITY` 变更文件夹跳过删除；`--account`/`--folder` scoped 默认全库；对账成功文件夹推进水位。
+- 配套：两 ADR + cli_contract（mail 加 gc action）+ CONTEXT.md + README/技能文档；`just ci` + `just check-links` 全绿后按 patch 提交。
+
 ---
 
 ## 关键设计决策

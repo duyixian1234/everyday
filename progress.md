@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.18 规划（M006/M007 设计已定，未实现）** — Mail 补遗：`mail search --cached` 本地缓存搜索（v0.18.0）+ `mail cache gc` 服务端对账幽灵清理（v0.18.1）；两 ADR 已写入，待实现。
 - **v0.17.7 已发布** — **cal 日程时区修复**（L006 补丁，2026-08-21）：`cal list` 对 UTC 存储事件（DTSTART 带 Z）改为按本地墙钟输出（`format_date_perhaps_time` / `date_perhaps_time_to_naive` 对 `Utc` 变体转 `Local`），修复日程显示早 8 小时（如 C196 西安→榆林实际 09:02 显示 01:02），同时修正 UTC 事件与 `Local::now()` 比较的排序错位。非破坏性。
 - **v0.17.6 已发布** — **RSS digest/fetch 区分度**（[F008](./docs/adr/F008-rss-module.md) amendment，2026-08-19）：digest 输出加摘要列（feed/title/summary/published/author/link，文本 80/JSON 200 截断，新增 `TypedValue::TruncatedText`）；`--since` 复用 timeline 时长解析按 published 过滤；digest 数据源改为本地 rss-items 缓存优先（`--fresh` 强刷，表空/无结果回退实时）；fetch 双入口（`--name N` 写缓存 / `<url>` stateless 不写缓存）。非破坏性。
 - **v0.17.5 已发布** — **`task run --json` 输出契约收口 + 捕获编码修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`--json` 模式改为只捕获不回声——stdout 是唯一输出（单个 `_result` 信封），子进程原始输出不再泄漏到 stderr；捕获记录解码由 `from_utf8_lossy` 改为 UTF-8 优先 + GBK 兜底（新增 `encoding_rs` 依赖），修复中文 Windows 下 `ipconfig` 的 GBK 输出在 `_result.stdout/stderr` 里的 U+FFFD 乱码。契约变更（`--json` 不再 tee 到 stderr），非破坏性但改文档。
@@ -45,6 +46,8 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-08-21 | M | [M006](./docs/adr/M006-mail-search-cached.md) | `mail search --cached` 本地缓存搜索：显式 opt-in（默认仍走 IMAP `SEARCH TEXT` 保全 body 召回）；stale >15min 先同步再查本地；复用 `search_envelopes` token-OR GLOB；`--cached` 走 P6 类型化输出，默认路径保留历史纯字符串契约（v0.18.0 计划） |
+| 2026-08-21 | M | [M007](./docs/adr/M007-mail-cache-gc.md) | `mail cache gc` 幽灵清理：显式手动命令（daemon 保持纯拉取）；服务端对账判定幽灵，UIDVALIDITY 变更文件夹跳过；`--account`/`--folder` scoped 默认全库；对账成功推进水位（v0.18.1 计划） |
 | 2026-08-19 | F | [F008](./docs/adr/F008-rss-module.md)（amendment） | RSS digest/fetch 区分度：digest 摘要列 + `--since` + 缓存优先（`--fresh` 强刷、空/无结果回退实时）；fetch 双入口（`--name` 写缓存 / `<url>` stateless）；纠正既有漂移（订阅存 config.toml、`--category`、`--since` 补实现）；非破坏性 patch v0.17.6 |
 | 2026-08-18 | R | [R023](./docs/adr/R023-exit-code-on-request-context.md) | 退出码移到 RequestContext：`Output::ExitCode` 变体与 `with_exit_code()` 移除，`Output` 回归纯值类型；`task run` 改调 `ctx.set_exit_code(mirrored)`；`finalize(result, ctx, mode)` 在 CLI 边界读退出码；`RequestContext` 新增 `OnceLock<i32>` 退出码槽（内部可变，保持 `&` 流动且 Send+Sync）；MCP 直接渲染、无进程退出 |
 | 2026-08-18 | R | [R022](./docs/adr/R022-config-editor.md) | 统一保留注释的 ConfigEditor：config 模块成为 config.toml 唯一写入者（set_dotted / insert_task / remove_task，toml_edit load→mutate→原子写）；`config set` 也升级为保留注释 + 写入时按 path 校验 + 原子写，关闭 F017 的 config-set 丢失注释分歧；task/config_edit.rs 移除；config list 文本读侧展示原文件、JSON 契约不变 |

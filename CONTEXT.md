@@ -347,11 +347,19 @@ envelope 的 `flags` 字段是 **sync 时刻的快照**。用户在 web 端 / �
 
 ### Ghost Envelope（幽灵邮件）
 
-K1 清理策略：sync 只追加不删除。Server 端被删除 / 跨文件夹移动的邮件，本地 envelope 仍留着。默认 `mail list --limit 20` 按日期排序，幽灵邮件通常已被新邮件挤出 limit，不影响日常体感。数据库无界增长（10 万封约 30MB），未来可加 `mail cache gc` 命令手动清理。
+Server 端被删除 / 跨文件夹移动的邮件，本地 envelope 仍留着（K1 清理策略：sync 只追加不删除）。默认 `mail list --limit 20` 按日期排序，幽灵邮件通常已被新邮件挤出 limit，不影响日常体感。可显式 `mail cache gc` 清理（见 [M007](docs/adr/M007-mail-cache-gc.md)）：服务端对账后删除无主 envelope，并推进对账成功文件夹的水位。
 
-### Search 不走缓存
+### Server reconciliation（服务端对账）
 
-`mail search --query Q` 仍走 IMAP 直连（`SEARCH TEXT "Q"`），不读本地缓存。原因：IMAP SEARCH 支持 subject + body + header 多字段搜索；本地 LIKE 仅能搜 subject/from，语义不对等。与 `mail list` 行为不对称，文档中明确。
+`mail cache gc` 判定幽灵的方式：连 IMAP，对每个文件夹 SELECT 读当前 `uid_validity` 与消息集，与本地 envelope / 水位比对，删除 server 端已不存在的 UID。`UIDVALIDITY` 已变更的文件夹**跳过删除**（UID 被复用，误删会毁掉有效数据）。对账成功的文件夹水位同步推进到 server 当前值，避免下次增量 sync 反复检索已删 UID。
+
+### Mail search --cached（本地缓存搜索）
+
+`mail search --query Q --cached` 走本地 envelope 缓存而非 IMAP（见 [M006](docs/adr/M006-mail-search-cached.md)）：复用与跨模块 `search` 一致的 `search_envelopes` 语义（subject/from/to，token-OR、大小写不敏感 GLOB）。默认 `mail search` 仍走 IMAP `SEARCH TEXT`（覆盖 body/header 全字段）。`--cached` 沿袭 `mail list` 的 staleness 同步：文件夹 stale > 15 分钟先同步再查本地；输出为类型化记录（uid 数字 / unread 布尔）。
+
+### Search 默认不走缓存
+
+`mail search --query Q` 默认仍走 IMAP 直连（`SEARCH TEXT "Q"`），不读本地缓存。原因：IMAP SEARCH 支持 subject + body + header 多字段搜索；本地缓存仅能搜 subject/from/to，语义不对等。需要本地快路径时用 `--cached`（见上）。与 `mail list` 的默认行为不对称，文档中明确。
 
 ### Read 不走缓存
 

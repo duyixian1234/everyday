@@ -55,6 +55,8 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [M003](M003-envelope-cache.md) | Envelope cache — dual-table SQLite design with K1 append-only retention | Accepted | 2026-07-11 |
 | [M004](M004-uid-watermark-sync.md) | UID watermark + UIDVALIDITY incremental sync | Accepted | 2026-07-11 |
 | [M005](M005-staleness-auto-sync.md) | Staleness-based auto-sync + flags snapshot + search bypass | Accepted | 2026-07-11 |
+| [M006](M006-mail-search-cached.md) | `mail search --cached` — local envelope-cache search path (opt-in, typed output) | Accepted | 2026-08-21 |
+| [M007](M007-mail-cache-gc.md) | `mail cache gc` — manual, server-reconciled ghost-envelope cleanup (daemon stays pull-only) | Accepted | 2026-08-21 |
 
 ## Calendar (C-series)
 
