@@ -367,6 +367,65 @@ pub async fn search_envelopes(pool: &SqlitePool, tokens: &[&str]) -> Result<Vec<
     Ok(out)
 }
 
+/// Account-scoped free-text search over the envelope cache — the CLI's
+/// `mail search --cached` local path ([M006](../../docs/adr/M006-mail-search-cached.md)).
+///
+/// Same token-OR case-insensitive GLOB matching as [`search_envelopes`]
+/// (subject/from/to, metacharacter tokens skipped), but restricted to one
+/// account and optionally one folder, with a row cap. This is what `mail list`
+/// does to the cache (account-scoped) plus the search matcher — in contrast to
+/// the cross-module [`search_envelopes`], which scans every account/folder.
+pub async fn search_envelopes_scoped(
+    pool: &SqlitePool,
+    account: &str,
+    tokens: &[&str],
+    folder: Option<&str>,
+    limit: usize,
+) -> Result<Vec<CachedEnvelope>> {
+    let mut clauses: Vec<String> = Vec::new();
+    let mut binds: Vec<String> = Vec::new();
+    for tok in tokens {
+        if tok.is_empty() || tok.contains(['*', '?', '[', ']']) {
+            continue;
+        }
+        let pat = format!("*{}*", tok.to_ascii_lowercase());
+        clauses.push(
+            "(lower(subject) GLOB ? OR lower(from_addr) GLOB ? OR lower(to_addr) GLOB ?)"
+                .to_string(),
+        );
+        binds.push(pat.clone());
+        binds.push(pat.clone());
+        binds.push(pat.clone());
+    }
+    if clauses.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut sql = format!(
+        "SELECT account, folder, uid, date, from_addr, subject, flags, message_id, size, to_addr, fetched_at \
+         FROM envelopes WHERE account = ? AND ({})",
+        clauses.join(" OR ")
+    );
+    binds.insert(0, account.to_string());
+    if let Some(f) = folder {
+        sql.push_str(" AND folder = ?");
+        binds.push(f.to_string());
+    }
+    sql.push_str(" ORDER BY date DESC LIMIT ");
+    // The LIMIT is a literal integer (same handling as `query_envelopes` /
+    // timeline store; bind placeholders for LIMIT are unstable in some sqlx versions).
+    sql.push_str(&limit.to_string());
+    let mut query = sqlx::query(&sql);
+    for b in &binds {
+        query = query.bind(b);
+    }
+    let rows = query.fetch_all(pool).await?;
+    let mut out = Vec::with_capacity(rows.len());
+    for r in rows {
+        out.push(row_to_cached_envelope(&r));
+    }
+    Ok(out)
+}
+
 // ============ Utilities ============
 
 fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
@@ -902,5 +961,82 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(hits.len(), 1, "token OR, not AND");
+    }
+
+    #[tokio::test]
+    async fn search_envelopes_scoped_restricts_account_folder_and_limit() {
+        let pool = tmp_pool().await;
+        // Two accounts, each with a matching subject, plus a folder-scoped match.
+        let mut e1 = sample_envelope(1, "");
+        e1.account = "acc".to_string();
+        let mut e2 = sample_envelope(2, "");
+        e2.account = "acc".to_string();
+        let mut e3 = sample_envelope(3, "");
+        e3.account = "other".to_string();
+        let mut e4 = sample_envelope(4, "");
+        e4.account = "acc".to_string();
+        e4.folder = "Sent".to_string();
+        upsert_envelopes(&pool, "acc", "INBOX", 1, &[e1, e2])
+            .await
+            .unwrap();
+        upsert_envelopes(&pool, "other", "INBOX", 1, &[e3])
+            .await
+            .unwrap();
+        upsert_envelopes(&pool, "acc", "Sent", 1, &[e4])
+            .await
+            .unwrap();
+
+        // Account scoping: token "subject" hits only `acc`'s 3 envelopes, not `other`.
+        let hits = search_envelopes_scoped(&pool, "acc", &["subject"], None, 100)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 3, "only the target account's envelopes match");
+        assert!(
+            hits.iter().all(|e| e.account == "acc"),
+            "never leaks another account"
+        );
+
+        // Folder scoping narrows to that folder only.
+        let hits = search_envelopes_scoped(&pool, "acc", &["subject"], Some("Sent"), 100)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].folder, "Sent");
+
+        // Limit caps rows.
+        let hits = search_envelopes_scoped(&pool, "acc", &["subject"], None, 2)
+            .await
+            .unwrap();
+        assert_eq!(hits.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn search_envelopes_scoped_empty_or_metachar_tokens_yield_zero() {
+        let pool = tmp_pool().await;
+        upsert_envelopes(&pool, "acc", "INBOX", 1, &[sample_envelope(1, "")])
+            .await
+            .unwrap();
+
+        // Empty token list -> zero hits.
+        assert!(
+            search_envelopes_scoped(&pool, "acc", &[], None, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // GLOB metachar token skipped -> zero hits.
+        assert!(
+            search_envelopes_scoped(&pool, "acc", &["*"], None, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        // No rows for an account with nothing cached -> zero hits.
+        assert!(
+            search_envelopes_scoped(&pool, "ghost-account", &["subject"], None, 100)
+                .await
+                .unwrap()
+                .is_empty()
+        );
     }
 }

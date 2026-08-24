@@ -28,7 +28,7 @@ everyday mail list --unread --limit 10 --json
 # (uid is a JSON number, unread a JSON boolean — F012 P6 typed records)
 ```
 
-`mail list` reads from a local envelope cache (`~/.config/everyday/mail_cache.db`) — fast, no IMAP round-trip on warm cache. Auto-syncs if any target folder's `last_sync_at` is older than 15 minutes. Pass `--sync` to force an immediate sync (e.g. after returning from offline). `mail search` and `mail read` still go directly to IMAP.
+`mail list` reads from a local envelope cache (`~/.config/everyday/mail_cache.db`) — fast, no IMAP round-trip on warm cache. Auto-syncs if any target folder's `last_sync_at` is older than 15 minutes. Pass `--sync` to force an immediate sync (e.g. after returning from offline). `mail search --cached` also reads the local cache (subject/from/to, auto-sync if stale); default `mail search` and `mail read` still go directly to IMAP.
 
 **Read a single message:**
 

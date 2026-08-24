@@ -175,7 +175,7 @@ Credentials: config holds account metadata → credentials are stored via `every
 | `mail folders` | List all mailbox folders | `everyday mail folders --json` |
 | `mail list` | List message summaries from local cache (auto-sync if stale; recurses all folders by default, sorted by date desc) | `everyday mail list --unread --limit 10 --json` |
 | `mail read <uid>` | Read a single message in full (searches all folders by default) | `everyday mail read 12345 --json` |
-| `mail search` | Full-text search (recurses all folders by default) | `everyday mail search --query "invoice" --json` |
+| `mail search` | Full-text search (recurses all folders by default; `--cached` searches the local envelope cache) | `everyday mail search --query "invoice" --json` |
 | `mail send` | Send a message (SMTP STARTTLS) | `everyday mail send --to a@b.com --subject "Hi" --body "内容"` |
 
 ### mail options
@@ -188,6 +188,7 @@ Credentials: config holds account metadata → credentials are stored via `every
 | `--folder NAME` | `list` / `read` / `search` | Specific folder (Chinese names supported; default recurses all) |
 | `--no-recursive` | `list` / `read` / `search` | INBOX only (no recursion) |
 | `--sync` | `list` | Force IMAP sync before listing (ignore staleness) |
+| `--cached` | `search` | Search the local envelope cache (subject/from/to) instead of IMAP; auto-syncs if stale |
 | `--to ADDR` | `send` | Recipient (required) |
 | `--subject S` | `send` | Subject (required) |
 | `--body TEXT` | `send` | Body (required) |
@@ -196,7 +197,10 @@ Credentials: config holds account metadata → credentials are stored via `every
 ### mail list / search — JSON output (array of objects)
 
 `mail list` rows are typed records (F012 P6): `uid` is a JSON number and
-`unread` a JSON boolean; `mail search` rows are plain strings.
+`unread` a JSON boolean. Default `mail search` rows are plain strings; `mail
+search --cached` renders typed records (uid/unread) like `list`. `--cached`
+matches subject/from/to only (the local cache has no body/headers) — use
+default `mail search` for full body/header recall.
 
 ```json
 [{"uid":12345,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@example.com","subject":"邮件主题"}]

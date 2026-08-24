@@ -46,7 +46,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `folders` | List all mailbox folders | `everyday mail folders [--account NAME]` |
 | `list` | List message summaries (from local cache; auto-sync if stale) | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync]` |
 | `read` | Read a single message (recursive lookup by default) | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
-| `search` | Search messages | `everyday mail search --query Q [--limit N] [--folder NAME]` |
+| `search` | Search messages | `everyday mail search --query Q [--limit N] [--folder NAME] [--cached]` |
 | `send` | Send a message | `everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR]` |
 
 **Option details**:
@@ -59,6 +59,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `--folder NAME` | `list` / `read` / `search` | Specify a folder (non-ASCII names supported); recurses all folders by default |
 | `--no-recursive` | `list` / `read` / `search` | INBOX only |
 | `--sync` | `list` | Force an IMAP sync before listing (ignore staleness) |
+| `--cached` | `search` | Search the local envelope cache (subject/from/to) instead of IMAP; auto-syncs if stale |
 | `--to ADDR` | `send` | Recipient (required) |
 | `--subject S` | `send` | Subject (required) |
 | `--body TEXT` | `send` | Body (required) |

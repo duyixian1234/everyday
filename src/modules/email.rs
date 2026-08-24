@@ -77,12 +77,17 @@ impl Executor for EmailModule {
             cli_action!(
                 "search",
                 "在服务器搜索邮件",
-                "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME]",
+                "everyday mail search --query Q [--limit N] [--folder NAME] [--no-recursive] [--account NAME] [--cached]",
                 &[
                     flag!("query", "搜索关键词"),
                     flag!("limit", "条数上限"),
                     flag!("folder", "限定文件夹"),
                     flag!("no-recursive", "仅查 INBOX", Bool),
+                    flag!(
+                        "cached",
+                        "从本地 envelope 缓存搜索（subject/from/to）",
+                        Bool
+                    ),
                 ]
             ),
             cli_action!(
@@ -224,6 +229,10 @@ pub trait MailBackend: Send + Sync {
     -> Result<MailMessage>;
     /// Server-side search, returning summary envelopes.
     async fn search(&self, query: &str, opts: &MailListOptions) -> Result<Vec<MailEnvelope>>;
+    /// Local-cache search (`mail search --cached`): staleness-driven sync then
+    /// token search over `subject`/`from`/`to` ([M006](../../docs/adr/M006-mail-search-cached.md)).
+    async fn search_cached(&self, query: &str, opts: &MailListOptions)
+    -> Result<Vec<MailEnvelope>>;
     /// Send a message via SMTP.
     async fn send(&self, req: &MailSendRequest) -> Result<MailSendReceipt>;
 }
@@ -280,8 +289,16 @@ async fn dispatch(
                 AgentError::InvalidArgument("usage: everyday mail search --query Q".into())
             })?;
             let opts = parse_list_options(flags);
-            let envelopes = backend.search(query, &opts).await?;
-            render_search(envelopes)
+            if flags.contains_key("cached") {
+                let envelopes = backend.search_cached(query, &opts).await?;
+                // `--cached` is the local fast path, so it renders like `mail
+                // list`: typed records (uid numeric, unread boolean). The
+                // default IMAP path keeps the historical plain-string contract.
+                render_list(envelopes)
+            } else {
+                let envelopes = backend.search(query, &opts).await?;
+                render_search(envelopes)
+            }
         }
         "send" => {
             let req = parse_send_request(flags)?;
@@ -615,6 +632,79 @@ impl MailBackend for ImapMailBackend {
         let envs = collect_across_folders(&mut session, folders, &search, opts.limit).await?;
         session.logout().await.ok();
         Ok(envs)
+    }
+
+    /// Local-cache search (`mail search --cached`, [M006](../../docs/adr/M006-mail-search-cached.md)).
+    ///
+    /// Mirrors `list`'s cache-first model: open the cache, resolve folders
+    /// (one-shot session), staleness check (sync on stale / `--sync`), then
+    /// token-search the local `envelopes` table over `subject`/`from`/`to`.
+    /// Recognized recall divergence from IMAP `SEARCH TEXT`: the local cache
+    /// has no body/headers, so `--cached` matches subject/from/to only.
+    async fn search_cached(
+        &self,
+        query: &str,
+        opts: &MailListOptions,
+    ) -> Result<Vec<MailEnvelope>> {
+        let account = &self.account;
+
+        // 1. open the local cache
+        let cache = email_cache::open().await?;
+
+        // 2. resolve folders (one-shot ad-hoc session, like `list`)
+        let mut list_session = self.connect().await?;
+        let folders =
+            resolve_folders(&mut list_session, opts.folder.as_deref(), opts.no_recursive).await?;
+        list_session.logout().await.ok();
+
+        // 3. staleness check (mirror `list`)
+        let now = chrono::Utc::now();
+        let mut needs_sync = opts.force_sync;
+        if !needs_sync {
+            for folder in &folders {
+                match email_cache::get_folder_state(&cache, &account.name, folder).await? {
+                    None => {
+                        // no watermark → first-time sync
+                        needs_sync = true;
+                        break;
+                    }
+                    Some(state) if email_cache::is_stale(&state, now) => {
+                        needs_sync = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // 4. sync if needed (concurrent across folders, best-effort)
+        if needs_sync {
+            let pool = email_pool::Pool::new(account.clone(), self.password.clone()).await?;
+            sync_folders_concurrent(&pool, &cache, &account.name, &folders).await?;
+        }
+
+        // 5. tokenize + search the local cache (account-scoped)
+        let tokens: Vec<&str> = query.split_whitespace().collect();
+        let envelopes = email_cache::search_envelopes_scoped(
+            &cache,
+            &account.name,
+            &tokens,
+            opts.folder.as_deref(),
+            opts.limit,
+        )
+        .await?;
+
+        Ok(envelopes
+            .into_iter()
+            .map(|e| MailEnvelope {
+                uid: e.uid,
+                unread: !e.flags.contains("\\Seen"),
+                folder: decode_imap_utf7(&e.folder),
+                date: e.date,
+                from: e.from_addr,
+                subject: decode_mime_header(&e.subject),
+            })
+            .collect())
     }
 
     /// Send a message (SMTP via lettre, STARTTLS).
@@ -1707,6 +1797,13 @@ mod tests {
         async fn search(&self, _query: &str, _opts: &MailListOptions) -> Result<Vec<MailEnvelope>> {
             Ok(self.envelopes.clone())
         }
+        async fn search_cached(
+            &self,
+            _query: &str,
+            _opts: &MailListOptions,
+        ) -> Result<Vec<MailEnvelope>> {
+            Ok(self.envelopes.clone())
+        }
         async fn send(&self, req: &MailSendRequest) -> Result<MailSendReceipt> {
             Ok(MailSendReceipt {
                 to: req.to.clone(),
@@ -1746,6 +1843,54 @@ mod tests {
                 assert!(matches!(&rows[0][2], TypedValue::Text(s) if s == "INBOX"));
             }
             other => panic!("expected TypedRecords, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_search_cached_routes_to_local_path_and_renders_typed() {
+        let mock = MockMailBackend {
+            envelopes: vec![sample_envelope()],
+            ..Default::default()
+        };
+        let mut flags = HashMap::new();
+        flags.insert("query".into(), "rust".into());
+        flags.insert("cached".into(), "".into());
+
+        // `--cached` → `search_cached` → typed records (uid/unread), like `list`.
+        let out = dispatch(&mock, "search", &flags, &[]).await.unwrap();
+        match out {
+            Output::TypedRecords { headers, rows } => {
+                assert_eq!(
+                    headers,
+                    vec!["uid", "unread", "folder", "date", "from", "subject"]
+                );
+                assert!(matches!(&rows[0][0], TypedValue::Number(n) if *n == 42.0));
+                assert!(matches!(&rows[0][1], TypedValue::Boolean(true)));
+            }
+            other => panic!("expected TypedRecords, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_search_default_keeps_plain_string_historical_contract() {
+        let mock = MockMailBackend {
+            envelopes: vec![sample_envelope()],
+            ..Default::default()
+        };
+        let mut flags = HashMap::new();
+        flags.insert("query".into(), "rust".into());
+
+        // Default `mail search` (no --cached) → IMAP path → plain-string Records.
+        let out = dispatch(&mock, "search", &flags, &[]).await.unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["uid", "folder", "date", "from", "subject"]);
+                assert_eq!(
+                    rows[0][0], "42",
+                    "uid stays a string in the legacy contract"
+                );
+            }
+            other => panic!("expected Records, got {other:?}"),
         }
     }
 
