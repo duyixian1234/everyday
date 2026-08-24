@@ -46,6 +46,7 @@ everyday config set default_account.mail personal
 | `list` | 列出邮件摘要（本地缓存；过期自动 sync） | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync]` |
 | `read` | 读取单封邮件（默认递归查找） | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
 | `search` | 搜索邮件 | `everyday mail search --query Q [--limit N] [--folder NAME] [--cached]` |
+| `gc` | 清理幽灵邮件（服务端对账后删除本地无主 envelope） | `everyday mail gc [--folder NAME]` |
 | `send` | 发送邮件 | `everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR]` |
 
 **选项说明**：

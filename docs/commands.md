@@ -47,6 +47,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `list` | List message summaries (from local cache; auto-sync if stale) | `everyday mail list [--unread] [--limit N] [--folder NAME] [--no-recursive] [--sync]` |
 | `read` | Read a single message (recursive lookup by default) | `everyday mail read <uid> [--folder NAME] [--no-recursive]` |
 | `search` | Search messages | `everyday mail search --query Q [--limit N] [--folder NAME] [--cached]` |
+| `gc` | Prune ghost envelopes (reconcile against server) | `everyday mail gc [--folder NAME]` |
 | `send` | Send a message | `everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR]` |
 
 **Option details**:

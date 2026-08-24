@@ -91,6 +91,12 @@ impl Executor for EmailModule {
                 ]
             ),
             cli_action!(
+                "gc",
+                "清理幽灵邮件（服务端对账后删除本地无主 envelope）",
+                "everyday mail gc [--folder NAME] [--account NAME]",
+                &[flag!("folder", "限定文件夹"),]
+            ),
+            cli_action!(
                 "send",
                 "发送邮件",
                 "everyday mail send --to ADDR --subject S --body TEXT [--cc ADDR] [--account NAME]",
@@ -187,6 +193,24 @@ pub struct MailMessage {
     pub body: String,
 }
 
+/// Outcome of cleaning one folder during `mail cache gc` ([M007](../../docs/adr/M007-mail-cache-gc.md)).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FolderGcStatus {
+    /// Reconciled cleanly and pruned ghosts.
+    Cleaned { removed: usize },
+    /// Skipped deletion (e.g. UIDVALIDITY changed / no watermark) — never mis-deleted.
+    Skipped { reason: String },
+    /// The reconcile attempt errored for this folder.
+    Failed { reason: String },
+}
+
+/// Per-folder result of `mail cache gc`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderGcResult {
+    pub folder: String,
+    pub status: FolderGcStatus,
+}
+
 /// Options for `list` / `search`, parsed from CLI flags by `dispatch`.
 #[derive(Debug, Clone, Default)]
 pub struct MailListOptions {
@@ -233,6 +257,10 @@ pub trait MailBackend: Send + Sync {
     /// token search over `subject`/`from`/`to` ([M006](../../docs/adr/M006-mail-search-cached.md)).
     async fn search_cached(&self, query: &str, opts: &MailListOptions)
     -> Result<Vec<MailEnvelope>>;
+    /// Reconcile the envelope cache against the server and prune ghost envelopes
+    /// (`mail cache gc`, [M007](../../docs/adr/M007-mail-cache-gc.md)). Scoped by
+    /// `opts.folder`; default reconciles every cached folder of the account.
+    async fn cache_gc(&self, opts: &MailListOptions) -> Result<Vec<FolderGcResult>>;
     /// Send a message via SMTP.
     async fn send(&self, req: &MailSendRequest) -> Result<MailSendReceipt>;
 }
@@ -299,6 +327,11 @@ async fn dispatch(
                 let envelopes = backend.search(query, &opts).await?;
                 render_search(envelopes)
             }
+        }
+        "gc" => {
+            let opts = parse_list_options(flags);
+            let results = backend.cache_gc(&opts).await?;
+            render_gc(results)
         }
         "send" => {
             let req = parse_send_request(flags)?;
@@ -406,6 +439,29 @@ fn render_search(envelopes: Vec<MailEnvelope>) -> Result<Output> {
     ))
 }
 
+/// `mail gc` output: per-folder reconcile outcome, typed for the agent.
+fn render_gc(results: Vec<FolderGcResult>) -> Result<Output> {
+    let rows: Vec<Vec<TypedValue>> = results
+        .into_iter()
+        .map(|r| {
+            let (status, detail) = match &r.status {
+                FolderGcStatus::Cleaned { removed } => ("cleaned".to_string(), removed.to_string()),
+                FolderGcStatus::Skipped { reason } => ("skipped".to_string(), reason.clone()),
+                FolderGcStatus::Failed { reason } => ("failed".to_string(), reason.clone()),
+            };
+            vec![
+                TypedValue::text(r.folder),
+                TypedValue::text(status),
+                TypedValue::text(detail),
+            ]
+        })
+        .collect();
+    Ok(Output::typed_records(
+        vec!["folder".into(), "status".into(), "detail".into()],
+        rows,
+    ))
+}
+
 fn render_read(msg: MailMessage) -> Result<Output> {
     Ok(Output::Records {
         headers: vec!["field".into(), "value".into()],
@@ -471,6 +527,71 @@ impl ImapMailBackend {
     /// Establish a fresh IMAP session for this backend's account.
     async fn connect(&self) -> Result<ImapSession> {
         imap_connect(&self.account, &self.password).await
+    }
+
+    /// Reconcile a single folder and return its prune status.
+    async fn gc_one_folder(
+        &self,
+        session: &mut ImapSession,
+        cache: &sqlx::SqlitePool,
+        account: &str,
+        folder: &str,
+    ) -> Result<FolderGcStatus> {
+        // 1. SELECT → server uid_validity
+        let mailbox = match select_folder_inner(session, folder).await {
+            Ok(mb) => mb,
+            Err(e) => {
+                return Ok(FolderGcStatus::Skipped {
+                    reason: format!("select failed: {}", e.message()),
+                });
+            }
+        };
+        let server_uid_validity = mailbox.uid_validity.unwrap_or(0) as u32;
+
+        // 2. compare against the cached watermark — skip on UIDVALIDITY mismatch /
+        //    missing watermark (recycled UIDs must not be mis-deleted).
+        match email_cache::get_folder_state(cache, account, folder).await? {
+            None => {
+                return Ok(FolderGcStatus::Skipped {
+                    reason: "no cached watermark".to_string(),
+                });
+            }
+            Some(st) if st.uid_validity != server_uid_validity => {
+                return Ok(FolderGcStatus::Skipped {
+                    reason: format!(
+                        "UIDVALIDITY changed (cached {} != server {})",
+                        st.uid_validity, server_uid_validity
+                    ),
+                });
+            }
+            Some(_) => {}
+        }
+
+        // 3. server's current UID set
+        let server_uids: std::collections::HashSet<u32> =
+            search_uids(session, "ALL").await?.into_iter().collect();
+
+        // 4. local UIDs → ghosts = local not on server
+        let local_uids = email_cache::get_folder_uids(cache, account, folder).await?;
+        let ghosts: Vec<u32> = local_uids
+            .into_iter()
+            .filter(|uid| !server_uids.contains(uid))
+            .collect();
+
+        // 5. delete ghosts + advance the watermark to the server's authoritative max
+        let removed =
+            email_cache::delete_envelopes_by_uids(cache, account, folder, &ghosts).await?;
+        let server_max_uid = server_uids.iter().copied().max().unwrap_or(0);
+        email_cache::advance_folder_watermark(
+            cache,
+            account,
+            folder,
+            server_uid_validity,
+            server_max_uid,
+        )
+        .await?;
+
+        Ok(FolderGcStatus::Cleaned { removed })
     }
 }
 
@@ -705,6 +826,53 @@ impl MailBackend for ImapMailBackend {
                 subject: decode_mime_header(&e.subject),
             })
             .collect())
+    }
+
+    /// Reconcile the envelope cache against the server and prune ghosts
+    /// (`mail cache gc`, [M007](../../docs/adr/M007-mail-cache-gc.md)).
+    ///
+    /// For each folder in scope: SELECT to read the server `uid_validity`, then
+    /// compare local UIDs against the server's current UID set (`UID SEARCH ALL`).
+    /// A folder whose `uid_validity` differs from the cached one — or that has no
+    /// cached watermark — is **skipped** (recycled UIDs must not be mis-deleted).
+    /// On a clean reconcile, deleted ghosts are removed and the watermark is
+    /// advanced to the server's authoritative `max_uid`.
+    async fn cache_gc(&self, opts: &MailListOptions) -> Result<Vec<FolderGcResult>> {
+        let account = &self.account;
+        let cache = email_cache::open().await?;
+
+        // Scope: one folder or every folder that has cached envelopes.
+        let folders = match &opts.folder {
+            Some(f) => vec![f.clone()],
+            None => email_cache::list_folders(&cache, &account.name).await?,
+        };
+
+        if folders.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut session = self.connect().await?;
+        let mut results = Vec::with_capacity(folders.len());
+        for folder in &folders {
+            let display = decode_imap_utf7(folder);
+            let outcome = self
+                .gc_one_folder(&mut session, &cache, &account.name, folder)
+                .await;
+            match outcome {
+                Ok(status) => results.push(FolderGcResult {
+                    folder: display,
+                    status,
+                }),
+                Err(e) => results.push(FolderGcResult {
+                    folder: display,
+                    status: FolderGcStatus::Failed {
+                        reason: e.message(),
+                    },
+                }),
+            }
+        }
+        session.logout().await.ok();
+        Ok(results)
     }
 
     /// Send a message (SMTP via lettre, STARTTLS).
@@ -1779,6 +1947,7 @@ mod tests {
     struct MockMailBackend {
         folders: Vec<String>,
         envelopes: Vec<MailEnvelope>,
+        gc_results: Vec<FolderGcResult>,
     }
 
     #[async_trait]
@@ -1803,6 +1972,9 @@ mod tests {
             _opts: &MailListOptions,
         ) -> Result<Vec<MailEnvelope>> {
             Ok(self.envelopes.clone())
+        }
+        async fn cache_gc(&self, _opts: &MailListOptions) -> Result<Vec<FolderGcResult>> {
+            Ok(self.gc_results.clone())
         }
         async fn send(&self, req: &MailSendRequest) -> Result<MailSendReceipt> {
             Ok(MailSendReceipt {
@@ -1891,6 +2063,37 @@ mod tests {
                 );
             }
             other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_gc_renders_typed_per_folder_outcomes() {
+        let mock = MockMailBackend {
+            gc_results: vec![
+                FolderGcResult {
+                    folder: "INBOX".to_string(),
+                    status: FolderGcStatus::Cleaned { removed: 3 },
+                },
+                FolderGcResult {
+                    folder: "Sent".to_string(),
+                    status: FolderGcStatus::Skipped {
+                        reason: "UIDVALIDITY changed".to_string(),
+                    },
+                },
+            ],
+            ..Default::default()
+        };
+        let out = dispatch(&mock, "gc", &HashMap::new(), &[]).await.unwrap();
+        match out {
+            Output::TypedRecords { headers, rows } => {
+                assert_eq!(headers, vec!["folder", "status", "detail"]);
+                assert_eq!(rows.len(), 2);
+                assert!(matches!(&rows[0][0], TypedValue::Text(s) if s == "INBOX"));
+                assert!(matches!(&rows[0][1], TypedValue::Text(s) if s == "cleaned"));
+                assert!(matches!(&rows[0][2], TypedValue::Text(s) if s == "3"));
+                assert!(matches!(&rows[1][1], TypedValue::Text(s) if s == "skipped"));
+            }
+            other => panic!("expected TypedRecords, got {other:?}"),
         }
     }
 

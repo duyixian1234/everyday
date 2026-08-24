@@ -22,7 +22,7 @@ const TOP_LEVEL_COMMANDS: &[&str] = &[
 /// Per-module action set: (module, actions).
 const MODULE_ACTIONS: &[(&str, &[&str])] = &[
     ("auth", &["login", "logout", "verify", "list"]),
-    ("mail", &["folders", "list", "read", "search", "send"]),
+    ("mail", &["folders", "list", "read", "search", "send", "gc"]),
     ("cal", &["calendars", "list", "add", "delete"]),
     ("rss", &["follow", "list", "unfollow", "digest", "fetch"]),
     (

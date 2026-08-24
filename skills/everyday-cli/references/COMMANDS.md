@@ -176,6 +176,7 @@ Credentials: config holds account metadata → credentials are stored via `every
 | `mail list` | List message summaries from local cache (auto-sync if stale; recurses all folders by default, sorted by date desc) | `everyday mail list --unread --limit 10 --json` |
 | `mail read <uid>` | Read a single message in full (searches all folders by default) | `everyday mail read 12345 --json` |
 | `mail search` | Full-text search (recurses all folders by default; `--cached` searches the local envelope cache) | `everyday mail search --query "invoice" --json` |
+| `mail gc` | Prune ghost envelopes (server-reconciled; manual cleanup of the local cache) | `everyday mail gc --json` |
 | `mail send` | Send a message (SMTP STARTTLS) | `everyday mail send --to a@b.com --subject "Hi" --body "内容"` |
 
 ### mail options
@@ -200,7 +201,8 @@ Credentials: config holds account metadata → credentials are stored via `every
 `unread` a JSON boolean. Default `mail search` rows are plain strings; `mail
 search --cached` renders typed records (uid/unread) like `list`. `--cached`
 matches subject/from/to only (the local cache has no body/headers) — use
-default `mail search` for full body/header recall.
+default `mail search` for full body/header recall. `mail gc` returns typed
+rows: `folder` / `status` (`cleaned`/`skipped`/`failed`) / `detail`.
 
 ```json
 [{"uid":12345,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@example.com","subject":"邮件主题"}]

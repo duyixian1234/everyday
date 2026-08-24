@@ -248,6 +248,89 @@ pub async fn clear_folder(pool: &SqlitePool, account: &str, folder: &str) -> Res
 
 // ============ envelope queries ============
 
+/// Distinct folders that have cached envelopes for an account. Drives the
+/// whole-cache `mail cache gc` reconciliation ([M007](../../docs/adr/M007-mail-cache-gc.md)):
+/// ghosts can only exist in folders we cached something into.
+pub async fn list_folders(pool: &SqlitePool, account: &str) -> Result<Vec<String>> {
+    let rows =
+        sqlx::query("SELECT DISTINCT folder FROM envelopes WHERE account = ? ORDER BY folder")
+            .bind(account)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows.into_iter().map(|r| r.get(0)).collect())
+}
+
+/// All locally cached UIDs for one (account, folder), for ghost detection.
+pub async fn get_folder_uids(pool: &SqlitePool, account: &str, folder: &str) -> Result<Vec<u32>> {
+    let rows =
+        sqlx::query("SELECT uid FROM envelopes WHERE account = ? AND folder = ? ORDER BY uid")
+            .bind(account)
+            .bind(folder)
+            .fetch_all(pool)
+            .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<i64, _>(0) as u32)
+        .collect())
+}
+
+/// Delete specific envelopes by UID within one (account, folder). Returns the
+/// number of rows deleted. Used by `mail cache gc` to remove ghosts.
+pub async fn delete_envelopes_by_uids(
+    pool: &SqlitePool,
+    account: &str,
+    folder: &str,
+    uids: &[u32],
+) -> Result<usize> {
+    if uids.is_empty() {
+        return Ok(0);
+    }
+    let mut tx = pool.begin().await?;
+    let mut removed = 0usize;
+    for uid in uids {
+        let res = sqlx::query("DELETE FROM envelopes WHERE account = ? AND folder = ? AND uid = ?")
+            .bind(account)
+            .bind(folder)
+            .bind(*uid as i64)
+            .execute(&mut *tx)
+            .await?;
+        removed += res.rows_affected() as usize;
+    }
+    tx.commit().await?;
+    Ok(removed)
+}
+
+/// Advance a folder's watermark after a clean `mail cache gc` reconcile: set
+/// `uid_validity` + `max_uid` to the server's authoritative values and touch
+/// `last_sync_at`. So the next incremental sync re-requests only `max_uid+1:*`
+/// instead of re-searching UIDs we just deleted. No-op-safe: creates the row if
+/// missing.
+pub async fn advance_folder_watermark(
+    pool: &SqlitePool,
+    account: &str,
+    folder: &str,
+    uid_validity: u32,
+    max_uid: u32,
+) -> Result<()> {
+    let fetched_at = Utc::now().to_rfc3339();
+    sqlx::query(
+        "INSERT INTO folder_state (account, folder, uid_validity, max_uid, last_sync_at) \
+         VALUES (?, ?, ?, ?, ?) \
+         ON CONFLICT(account, folder) DO UPDATE SET \
+            uid_validity = excluded.uid_validity, \
+            max_uid = excluded.max_uid, \
+            last_sync_at = excluded.last_sync_at",
+    )
+    .bind(account)
+    .bind(folder)
+    .bind(uid_validity as i64)
+    .bind(max_uid as i64)
+    .bind(&fetched_at)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Query envelopes: filter by (account, optional folder, unread?, since?, limit),
 /// globally ordered by `date DESC`.
 pub async fn query_envelopes(
@@ -1038,5 +1121,52 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[tokio::test]
+    async fn gc_helpers_list_folders_and_delete_ghosts_and_advance_watermark() {
+        let pool = tmp_pool().await;
+        upsert_envelopes(
+            &pool,
+            "acc",
+            "INBOX",
+            1,
+            &[sample_envelope(1, ""), sample_envelope(2, "")],
+        )
+        .await
+        .unwrap();
+        upsert_envelopes(&pool, "acc", "Sent", 1, &[sample_envelope(3, "")])
+            .await
+            .unwrap();
+
+        // list_folders enumerates only folders that have cached envelopes.
+        let folders = list_folders(&pool, "acc").await.unwrap();
+        assert_eq!(folders, vec!["INBOX", "Sent"]);
+
+        // get_folder_uids returns the cached UIDs.
+        let uids = get_folder_uids(&pool, "acc", "INBOX").await.unwrap();
+        assert_eq!(uids, vec![1, 2]);
+
+        // delete_envelopes_by_uids removes exactly the given UIDs.
+        let removed = delete_envelopes_by_uids(&pool, "acc", "INBOX", &[2])
+            .await
+            .unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(
+            get_folder_uids(&pool, "acc", "INBOX").await.unwrap(),
+            vec![1]
+        );
+
+        // advance_folder_watermark sets uid_validity + max_uid + last_sync_at.
+        advance_folder_watermark(&pool, "acc", "INBOX", 99, 5)
+            .await
+            .unwrap();
+        let state = get_folder_state(&pool, "acc", "INBOX")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(state.uid_validity, 99);
+        assert_eq!(state.max_uid, 5);
+        assert!(state.last_sync_at.is_some());
     }
 }

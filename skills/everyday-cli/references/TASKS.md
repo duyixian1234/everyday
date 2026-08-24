@@ -9,6 +9,8 @@ Everyday recipes for the most common agent workflows, grouped by module. Loaded 
 | Unread mail | `everyday mail list --unread --limit 10 --json` |
 | Read a message | `everyday mail read <uid> --json` |
 | Search mail | `everyday mail search --query "invoice" --json` |
+| Search mail (local cache) | `everyday mail search --query "invoice" --cached --json` |
+| Prune ghost mail cache entries | `everyday mail gc --json` |
 | Send mail | `everyday mail send --to a@b.com --subject "Hi" --body "内容"` |
 | Calendar events | `everyday cal list --json` |
 | Add calendar event | `everyday cal add --title "会议" --start "2026-07-09T15:00:00Z" --end "2026-07-09T16:00:00Z"` |
