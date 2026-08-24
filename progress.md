@@ -10,7 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
-- **M006/M007 已实现（master，未发版）** — `mail search --cached`（本地缓存搜索）+ `mail gc`（服务端对账幽灵清理），v0.18.0 目标。两者均显式 opt-in / 手动命令，daemon 保持纯拉取；`--cached` P6 类型化输出、stale 同步；`gc` scoped 对账、UIDVALIDITY 变更跳过、对账后推进水位。ADR [M006](./docs/adr/M006-mail-search-cached.md) / [M007](./docs/adr/M007-mail-cache-gc.md)。
+- **v0.18.0 已发布** — **Mail 补遗**（[M006](./docs/adr/M006-mail-search-cached.md) `mail search --cached` 本地缓存搜索 + [M007](./docs/adr/M007-mail-cache-gc.md) `mail gc` 服务端对账幽灵清理，Phase 24）：`search --cached` 显式 opt-in、stale 同步、P6 类型化输出；`gc` scoped 对账、UIDVALIDITY 变更跳过、对账后推进水位，daemon 保持纯拉取。非破坏性（additive flag + additive action）。
 - **v0.17.7 已发布** — **cal 日程时区修复**（L006 补丁，2026-08-21）：`cal list` 对 UTC 存储事件（DTSTART 带 Z）改为按本地墙钟输出（`format_date_perhaps_time` / `date_perhaps_time_to_naive` 对 `Utc` 变体转 `Local`），修复日程显示早 8 小时（如 C196 西安→榆林实际 09:02 显示 01:02），同时修正 UTC 事件与 `Local::now()` 比较的排序错位。非破坏性。
 - **v0.17.6 已发布** — **RSS digest/fetch 区分度**（[F008](./docs/adr/F008-rss-module.md) amendment，2026-08-19）：digest 输出加摘要列（feed/title/summary/published/author/link，文本 80/JSON 200 截断，新增 `TypedValue::TruncatedText`）；`--since` 复用 timeline 时长解析按 published 过滤；digest 数据源改为本地 rss-items 缓存优先（`--fresh` 强刷，表空/无结果回退实时）；fetch 双入口（`--name N` 写缓存 / `<url>` stateless 不写缓存）。非破坏性。
 - **v0.17.5 已发布** — **`task run --json` 输出契约收口 + 捕获编码修复**（[F017](./docs/adr/F017-task-module.md) 补丁）：`--json` 模式改为只捕获不回声——stdout 是唯一输出（单个 `_result` 信封），子进程原始输出不再泄漏到 stderr；捕获记录解码由 `from_utf8_lossy` 改为 UTF-8 优先 + GBK 兜底（新增 `encoding_rs` 依赖），修复中文 Windows 下 `ipconfig` 的 GBK 输出在 `_result.stdout/stderr` 里的 U+FFFD 乱码。契约变更（`--json` 不再 tee 到 stderr），非破坏性但改文档。
@@ -95,6 +95,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.18.0** | `v0.18.0` | Mail 补遗：`mail search --cached` 本地缓存搜索（显式 opt-in、stale 同步、P6 类型化输出、复用 search_envelopes_scoped）；`mail gc` 服务端对账幽灵清理（UIDVALIDITY 变更跳过、对账后推进水位、daemon 保持纯拉取） | [M006](./docs/adr/M006-mail-search-cached.md), [M007](./docs/adr/M007-mail-cache-gc.md) |
 | **v0.17.7** | `v0.17.7` | cal 日程时区修复：`cal list` 对 UTC 存储事件（DTSTART 带 Z）按本地墙钟输出（`date_perhaps_time_to_naive` / `format_date_perhaps_time` 对 `Utc` 变体转 `Local`），修复日程显示早 8 小时，同时修正 UTC 事件排序错位 | [L006](./docs/adr/L006-utc-storage-local-query.md)（补丁） |
 | **v0.17.6** | `v0.17.6` | RSS digest/fetch 区分度：digest 摘要列（文本 80/JSON 200 截断）+ `--since` 时间窗（复用 timeline 时长解析）+ 本地 rss-items 缓存优先（`--fresh` 强刷、空/无结果回退实时）；fetch 双入口（`--name` 订阅源写缓存 / `<url>` stateless 调试不写缓存）；新增 `TypedValue::TruncatedText`；CLI 帮助与 docs/commands×2/skill 命令表同步 | [F008](./docs/adr/F008-rss-module.md)（amendment） |
 | **v0.17.5** | `v0.17.5` | `task run --json` 输出契约收口 + 捕获编码修复：`--json` 只捕获不回声（stdout 唯一 `_result` 信封）；捕获记录 UTF-8 优先 + GBK 兜底解码，修复 `ipconfig` GBK 输出在 JSON/task.db 里的 U+FFFD 乱码；新增 encoding_rs 依赖 | [F017](./docs/adr/F017-task-module.md) |

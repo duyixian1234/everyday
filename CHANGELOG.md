@@ -1,8 +1,27 @@
+## [0.18.0] - 2026-08-24
+
+### 🚀 Features
+
+- *(mail)* Add mail search --cached local cache search (M006)
+- *(mail)* Add mail gc server-reconciled ghost-envelope cleanup (M007)
+
+### 🐛 Bug Fixes
+
+- *(ci)* Fix cargo fmt diff and clippy chunks_exact_to_as_chunks
+
+### 📚 Documentation
+
+- *(mail)* Design M006 search --cached + M007 cache gc (v0.18 plan)
+- *(mail)* Mark M006 search --cached implemented in master
 ## [0.17.7] - 2026-08-21
 
 ### 🐛 Bug Fixes
 
 - *(cal)* UTC 事件按本地时区输出，修复日程显示早 8 小时
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.17.7
 ## [0.17.6] - 2026-08-19
 
 ### 🚀 Features
@@ -20,6 +39,10 @@
 ### 📚 Documentation
 
 - RSS digest/fetch 区分度设计（F008 amendment + CONTEXT.md RSS 节）
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.17.6
 ## [0.17.5] - 2026-08-18
 
 ### 🐛 Bug Fixes
