@@ -186,7 +186,7 @@ Credentials: config holds account metadata → credentials are stored via `every
 | `--account NAME` | all | Specify account (override default) |
 | `--unread` | `list` | Unread only |
 | `--limit N` | `list` / `search` | Max rows, default 20 |
-| `--folder NAME` | `list` / `read` / `search` | Specific folder (Chinese names supported; default recurses all) |
+| `--folder NAME` | `list` / `read` / `search` / `gc` | Specific folder (Chinese names supported; default recurses all) |
 | `--no-recursive` | `list` / `read` / `search` | INBOX only (no recursion) |
 | `--sync` | `list` | Force IMAP sync before listing (ignore staleness) |
 | `--cached` | `search` | Search the local envelope cache (subject/from/to) instead of IMAP; auto-syncs if stale |
@@ -207,6 +207,9 @@ rows: `folder` / `status` (`cleaned`/`skipped`/`failed`) / `detail`.
 ```json
 [{"uid":12345,"unread":true,"folder":"INBOX","date":"Wed, 8 Jul 2026 08:29:31 +0000","from":"sender@example.com","subject":"邮件主题"}]
 ```
+
+`mail gc` rows: `folder` / `status` / `detail` (e.g.
+`[{"folder":"INBOX","status":"cleaned","detail":"3"},{"folder":"Sent","status":"skipped","detail":"UIDVALIDITY changed"}]`).
 
 ### mail read — JSON output (array of field/value pairs)
 

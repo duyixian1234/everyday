@@ -45,7 +45,21 @@ everyday mail read 12345 --folder INBOX --json
 
 ```bash
 everyday mail search --query "invoice" --json
+# 本地缓存快查（subject/from/to；默认 mail search 走 IMAP 全字段，含 body）
+everyday mail search --query "invoice" --cached --json
 ```
+
+**Prune ghost mail cache entries (`mail gc`):**
+
+```bash
+# 服务端对账，删除本地已不存在的幽灵 envelope；对账成功推进水位
+everyday mail gc --json
+# → [{"folder":"INBOX","status":"cleaned","detail":"3"},{"folder":"Sent","status":"skipped","detail":"UIDVALIDITY changed"}]
+# 限定单文件夹：
+everyday mail gc --folder INBOX --json
+```
+
+`mail gc` 是显式手动命令（daemon 同步保持纯拉取、从不删除缓存）。status：`cleaned`（已清理 N 条）/ `skipped`（UIDVALIDITY 变更或无水位的文件夹跳过，不误删）/ `failed`。
 
 **Send mail:**
 
