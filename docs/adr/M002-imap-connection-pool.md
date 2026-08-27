@@ -1,4 +1,4 @@
-# ADR M002: IMAP connection pool M=4 with semaphore
+# ADR M002: IMAP connection pool M=4 with an idle-session queue
 
 **Status:** Accepted
 **Date:** 2026-07-11
@@ -23,12 +23,18 @@ User scenario:
 
 ## Decision
 
-**Maintain a fixed pool of M = 4 IMAP sessions plus a `tokio::Semaphore` to distribute N folders across them.**
+**Maintain a fixed pool of M = 4 IMAP sessions. The idle-session queue is the
+single source of checkout capacity, and a `tokio::sync::Notify` wakes waiters
+after a guard synchronously returns its session to the queue.**
 
 - Startup: open 4 IMAP sessions in parallel, sharing the same keyring password.
-- Per `mail list` sync: for each folder, acquire the semaphore, do `SELECT → UID SEARCH → UID FETCH` on any idle session, release.
+- Per `mail list` sync: for each folder, pop an idle session or wait for a
+  queue notification, do `SELECT → UID SEARCH → UID FETCH`, then synchronously
+  return the session before waking one waiter.
 - M = 4 is hardcoded. Not exposed as a flag or config.
-- Session failure: any IMAP command failure on a session → tear it down, reconnect, retry the operation once on the new session.
+- Session failure: any IMAP command failure tears down that session and starts
+  a background replacement. Until replacement succeeds, effective capacity is
+  the number of live sessions.
 - Best-effort across folders: one folder's failure does not block the others.
 
 ## Alternatives considered
@@ -63,12 +69,16 @@ User scenario:
 
 ## Consequences
 
-- New module file `src/modules/email_pool.rs` holds `Vec<Mutex<ImapSession>>` + `Arc<Semaphore>`. `email.rs` becomes thinner.
+- `src/modules/email_pool.rs` holds a mutex-protected idle queue plus `Notify`.
+  Queue mutation and checkout accounting share one lock, so a waiter cannot
+  observe capacity before the returned session is visible.
 - First `list` after startup pays 4× TLS handshake (~1–2 s). Subsequent incremental lists reuse the warm pool; cost is `LIST` (folder enumeration) + N × `SELECT`.
 - M = 4 is empirical: Gmail, Outlook, NetEase, QQ Mail all tolerate it without rate-limit. If a real cap surfaces later, expose `mail.imap_pool_size` config — not now.
 - Memory: 4 sessions + TCP/TLS buffers, tens of KB. Negligible.
 - The `PoolGuard::session()` API returns `Result<PoolGuard, AgentError>` (it can fail to acquire an idle session; it never panics). See [R003](R003-pool-guard-drop.md) for the Drop-time `Handle::try_current()` guarantee.
-- Sync coordination: the orchestrator uses `futures::join_all` across folders, gated by the semaphore. Same pattern as [L009](L009-best-effort-sync.md).
+- Sync coordination: the orchestrator uses `futures::join_all` across folders,
+  gated by available sessions in the queue. Same pattern as
+  [L009](L009-best-effort-sync.md).
 
 ## Cross-references
 

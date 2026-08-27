@@ -37,7 +37,7 @@ pub struct ActionResult {
     pub envelopes: usize,
     /// Items pulled by the rss action.
     pub items: usize,
-    /// First error message (None when ok).
+    /// Aggregated error messages (None when ok).
     pub error: Option<String>,
 }
 
@@ -100,6 +100,14 @@ impl CycleResult {
     }
 }
 
+fn extend_mail_errors(errors: &mut Vec<String>, folder_errors: Vec<(String, String)>) {
+    errors.extend(
+        folder_errors
+            .into_iter()
+            .map(|(folder, message)| format!("mail {folder}: {message}")),
+    );
+}
+
 /// Run one sync cycle.
 ///
 /// `sources` is the daemon whitelist (empty = all). Semantics (ADR F016): a
@@ -147,30 +155,29 @@ pub async fn run_cycle(config: &Arc<Config>, sources: &[String]) -> CycleResult 
     if sources.is_empty() || sources.iter().any(|s| s == "mail") {
         let mut folders = 0usize;
         let mut envelopes = 0usize;
-        let mut first_err: Option<String> = None;
+        let mut errors = Vec::new();
         for account in &config.mail.accounts {
             match crate::modules::email::sync_all_folders(account).await {
                 Ok(stats) => {
                     folders += stats.folders_synced;
                     envelopes += stats.envelopes_added;
-                    if let Some((folder, msg)) = stats.errors.first() {
-                        first_err.get_or_insert_with(|| format!("mail {folder}: {msg}"));
-                    }
+                    extend_mail_errors(&mut errors, stats.errors);
                 }
                 Err(e) => {
-                    first_err.get_or_insert_with(|| format!("mail {}: {e}", account.name));
+                    errors.push(format!("mail {}: {e}", account.name));
                 }
             }
         }
-        result.mail = Some(match first_err {
-            Some(err) => ActionResult {
+        result.mail = Some(if errors.is_empty() {
+            ActionResult::mail_ok(folders, envelopes)
+        } else {
+            ActionResult {
                 ok: false,
                 folders,
                 envelopes,
-                error: Some(err),
+                error: Some(errors.join("; ")),
                 ..ActionResult::default()
-            },
-            None => ActionResult::mail_ok(folders, envelopes),
+            }
         });
     }
 
@@ -381,6 +388,22 @@ mod tests {
         assert!(sources_include(&[], "mail"));
         assert!(sources_include(&["mail".into(), "rss".into()], "rss"));
         assert!(!sources_include(&["mail".into()], "cal"));
+    }
+
+    #[test]
+    fn mail_errors_include_every_failed_folder() {
+        let mut errors = Vec::new();
+        extend_mail_errors(
+            &mut errors,
+            vec![
+                ("Junk".into(), "select failed".into()),
+                ("Sent".into(), "fetch failed".into()),
+            ],
+        );
+        assert_eq!(
+            errors.join("; "),
+            "mail Junk: select failed; mail Sent: fetch failed"
+        );
     }
 
     fn sources_include(sources: &[String], name: &str) -> bool {
