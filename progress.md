@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.18.1 已发布** — **IMAP 会话池归还竞态修复**（[M002](./docs/adr/M002-imap-connection-pool.md)/[R003](./docs/adr/R003-pool-guard-drop.md) 修订，2026-08-27）：文件夹数超池大小时 semaphore 与队列双重记账的归还竞态导致池耗尽、失效会话永久减容——改为 mutex 保护的空闲队列 + `Notify`（归还同步完成后再唤醒等待者），失效会话后台重建、重建成功才重新可用；daemon 聚合每个失败文件夹的错误。非破坏性。
 - **v0.18.0 已发布** — **Mail 补遗**（[M006](./docs/adr/M006-mail-search-cached.md) `mail search --cached` 本地缓存搜索 + [M007](./docs/adr/M007-mail-cache-gc.md) `mail gc` 服务端对账幽灵清理，Phase 24）：`search --cached` 显式 opt-in、stale 同步、P6 类型化输出；`gc` scoped 对账、UIDVALIDITY 变更跳过、对账后推进水位，daemon 保持纯拉取。非破坏性（additive flag + additive action）。
 - **v0.17.7 已发布** — **cal 日程时区修复**（L006 补丁，2026-08-21）：`cal list` 对 UTC 存储事件（DTSTART 带 Z）改为按本地墙钟输出（`format_date_perhaps_time` / `date_perhaps_time_to_naive` 对 `Utc` 变体转 `Local`），修复日程显示早 8 小时（如 C196 西安→榆林实际 09:02 显示 01:02），同时修正 UTC 事件与 `Local::now()` 比较的排序错位。非破坏性。
 - **v0.17.6 已发布** — **RSS digest/fetch 区分度**（[F008](./docs/adr/F008-rss-module.md) amendment，2026-08-19）：digest 输出加摘要列（feed/title/summary/published/author/link，文本 80/JSON 200 截断，新增 `TypedValue::TruncatedText`）；`--since` 复用 timeline 时长解析按 published 过滤；digest 数据源改为本地 rss-items 缓存优先（`--fresh` 强刷，表空/无结果回退实时）；fetch 双入口（`--name N` 写缓存 / `<url>` stateless 不写缓存）。非破坏性。
@@ -95,6 +96,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.18.1** | `v0.18.1` | IMAP 会话池归还竞态修复：池改 mutex 空闲队列 + `Notify`（归还同步完成后再唤醒）、失效会话后台重建、重建成功前不可用；daemon 聚合文件夹级同步错误 | [M002](./docs/adr/M002-imap-connection-pool.md), [R003](./docs/adr/R003-pool-guard-drop.md) |
 | **v0.18.0** | `v0.18.0` | Mail 补遗：`mail search --cached` 本地缓存搜索（显式 opt-in、stale 同步、P6 类型化输出、复用 search_envelopes_scoped）；`mail gc` 服务端对账幽灵清理（UIDVALIDITY 变更跳过、对账后推进水位、daemon 保持纯拉取） | [M006](./docs/adr/M006-mail-search-cached.md), [M007](./docs/adr/M007-mail-cache-gc.md) |
 | **v0.17.7** | `v0.17.7` | cal 日程时区修复：`cal list` 对 UTC 存储事件（DTSTART 带 Z）按本地墙钟输出（`date_perhaps_time_to_naive` / `format_date_perhaps_time` 对 `Utc` 变体转 `Local`），修复日程显示早 8 小时，同时修正 UTC 事件排序错位 | [L006](./docs/adr/L006-utc-storage-local-query.md)（补丁） |
 | **v0.17.6** | `v0.17.6` | RSS digest/fetch 区分度：digest 摘要列（文本 80/JSON 200 截断）+ `--since` 时间窗（复用 timeline 时长解析）+ 本地 rss-items 缓存优先（`--fresh` 强刷、空/无结果回退实时）；fetch 双入口（`--name` 订阅源写缓存 / `<url>` stateless 调试不写缓存）；新增 `TypedValue::TruncatedText`；CLI 帮助与 docs/commands×2/skill 命令表同步 | [F008](./docs/adr/F008-rss-module.md)（amendment） |

@@ -1,3 +1,12 @@
+## [0.18.1] - 2026-08-27
+
+### 🐛 Bug Fixes
+
+- *(mail)* Fix IMAP session pool return race during concurrent folder sync (#32, fixes #31)
+
+### 📚 Documentation
+
+- *(skill)* Document mail search --cached and mail gc in everyday-cli
 ## [0.18.0] - 2026-08-24
 
 ### 🚀 Features
@@ -13,6 +22,10 @@
 
 - *(mail)* Design M006 search --cached + M007 cache gc (v0.18 plan)
 - *(mail)* Mark M006 search --cached implemented in master
+
+### ⚙️ Miscellaneous Tasks
+
+- Release v0.18.0
 ## [0.17.7] - 2026-08-21
 
 ### 🐛 Bug Fixes
