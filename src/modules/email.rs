@@ -1567,9 +1567,25 @@ async fn sync_one_folder(
     let session = guard.session()?;
 
     // SELECT folder → read uid_validity
+    let stage_started = std::time::Instant::now();
     let mailbox = match select_folder_inner(session, folder).await {
-        Ok(mb) => mb,
+        Ok(mb) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = true,
+                "mail folder select"
+            );
+            mb
+        }
         Err(e) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = false,
+                error = %e,
+                "mail folder select"
+            );
             guard.invalidate();
             return Err(e);
         }
@@ -1588,9 +1604,26 @@ async fn sync_one_folder(
     };
 
     // UIDSEARCH
+    let stage_started = std::time::Instant::now();
     let uids = match search_uids(session, &search_query).await {
-        Ok(u) => u,
+        Ok(u) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = true,
+                count = u.len(),
+                "mail folder search"
+            );
+            u
+        }
         Err(e) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = false,
+                error = %e,
+                "mail folder search"
+            );
             guard.invalidate();
             return Err(e);
         }
@@ -1598,14 +1631,54 @@ async fn sync_one_folder(
 
     if uids.is_empty() {
         // no new mail; still update last_sync_at + uid_validity (empty watermark has max_uid=0)
-        email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &[]).await?;
-        return Ok(0);
+        let stage_started = std::time::Instant::now();
+        return match email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &[])
+            .await
+        {
+            Ok(_) => {
+                tracing::debug!(
+                    folder,
+                    elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                    ok = true,
+                    count = 0,
+                    "mail folder upsert"
+                );
+                Ok(0)
+            }
+            Err(e) => {
+                tracing::debug!(
+                    folder,
+                    elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                    ok = false,
+                    error = %e,
+                    "mail folder upsert"
+                );
+                Err(e)
+            }
+        };
     }
 
     // UID FETCH ENVELOPE + FLAGS + SIZE
+    let stage_started = std::time::Instant::now();
     let envelopes = match fetch_envelopes_for_cache(session, &uids, folder).await {
-        Ok(e) => e,
+        Ok(e) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = true,
+                count = e.len(),
+                "mail folder fetch"
+            );
+            e
+        }
         Err(e) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = false,
+                error = %e,
+                "mail folder fetch"
+            );
             guard.invalidate();
             return Err(e);
         }
@@ -1613,8 +1686,30 @@ async fn sync_one_folder(
 
     let count = envelopes.len();
     // write envelopes + advance watermark (atomic transaction, strong consistency per [M004](../../docs/adr/M004-uid-watermark-sync.md))
-    email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &envelopes).await?;
-    Ok(count)
+    let stage_started = std::time::Instant::now();
+    match email_cache::upsert_envelopes(cache, account, folder, new_uid_validity, &envelopes).await
+    {
+        Ok(_) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = true,
+                count,
+                "mail folder upsert"
+            );
+            Ok(count)
+        }
+        Err(e) => {
+            tracing::debug!(
+                folder,
+                elapsed_ms = stage_started.elapsed().as_millis() as u64,
+                ok = false,
+                error = %e,
+                "mail folder upsert"
+            );
+            Err(e)
+        }
+    }
 }
 
 /// Sync across folders concurrently, using `futures::future::join_all` to await

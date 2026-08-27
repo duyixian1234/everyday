@@ -1,4 +1,4 @@
-# ADR R003: PoolGuard::Drop must guard `tokio::spawn` with `Handle::try_current()`
+# ADR R003: PoolGuard::Drop returns sessions synchronously
 
 **Status:** Accepted
 **Date:** 2026-07-11
@@ -25,34 +25,21 @@ That panic fires on the *drop glue*, not on the user's command — and it can ha
 
 ## Decision
 
-**`PoolGuard::Drop` must check for a live runtime before calling `tokio::spawn`.**
+**`PoolGuard::Drop` synchronously locks the idle-session queue, returns the
+session, releases the lock, and then notifies one waiter. It does not spawn an
+async return task.**
 
-```rust
-impl Drop for PoolGuard<'_> {
-    fn drop(&mut self) {
-        if tokio::runtime::Handle::try_current().is_ok() {
-            tokio::spawn(async move {
-                self.pool.lock().await.push_back(self.session);
-            });
-        } else {
-            // Runtime is down — leak the session. The pool's existing
-            // M-allocated limit holds; next list creates fresh sessions.
-            // (Alternative: synchronously push back via try_lock, but
-            // try_lock can fail under contention; leak is acceptable.)
-        }
-    }
-}
-```
-
-The fix is one of the "panic"-category items from the 2026-07-11/12 review — see commit `7a30cd5`.
+This preserves panic-free runtime shutdown while ensuring that a waiter is
+never awakened before the corresponding session is visible.
 
 ## Alternatives considered
 
-### Synchronously push back via `try_lock`
+### Asynchronously return via `tokio::spawn`
 
-- No spawn needed; works during shutdown.
-- `try_lock` can fail under contention; the session is then dropped, which closes the IMAP connection. Acceptable.
-- Considered; the leak path was kept as the simpler choice since shutdown is rare and the pool re-establishes on next list.
+- Releasing a separate semaphore permit before the spawned task acquires the
+  queue lock lets a waiter observe a false capacity signal.
+- Rejected because mailboxes with more folders than sessions reliably enter
+  this race.
 
 ### Wrap the entire CLI in a long-lived runtime that lives longer than user code
 
@@ -74,9 +61,11 @@ The fix is one of the "panic"-category items from the 2026-07-11/12 review — s
 ## Consequences
 
 - `PoolGuard::Drop` is panic-free under all shutdown paths.
-- During normal operation the behavior is unchanged: the session returns to the pool asynchronously.
-- During shutdown the session leaks; next `mail list` rebuilds the pool from scratch.
-- A test asserts that calling `drop` on a `PoolGuard` after the runtime has exited does not panic.
+- Session return and capacity publication are ordered: enqueue first, notify
+  second.
+- No session is leaked merely because the Tokio runtime is shutting down.
+- A concurrent test checks that six waiters complete through a four-session
+  queue without an exhaustion error.
 
 ## Cross-references
 

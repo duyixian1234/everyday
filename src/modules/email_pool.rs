@@ -2,18 +2,16 @@
 //!
 //! Fixed size M=4 (ADR [M002](../../docs/adr/M002-imap-connection-pool.md)); all
 //! sessions share the same keyring password.
-//! Concurrency across folder sync is capped at 4 via `tokio::Semaphore`.
-//!
-//! `acquire()` returns a `PoolGuard`, which takes an idle session; the session is
-//! returned on `Drop` (unless `invalidate()` marked it dirty).
+//! The idle queue is the sole source of checkout capacity, and `Notify` wakes
+//! waiters after a session is synchronously returned.
 //!
 //! Sessions are built eagerly (all 4) at startup to avoid stacking 4× TLS
 //! handshake latency on the first list.
 
 use std::collections::VecDeque;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
-use tokio::sync::{Mutex, OwnedSemaphorePermit, Semaphore};
+use tokio::sync::Notify;
 
 use crate::config::MailAccount;
 use crate::error::{AgentError, Result};
@@ -22,6 +20,116 @@ use crate::modules::email::{ImapSession, imap_connect};
 /// Pool size. ADR [M002](../../docs/adr/M002-imap-connection-pool.md): hard-coded, no flag / config exposure.
 pub const POOL_SIZE: usize = 4;
 
+struct SessionState<T> {
+    sessions: VecDeque<T>,
+    checked_out: usize,
+    rebuilding: usize,
+    last_rebuild_error: Option<String>,
+}
+
+struct SessionQueue<T> {
+    state: Mutex<SessionState<T>>,
+    available: Notify,
+}
+
+impl<T> SessionQueue<T> {
+    fn new(sessions: VecDeque<T>) -> Self {
+        Self {
+            state: Mutex::new(SessionState {
+                sessions,
+                checked_out: 0,
+                rebuilding: 0,
+                last_rebuild_error: None,
+            }),
+            available: Notify::new(),
+        }
+    }
+
+    async fn acquire(self: &Arc<Self>) -> Result<SessionLease<T>> {
+        loop {
+            let notified = self.available.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            {
+                let mut state = self
+                    .state
+                    .lock()
+                    .map_err(|_| AgentError::Other("mail pool state lock poisoned".into()))?;
+                if let Some(session) = state.sessions.pop_front() {
+                    state.checked_out += 1;
+                    return Ok(SessionLease {
+                        queue: Arc::clone(self),
+                        session: Some(session),
+                    });
+                }
+                if state.checked_out == 0 && state.rebuilding == 0 {
+                    let detail = state
+                        .last_rebuild_error
+                        .as_deref()
+                        .unwrap_or("no live sessions");
+                    return Err(AgentError::Other(format!(
+                        "mail pool has no available sessions: {detail}"
+                    )));
+                }
+            }
+
+            notified.await;
+        }
+    }
+
+    fn start_rebuild(&self) {
+        if let Ok(mut state) = self.state.lock() {
+            state.checked_out = state.checked_out.saturating_sub(1);
+            state.rebuilding += 1;
+        }
+    }
+
+    fn finish_rebuild(&self, session: Option<T>, error: Option<String>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.rebuilding = state.rebuilding.saturating_sub(1);
+            if let Some(session) = session {
+                state.sessions.push_back(session);
+                state.last_rebuild_error = None;
+            } else if let Some(error) = error {
+                state.last_rebuild_error = Some(error);
+            }
+        }
+        self.available.notify_waiters();
+    }
+}
+
+struct SessionLease<T> {
+    queue: Arc<SessionQueue<T>>,
+    session: Option<T>,
+}
+
+impl<T> SessionLease<T> {
+    fn session(&mut self) -> Option<&mut T> {
+        self.session.as_mut()
+    }
+
+    fn invalidate(mut self) {
+        if self.session.take().is_some() {
+            self.queue.start_rebuild();
+        }
+    }
+}
+
+impl<T> Drop for SessionLease<T> {
+    fn drop(&mut self) {
+        let Some(session) = self.session.take() else {
+            return;
+        };
+        if let Ok(mut state) = self.queue.state.lock() {
+            state.checked_out = state.checked_out.saturating_sub(1);
+            state.sessions.push_back(session);
+            drop(state);
+            self.queue.available.notify_one();
+        }
+    }
+}
+
 /// IMAP session pool (cheap-clone, backed by `Arc`).
 #[derive(Clone)]
 pub struct Pool {
@@ -29,14 +137,8 @@ pub struct Pool {
 }
 
 struct PoolInner {
-    /// Idle session queue. `acquire` pops from the front, `Drop` pushes to the back.
-    sessions: Mutex<VecDeque<ImapSession>>,
-    /// Concurrency cap (defaults to `POOL_SIZE`). Wrapped in `Arc` for `acquire_owned`.
-    semaphore: Arc<Semaphore>,
-    /// Account metadata + password (from keyring) used to rebuild dirty sessions.
-    #[allow(dead_code)]
+    queue: Arc<SessionQueue<ImapSession>>,
     account: MailAccount,
-    #[allow(dead_code)]
     password: String,
 }
 
@@ -49,136 +151,130 @@ impl Pool {
         }
         Ok(Self {
             inner: Arc::new(PoolInner {
-                sessions: Mutex::new(sessions),
-                semaphore: Arc::new(Semaphore::new(POOL_SIZE)),
+                queue: Arc::new(SessionQueue::new(sessions)),
                 account,
                 password,
             }),
         })
     }
 
-    /// Acquire exclusive ownership of a session (`PoolGuard`).
-    ///
-    /// - Blocks until a semaphore slot is free.
-    /// - Errors if the pool is empty (defensive; should never happen in practice).
+    /// Acquire exclusive ownership of a session (`PoolGuard`), waiting when all
+    /// live sessions are checked out or being rebuilt.
     pub async fn acquire(&self) -> Result<PoolGuard> {
-        let permit = Arc::clone(&self.inner.semaphore)
-            .acquire_owned()
-            .await
-            .map_err(|e| AgentError::Other(format!("acquire pool semaphore: {e}")))?;
-        let mut sessions = self.inner.sessions.lock().await;
-        let session = sessions.pop_front().ok_or_else(|| {
-            AgentError::Other("pool exhausted: semaphore/signaled mismatch".into())
-        })?;
         Ok(PoolGuard {
             pool: Arc::clone(&self.inner),
-            permit,
-            session: Some(session),
+            lease: Some(self.inner.queue.acquire().await?),
         })
     }
 }
 
 /// Session guard returned by `Pool::acquire`.
 ///
-/// - Returns the session to the pool on `Drop`.
-/// - `invalidate()` marks the session dirty; on drop it is not returned (prevents a
-///   bad session from being reused).
+/// Returns the session to the pool on `Drop`. An invalidated session is replaced
+/// in the background before it becomes available again.
 pub struct PoolGuard {
     pool: Arc<PoolInner>,
-    /// Holds the permit that bounds concurrency; the permit is released automatically on guard drop.
-    /// The field is never read explicitly, but its drop semantics release the semaphore.
-    #[allow(dead_code)]
-    permit: OwnedSemaphorePermit,
-    /// `Some` = holds a session; `None` = already consumed via `invalidate`.
-    session: Option<ImapSession>,
+    lease: Option<SessionLease<ImapSession>>,
 }
 
 impl PoolGuard {
     /// Borrow the inner session mutably to run IMAP commands.
-    ///
-    /// Returns an error instead of panicking when already consumed by `invalidate()`
-    /// (no unwrap on the production path).
     pub fn session(&mut self) -> Result<&mut ImapSession> {
-        self.session
+        self.lease
             .as_mut()
+            .and_then(SessionLease::session)
             .ok_or_else(|| AgentError::Other("pool guard session already consumed".into()))
     }
 
-    /// Mark the session dirty (called after a command failure); not returned on drop.
+    /// Mark the session dirty and rebuild its replacement in the background.
     pub fn invalidate(mut self) {
-        self.session.take();
-    }
-}
+        let Some(lease) = self.lease.take() else {
+            return;
+        };
+        lease.invalidate();
 
-impl Drop for PoolGuard {
-    fn drop(&mut self) {
-        if let Some(session) = self.session.take() {
-            // Return the session to the idle queue.
-            // If we are not inside a tokio runtime (runtime shutting down / test teardown /
-            // single-threaded sync context), tokio::spawn would panic and the session would
-            // be lost permanently, leaking pool capacity.
-            // Probe with Handle::try_current; if no runtime is available, drop the session
-            // directly (accept the leak, since this only happens on the process-exit path).
-            match tokio::runtime::Handle::try_current() {
-                Ok(handle) => {
-                    let pool = Arc::clone(&self.pool);
-                    handle.spawn(async move {
-                        let mut sessions = pool.sessions.lock().await;
-                        sessions.push_back(session);
-                    });
-                }
-                Err(_) => {
-                    // Runtime already gone: give up returning it. The permit is still
-                    // released when OwnedSemaphorePermit drops.
-                }
+        let pool = Arc::clone(&self.pool);
+        match tokio::runtime::Handle::try_current() {
+            Ok(handle) => {
+                handle.spawn(async move {
+                    match imap_connect(&pool.account, &pool.password).await {
+                        Ok(session) => pool.queue.finish_rebuild(Some(session), None),
+                        Err(error) => {
+                            tracing::warn!(
+                                account = %pool.account.name,
+                                error = %error,
+                                "failed to rebuild invalidated IMAP session"
+                            );
+                            pool.queue.finish_rebuild(None, Some(error.to_string()));
+                        }
+                    }
+                });
+            }
+            Err(error) => {
+                pool.queue.finish_rebuild(
+                    None,
+                    Some(format!(
+                        "runtime unavailable while rebuilding session: {error}"
+                    )),
+                );
             }
         }
-        // The permit is released automatically when OwnedSemaphorePermit drops → concurrency slot +1
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     #[test]
     fn capacity_is_4() {
-        // Compile-time constant stability test: ADR M002 hard-codes M=4
         assert_eq!(POOL_SIZE, 4);
     }
 
     #[tokio::test]
-    async fn session_after_invalidate_returns_error_not_panic() {
-        // Verify the fix: previously session() would .expect() panic after invalidate.
-        // The current version must return a Result, and neither the Ok nor Err path panics.
-        // Here we build an equivalent empty PoolGuard struct (bypassing a real IMAP connection).
-        let permit = Arc::new(Semaphore::new(1))
-            .acquire_owned()
-            .await
-            .expect("semaphore acquire");
-        let mut guard = PoolGuard {
-            pool: Arc::new(PoolInner {
-                sessions: Mutex::new(VecDeque::new()),
-                semaphore: Arc::new(Semaphore::new(1)),
-                account: MailAccount {
-                    name: String::new(),
-                    imap_host: String::new(),
-                    imap_port: 993,
-                    smtp_host: String::new(),
-                    smtp_port: 587,
-                    username: String::new(),
-                    tls: true,
-                },
-                password: String::new(),
-            }),
-            permit,
-            session: None,
-        };
+    async fn six_waiters_share_four_sessions_without_exhaustion() {
+        let queue = Arc::new(SessionQueue::new((0..POOL_SIZE).collect()));
+        let completed = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
 
-        let result = guard.session();
-        assert!(result.is_err(), "session() after invalidate must error");
+        for _ in 0..6 {
+            let queue = Arc::clone(&queue);
+            let completed = Arc::clone(&completed);
+            tasks.push(tokio::spawn(async move {
+                let _lease = queue.acquire().await.expect("session checkout");
+                tokio::task::yield_now().await;
+                completed.fetch_add(1, Ordering::SeqCst);
+            }));
+        }
+
+        tokio::time::timeout(Duration::from_secs(1), futures::future::join_all(tasks))
+            .await
+            .expect("all waiters should complete");
+        assert_eq!(completed.load(Ordering::SeqCst), 6);
+        assert_eq!(
+            queue.state.lock().expect("queue lock").sessions.len(),
+            POOL_SIZE
+        );
     }
 
-    // Note: full Pool behavior tests need a mock IMAP server, beyond unit-test scope (CI skips network).
-    // See [F010](../../docs/adr/F010-testing-requirements.md) §Consequences — real-env verification runs in integration tests.
+    #[tokio::test]
+    async fn invalidated_session_is_unavailable_until_rebuilt() {
+        let queue = Arc::new(SessionQueue::new(VecDeque::from([1])));
+        queue
+            .acquire()
+            .await
+            .expect("session checkout")
+            .invalidate();
+
+        let waiting_queue = Arc::clone(&queue);
+        let waiter = tokio::spawn(async move { waiting_queue.acquire().await });
+        tokio::task::yield_now().await;
+        assert!(!waiter.is_finished());
+
+        queue.finish_rebuild(Some(2), None);
+        let mut lease = waiter.await.expect("waiter task").expect("rebuilt session");
+        assert_eq!(lease.session(), Some(&mut 2));
+    }
 }
