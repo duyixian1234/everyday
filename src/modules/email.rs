@@ -20,6 +20,7 @@ use tokio_util::compat::{Compat, TokioAsyncReadCompatExt};
 
 use crate::config::{Config, MailAccount, MailModuleConfig};
 use crate::error::{AgentError, Result};
+use crate::modules::imap_utf7::decode_imap_utf7;
 use crate::modules::{Executor, parse_simple_args};
 use crate::modules::{email_cache, email_pool};
 use crate::output::{Output, TypedValue};
@@ -1313,104 +1314,6 @@ fn collapse_whitespace(s: &str) -> String {
     out.trim().to_string()
 }
 
-/// Decode an IMAP UTF-7 folder name (RFC 3501 §5.1.3) into readable UTF-8.
-///
-/// Rule: a segment starting with `&` and ending with `-` is modified base64
-/// encoding of UTF-16BE; `&-` means a literal `&`; all other characters pass
-/// through. We iterate by `char` to handle UTF-8 correctly (the user may pass a
-/// Chinese name directly, with no `&` segment).
-/// Example: `&UXZO1mWHTvZZOQ-/Github&kBp35Q-` → `其他文件夹/Github通知`.
-fn decode_imap_utf7(s: &str) -> String {
-    let mut out = String::new();
-    let mut chars = s.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '&' {
-            let mut segment = String::new();
-            let mut found_terminator = false;
-            while let Some(&nc) = chars.peek() {
-                chars.next();
-                if nc == '-' {
-                    found_terminator = true;
-                    break;
-                }
-                segment.push(nc);
-            }
-            if !found_terminator {
-                // no terminating '-', emit as-is
-                out.push('&');
-                out.push_str(&segment);
-                break;
-            }
-            if segment.is_empty() {
-                out.push('&'); // &- → literal &
-            } else if let Some(decoded) = decode_modified_base64_utf16(segment.as_bytes()) {
-                out.push_str(&decoded);
-            } else {
-                // decode failed, keep the original segment
-                out.push('&');
-                out.push_str(&segment);
-                out.push('-');
-            }
-        } else {
-            out.push(c);
-        }
-    }
-    out
-}
-
-/// modified base64 (`,` replaces `/`, no padding) → UTF-16BE → String.
-fn decode_modified_base64_utf16(b64: &[u8]) -> Option<String> {
-    let raw = decode_base64_modified(b64)?;
-    if raw.len() % 2 != 0 {
-        return None;
-    }
-    let u16s: Vec<u16> = raw
-        .as_chunks::<2>()
-        .0
-        .iter()
-        .map(|c| u16::from_be_bytes(*c))
-        .collect();
-    String::from_utf16(&u16s).ok()
-}
-
-/// modified base64 decode (dependency-free, hand-written).
-fn decode_base64_modified(input: &[u8]) -> Option<Vec<u8>> {
-    const TABLE: [i8; 256] = build_b64_table();
-    let mut out = Vec::new();
-    let mut buf: u32 = 0;
-    let mut bits: u32 = 0;
-    for &c in input {
-        if c == b'=' {
-            break;
-        }
-        let v = TABLE[c as usize];
-        if v < 0 {
-            continue;
-        }
-        buf = (buf << 6) | (v as u32);
-        bits += 6;
-        if bits >= 8 {
-            bits -= 8;
-            out.push((buf >> bits) as u8);
-        }
-    }
-    Some(out)
-}
-
-/// Build the base64 lookup table (const fn, computed at compile time).
-/// `,` maps to 63 (modified base64 uses `,` instead of `/`).
-const fn build_b64_table() -> [i8; 256] {
-    let mut t = [-1i8; 256];
-    let alpha = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut i = 0;
-    while i < alpha.len() {
-        t[alpha[i] as usize] = i as i8;
-        i += 1;
-    }
-    t[b',' as usize] = 63; // modified base64
-    t
-}
-
 /// Parse an RFC 2822 mail date, used for cross-folder time sorting.
 /// Tolerant: strips parenthesis comments like "(UTC)".
 fn parse_mail_date(s: &str) -> Option<chrono::DateTime<chrono::FixedOffset>> {
@@ -2293,58 +2196,6 @@ mod tests {
             format_mailbox(Some("me"), Some("example.com")),
             "me@example.com"
         );
-    }
-
-    #[test]
-    fn imap_utf7_ascii_passthrough() {
-        assert_eq!(decode_imap_utf7("INBOX"), "INBOX");
-        assert_eq!(decode_imap_utf7("Sent Messages"), "Sent Messages");
-    }
-
-    #[test]
-    fn imap_utf7_chinese_passthrough() {
-        // user passes a Chinese name directly (no & segment); it should pass
-        // through verbatim without corrupting UTF-8
-        assert_eq!(
-            decode_imap_utf7("其他文件夹/Github通知"),
-            "其他文件夹/Github通知"
-        );
-    }
-
-    #[test]
-    fn imap_utf7_ampersand_escape() {
-        // &- means a literal &
-        assert_eq!(decode_imap_utf7("A&-B"), "A&B");
-    }
-
-    #[test]
-    fn imap_utf7_single_chinese_char() {
-        // "你" = U+4F60 → UTF-16BE 4F 60 → modified base64 "T2A"
-        assert_eq!(decode_imap_utf7("&T2A-"), "你");
-    }
-
-    #[test]
-    fn imap_utf7_mixed_chinese_and_ascii() {
-        // "其他文件夹" prefix + "/Github"
-        let decoded = decode_imap_utf7("&UXZO1mWHTvZZOQ-/Github&kBp35Q-");
-        assert!(
-            decoded.chars().any(|c| c as u32 > 127),
-            "expected Chinese chars in: {decoded}"
-        );
-        assert!(decoded.contains("Github"));
-    }
-
-    #[test]
-    fn imap_utf7_no_terminator_fallback() {
-        // no terminating '-', emit as-is without panicking
-        assert_eq!(decode_imap_utf7("test&abc"), "test&abc");
-    }
-
-    #[test]
-    fn imap_utf7_roundtrip_known() {
-        // "你好" → UTF-16BE 4F60 597D → base64: 4F 60 59 → 010011 110110 000001 011001 = T 2 B Z
-        // remaining 7D → 011111 01(pad) = f Q → "T2BZfQ"
-        assert_eq!(decode_imap_utf7("&T2BZfQ-"), "你好");
     }
 
     #[test]

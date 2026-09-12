@@ -57,6 +57,7 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [M005](M005-staleness-auto-sync.md) | Staleness-based auto-sync + flags snapshot + search bypass | Accepted | 2026-07-11 |
 | [M006](M006-mail-search-cached.md) | `mail search --cached` — local envelope-cache search path (opt-in, typed output) | Accepted | 2026-08-21 |
 | [M007](M007-mail-cache-gc.md) | `mail cache gc` — manual, server-reconciled ghost-envelope cleanup (daemon stays pull-only) | Accepted | 2026-08-21 |
+| [M008](M008-mail-folder-key-canonicalization.md) | Canonical folder keys (raw modified-UTF-7) + Message-ID duplicate suppression in the envelope cache | Accepted | 2026-09-12 |
 
 ## Calendar (C-series)
 

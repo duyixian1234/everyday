@@ -8,6 +8,20 @@
 //! Design basis: `docs/adr/0011` (envelope storage) + `0012` (UID watermark +
 //! UIDVALIDITY) + `0013` (staleness).
 //!
+//! **Folder key invariant** ([M008](../../docs/adr/M008-mail-folder-key-canonicalization.md)):
+//! every function in this module that accepts a folder name canonicalizes it via
+//! [`canonical_folder_key`] before touching the database. A folder reaches us in
+//! two spellings — the raw modified-UTF-7 name from IMAP `LIST`, or the decoded
+//! display name a user/CLI passes — and storing both as separate primary keys
+//! splits one physical folder into two cache namespaces (the same message would
+//! occupy two rows and the folder would carry two watermarks). Canonicalizing at
+//! this boundary makes the two spellings the same key, regardless of caller.
+//!
+//! **Duplicate suppression**: `query_envelopes` / `search_envelopes_scoped` drop
+//! rows that repeat a `message_id` already returned. A message filed in several
+//! folders (or left over from a pre-[M008](../../docs/adr/M008-mail-folder-key-canonicalization.md)
+//! cache) is one mail for the reader, not two.
+//!
 //! Fully independent from `timeline.db` (the `ops-log.db` was removed with the
 //! Notion provider, v0.13.0 — [R019](../../docs/adr/R019-remove-notion-provider.md)).
 
@@ -15,8 +29,10 @@ use chrono::{DateTime, Utc};
 use serde::Serialize;
 use sqlx::Row;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions, SqliteRow};
+use std::collections::HashSet;
 
 use crate::error::{AgentError, Result};
+use crate::modules::imap_utf7::canonical_folder_key;
 
 // ============ Types ============
 
@@ -136,16 +152,20 @@ pub async fn open() -> Result<SqlitePool> {
 // ============ folder_state operations ============
 
 /// Read a single folder's watermark; returns `None` if absent.
+///
+/// `folder` may be a raw or decoded spelling; it is canonicalized first
+/// ([M008](../../docs/adr/M008-mail-folder-key-canonicalization.md)).
 pub async fn get_folder_state(
     pool: &SqlitePool,
     account: &str,
     folder: &str,
 ) -> Result<Option<FolderState>> {
+    let folder = canonical_folder_key(folder);
     let row = sqlx::query(
         "SELECT uid_validity, max_uid, last_sync_at FROM folder_state WHERE account = ? AND folder = ?",
     )
     .bind(account)
-    .bind(folder)
+    .bind(folder.as_str())
     .fetch_optional(pool)
     .await?;
     Ok(row.map(|r| {
@@ -167,6 +187,10 @@ pub async fn get_folder_state(
 ///
 /// When `envelopes` is empty, `last_sync_at` is still updated (`max_uid` stays
 /// unchanged via `MAX()`).
+///
+/// `folder` is canonicalized before writing, so a sync driven by a decoded
+/// display name lands on the same rows as one driven by the raw IMAP name
+/// ([M008](../../docs/adr/M008-mail-folder-key-canonicalization.md)).
 pub async fn upsert_envelopes(
     pool: &SqlitePool,
     account: &str,
@@ -174,6 +198,7 @@ pub async fn upsert_envelopes(
     new_uid_validity: u32,
     envelopes: &[CachedEnvelope],
 ) -> Result<u32> {
+    let folder = canonical_folder_key(folder);
     let mut tx = pool.begin().await?;
     let fetched_at = Utc::now().to_rfc3339();
     let mut max_uid_in_batch: u32 = 0;
@@ -193,7 +218,7 @@ pub async fn upsert_envelopes(
                 fetched_at = excluded.fetched_at",
         )
         .bind(account)
-        .bind(folder)
+        .bind(folder.as_str())
         .bind(env.uid as i64)
         .bind(&env.date)
         .bind(&env.from_addr)
@@ -218,7 +243,7 @@ pub async fn upsert_envelopes(
             last_sync_at = excluded.last_sync_at",
     )
     .bind(account)
-    .bind(folder)
+    .bind(folder.as_str())
     .bind(new_uid_validity as i64)
     .bind(max_uid_in_batch as i64)
     .bind(&fetched_at)
@@ -231,15 +256,16 @@ pub async fn upsert_envelopes(
 /// UIDVALIDITY invalidation: delete all envelopes of the folder + drop the watermark row.
 /// The next sync treats the watermark as 0 and falls back to a full `UIDSEARCH UID 1:*`.
 pub async fn clear_folder(pool: &SqlitePool, account: &str, folder: &str) -> Result<()> {
+    let folder = canonical_folder_key(folder);
     let mut tx = pool.begin().await?;
     sqlx::query("DELETE FROM envelopes WHERE account = ? AND folder = ?")
         .bind(account)
-        .bind(folder)
+        .bind(folder.as_str())
         .execute(&mut *tx)
         .await?;
     sqlx::query("DELETE FROM folder_state WHERE account = ? AND folder = ?")
         .bind(account)
-        .bind(folder)
+        .bind(folder.as_str())
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
@@ -262,10 +288,11 @@ pub async fn list_folders(pool: &SqlitePool, account: &str) -> Result<Vec<String
 
 /// All locally cached UIDs for one (account, folder), for ghost detection.
 pub async fn get_folder_uids(pool: &SqlitePool, account: &str, folder: &str) -> Result<Vec<u32>> {
+    let folder = canonical_folder_key(folder);
     let rows =
         sqlx::query("SELECT uid FROM envelopes WHERE account = ? AND folder = ? ORDER BY uid")
             .bind(account)
-            .bind(folder)
+            .bind(folder.as_str())
             .fetch_all(pool)
             .await?;
     Ok(rows
@@ -345,7 +372,7 @@ pub async fn query_envelopes(
     let mut binds: Vec<String> = vec![account.to_string()];
     if let Some(f) = &q.folder {
         sql.push_str(" AND folder = ?");
-        binds.push(f.clone());
+        binds.push(canonical_folder_key(f));
     }
     if q.unread_only {
         // IMAP \Seen marks read; flags is a space-separated token list.
@@ -374,7 +401,7 @@ pub async fn query_envelopes(
     for r in rows {
         out.push(row_to_cached_envelope(&r));
     }
-    Ok(out)
+    Ok(dedup_repeated_message_ids(out))
 }
 
 /// Map a row from the canonical 11-column `envelopes` SELECT to a
@@ -447,7 +474,7 @@ pub async fn search_envelopes(pool: &SqlitePool, tokens: &[&str]) -> Result<Vec<
     for r in rows {
         out.push(row_to_cached_envelope(&r));
     }
-    Ok(out)
+    Ok(dedup_repeated_message_ids(out))
 }
 
 /// Account-scoped free-text search over the envelope cache — the CLI's
@@ -491,7 +518,7 @@ pub async fn search_envelopes_scoped(
     binds.insert(0, account.to_string());
     if let Some(f) = folder {
         sql.push_str(" AND folder = ?");
-        binds.push(f.to_string());
+        binds.push(canonical_folder_key(f));
     }
     sql.push_str(" ORDER BY date DESC LIMIT ");
     // The LIMIT is a literal integer (same handling as `query_envelopes` /
@@ -506,10 +533,39 @@ pub async fn search_envelopes_scoped(
     for r in rows {
         out.push(row_to_cached_envelope(&r));
     }
-    Ok(out)
+    Ok(dedup_repeated_message_ids(out))
 }
 
 // ============ Utilities ============
+
+/// Drop rows that repeat a message already returned.
+///
+/// One physical mail can occupy several rows: it may be filed in more than one
+/// folder server-side, and caches written before
+/// [M008](../../docs/adr/M008-mail-folder-key-canonicalization.md) may still hold
+/// a folder's two spellings as two keys. For a reader (and for the morning
+/// briefing's "N new mails" count) that is one message, so keep the first
+/// occurrence and drop the repeats.
+///
+/// Identity is the RFC 5322 `Message-ID` scoped to the account. A row without a
+/// usable `Message-ID` is never merged (its `(account, folder, uid)` triple is
+/// used as the key instead), because two different mails can both lack one.
+/// Input order is preserved, so the newest row wins when the caller sorted by
+/// date descending.
+fn dedup_repeated_message_ids(rows: Vec<CachedEnvelope>) -> Vec<CachedEnvelope> {
+    let mut seen: HashSet<String> = HashSet::with_capacity(rows.len());
+    let mut out: Vec<CachedEnvelope> = Vec::with_capacity(rows.len());
+    for row in rows {
+        let key = match row.message_id.as_deref() {
+            Some(id) if !id.trim().is_empty() => format!("{}\u{1}{}", row.account, id.trim()),
+            _ => format!("{}\u{1}{}\u{1}{}", row.account, row.folder, row.uid),
+        };
+        if seen.insert(key) {
+            out.push(row);
+        }
+    }
+    out
+}
 
 fn parse_rfc3339(s: &str) -> Option<DateTime<Utc>> {
     crate::util::datetime::parse_rfc3339(s)
@@ -1168,5 +1224,137 @@ mod tests {
         assert_eq!(state.uid_validity, 99);
         assert_eq!(state.max_uid, 5);
         assert!(state.last_sync_at.is_some());
+    }
+
+    // ============ folder-key canonicalization + duplicate suppression (M008) ============
+
+    /// One physical folder, two spellings — taken from a real cache where a full
+    /// sync (raw name) and a per-folder sync (display name) both wrote it.
+    const RAW_FOLDER: &str = "&UXZO1mWHTvZZOQ-/&W1hoYw-";
+    const DISPLAY_FOLDER: &str = "其他文件夹/存档";
+
+    async fn count_folder_state_rows(pool: &SqlitePool) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM folder_state")
+            .fetch_one(pool)
+            .await
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn both_spellings_share_one_key_and_one_watermark() {
+        let pool = tmp_pool().await;
+        // Two sync paths of the same folder: raw name, then display name.
+        upsert_envelopes(&pool, "acc", RAW_FOLDER, 7, &[sample_envelope(286, "")])
+            .await
+            .unwrap();
+        upsert_envelopes(&pool, "acc", DISPLAY_FOLDER, 7, &[sample_envelope(286, "")])
+            .await
+            .unwrap();
+
+        let all = query_envelopes(&pool, "acc", &EnvelopeQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            all.len(),
+            1,
+            "one physical mail must occupy exactly one row"
+        );
+        assert_eq!(
+            all[0].folder, RAW_FOLDER,
+            "rows are stored under the canonical (raw) key"
+        );
+        assert_eq!(
+            count_folder_state_rows(&pool).await,
+            1,
+            "one folder must carry exactly one watermark"
+        );
+    }
+
+    #[tokio::test]
+    async fn query_by_either_spelling_returns_the_row() {
+        let pool = tmp_pool().await;
+        upsert_envelopes(&pool, "acc", RAW_FOLDER, 7, &[sample_envelope(286, "")])
+            .await
+            .unwrap();
+        for spelling in [RAW_FOLDER, DISPLAY_FOLDER] {
+            let q = EnvelopeQuery {
+                folder: Some(spelling.to_string()),
+                ..Default::default()
+            };
+            assert_eq!(
+                query_envelopes(&pool, "acc", &q).await.unwrap().len(),
+                1,
+                "folder filter '{spelling}' should match the canonical row"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn inbox_case_folds_to_one_key() {
+        let pool = tmp_pool().await;
+        // RFC 3501: INBOX is case-insensitive — `--folder inbox` must not fork the key.
+        upsert_envelopes(&pool, "acc", "inbox", 1, &[sample_envelope(9, "")])
+            .await
+            .unwrap();
+        let q = EnvelopeQuery {
+            folder: Some("INBOX".to_string()),
+            ..Default::default()
+        };
+        assert_eq!(query_envelopes(&pool, "acc", &q).await.unwrap().len(), 1);
+        assert_eq!(count_folder_state_rows(&pool).await, 1);
+    }
+
+    #[tokio::test]
+    async fn same_message_filed_in_two_folders_is_returned_once() {
+        let pool = tmp_pool().await;
+        // Server-side copy: one mail, two folders, one Message-ID (uid is folder-scoped).
+        upsert_envelopes(
+            &pool,
+            "acc",
+            "其他文件夹/12306通知",
+            1,
+            &[sample_envelope(119, "")],
+        )
+        .await
+        .unwrap();
+        upsert_envelopes(
+            &pool,
+            "acc",
+            "其他文件夹/From Me",
+            1,
+            &[sample_envelope(119, "")],
+        )
+        .await
+        .unwrap();
+
+        let rows = query_envelopes(&pool, "acc", &EnvelopeQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.len(),
+            1,
+            "a reader sees one message, not one per folder"
+        );
+    }
+
+    #[tokio::test]
+    async fn rows_without_message_id_are_never_merged() {
+        let pool = tmp_pool().await;
+        let mut first = sample_envelope(51, "");
+        first.message_id = None;
+        let mut second = sample_envelope(52, "");
+        second.message_id = Some(String::new());
+
+        upsert_envelopes(&pool, "acc", "INBOX", 1, &[first, second])
+            .await
+            .unwrap();
+        let rows = query_envelopes(&pool, "acc", &EnvelopeQuery::default())
+            .await
+            .unwrap();
+        assert_eq!(
+            rows.len(),
+            2,
+            "rows without a usable Message-ID are distinct messages"
+        );
     }
 }

@@ -440,6 +440,7 @@ pub mod daemon;
 pub mod email;
 pub mod email_cache;
 pub mod email_pool;
+pub mod imap_utf7;
 pub mod local;
 pub mod mcp;
 pub mod memory;
