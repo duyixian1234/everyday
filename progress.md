@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **v0.18.2 已发布** — **邮件缓存文件夹键归一化 + 读取侧去重**（[M008](./docs/adr/M008-mail-folder-key-canonicalization.md)，2026-09-12）：`--folder` 传入的中文名与 IMAP LIST 的 raw modified-UTF-7 名归一化到**同一缓存主键**（`INBOX` 大小写折叠），`mail list` / `search` 输出按 (account, Message-ID) 去重——修复同一封邮件被两个 folder 键各存一份、简报误报「重复投递 2 次」的幻影重复；配套一次性迁移合并既有双命名空间缓存。非破坏性。
 - **v0.18.1 已发布** — **IMAP 会话池归还竞态修复**（[M002](./docs/adr/M002-imap-connection-pool.md)/[R003](./docs/adr/R003-pool-guard-drop.md) 修订，2026-08-27）：文件夹数超池大小时 semaphore 与队列双重记账的归还竞态导致池耗尽、失效会话永久减容——改为 mutex 保护的空闲队列 + `Notify`（归还同步完成后再唤醒等待者），失效会话后台重建、重建成功才重新可用；daemon 聚合每个失败文件夹的错误。非破坏性。
 - **v0.18.0 已发布** — **Mail 补遗**（[M006](./docs/adr/M006-mail-search-cached.md) `mail search --cached` 本地缓存搜索 + [M007](./docs/adr/M007-mail-cache-gc.md) `mail gc` 服务端对账幽灵清理，Phase 24）：`search --cached` 显式 opt-in、stale 同步、P6 类型化输出；`gc` scoped 对账、UIDVALIDITY 变更跳过、对账后推进水位，daemon 保持纯拉取。非破坏性（additive flag + additive action）。
 - **v0.17.7 已发布** — **cal 日程时区修复**（L006 补丁，2026-08-21）：`cal list` 对 UTC 存储事件（DTSTART 带 Z）改为按本地墙钟输出（`format_date_perhaps_time` / `date_perhaps_time_to_naive` 对 `Utc` 变体转 `Local`），修复日程显示早 8 小时（如 C196 西安→榆林实际 09:02 显示 01:02），同时修正 UTC 事件与 `Local::now()` 比较的排序错位。非破坏性。
@@ -47,6 +48,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-09-12 | M | [M008](./docs/adr/M008-mail-folder-key-canonicalization.md) | 邮件文件夹键归一化：解码器迁出为 `modules/imap_utf7.rs`（新增编码器 + `canonical_folder_key`，规范形 = raw modified-UTF-7、`INBOX` 大小写折叠）；7 个缓存入口在写入/查询前归一化 → `--folder` 中/英名写同一主键；`list`/`search` 输出按 (account, Message-ID) 去重（无 Message-ID 回退 (folder,uid)，绝不误并）；`query_envelopes` 兼容历史双拼写行；非破坏性 patch v0.18.2 |
 | 2026-08-21 | M | [M006](./docs/adr/M006-mail-search-cached.md) | `mail search --cached` 本地缓存搜索：显式 opt-in（默认仍走 IMAP `SEARCH TEXT` 保全 body 召回）；stale >15min 先同步再查本地；复用 `search_envelopes` token-OR GLOB；`--cached` 走 P6 类型化输出，默认路径保留历史纯字符串契约（v0.18.0 计划） |
 | 2026-08-21 | M | [M007](./docs/adr/M007-mail-cache-gc.md) | `mail cache gc` 幽灵清理：显式手动命令（daemon 保持纯拉取）；服务端对账判定幽灵，UIDVALIDITY 变更文件夹跳过；`--account`/`--folder` scoped 默认全库；对账成功推进水位（v0.18.1 计划） |
 | 2026-08-19 | F | [F008](./docs/adr/F008-rss-module.md)（amendment） | RSS digest/fetch 区分度：digest 摘要列 + `--since` + 缓存优先（`--fresh` 强刷、空/无结果回退实时）；fetch 双入口（`--name` 写缓存 / `<url>` stateless）；纠正既有漂移（订阅存 config.toml、`--category`、`--since` 补实现）；非破坏性 patch v0.17.6 |
@@ -96,6 +98,7 @@
 
 | 版本 | tag | 摘要 | 主相关 ADR |
 | --- | --- | --- | --- |
+| **v0.18.2** | `v0.18.2` | 邮件缓存文件夹键归一化 + 读取侧去重：`--folder` 中文名与 raw modified-UTF-7 名映射到同一主键（`INBOX` 大小写折叠），`mail list`/`search` 按 (account, Message-ID) 去重，消除「同一封邮件重复投递」幻影；`modules/imap_utf7.rs` 编解码器 + 一次性缓存迁移工具 | [M008](./docs/adr/M008-mail-folder-key-canonicalization.md) |
 | **v0.18.1** | `v0.18.1` | IMAP 会话池归还竞态修复：池改 mutex 空闲队列 + `Notify`（归还同步完成后再唤醒）、失效会话后台重建、重建成功前不可用；daemon 聚合文件夹级同步错误 | [M002](./docs/adr/M002-imap-connection-pool.md), [R003](./docs/adr/R003-pool-guard-drop.md) |
 | **v0.18.0** | `v0.18.0` | Mail 补遗：`mail search --cached` 本地缓存搜索（显式 opt-in、stale 同步、P6 类型化输出、复用 search_envelopes_scoped）；`mail gc` 服务端对账幽灵清理（UIDVALIDITY 变更跳过、对账后推进水位、daemon 保持纯拉取） | [M006](./docs/adr/M006-mail-search-cached.md), [M007](./docs/adr/M007-mail-cache-gc.md) |
 | **v0.17.7** | `v0.17.7` | cal 日程时区修复：`cal list` 对 UTC 存储事件（DTSTART 带 Z）按本地墙钟输出（`date_perhaps_time_to_naive` / `format_date_perhaps_time` 对 `Utc` 变体转 `Local`），修复日程显示早 8 小时，同时修正 UTC 事件排序错位 | [L006](./docs/adr/L006-utc-storage-local-query.md)（补丁） |

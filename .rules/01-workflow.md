@@ -111,9 +111,12 @@ hand-edit it**. To change targets/installers/attestations, edit
 `dist-workspace.toml` and run `dist generate`.
 
 1. `chore: release vX.Y.Z` commit bumping `Cargo.toml` + document version refs.
-2. Regenerate the changelog: `git cliff -o CHANGELOG.md` and include it in the
-   release commit (git-cliff renders only; version bumps stay manual +
-   ADR-governed).
+2. Append this release's changelog: `git cliff --unreleased --tag vX.Y.Z --prepend
+   CHANGELOG.md`, and include it in the release commit (git-cliff renders only;
+   version bumps stay manual + ADR-governed). **Do not regenerate wholesale with
+   `git cliff -o CHANGELOG.md`** — older sections carry hand-curated edits (e.g.
+   v0.18.1's `*(mail)* … (#32, fixes #31)` does not match the raw commit subject),
+   and a full render silently drops them.
 3. Annotated tag: `git tag -a vX.Y.Z -m "vX.Y.Z: <highlights>"`.
 4. Push: `git push origin master && git push origin vX.Y.Z`. **Never `cnb`** —
    see [F006](../docs/adr/F006-ci-release-github-only.md).

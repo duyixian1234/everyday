@@ -1,3 +1,8 @@
+## [0.18.2] - 2026-09-12
+
+### 🐛 Bug Fixes
+
+- *(mail)* One canonical folder key per folder + Message-ID dedup in the envelope cache
 ## [0.18.1] - 2026-08-27
 
 ### 🐛 Bug Fixes
