@@ -45,6 +45,7 @@ Status legend: **Accepted** = in production; **Superseded** = replaced by a late
 | [F015](F015-leveled-logging-tracing.md) | Leveled logging via tracing — default quiet (WARN), `-v`/`-vv` opt-in INFO/DEBUG, custom Layer preserving `{"_log"}` shapes | Accepted | 2026-08-10 |
 | [F016](F016-daemon-sync-scheduler.md) | Daemon sync scheduler — resident `everyday daemon run` as the only role allowed to pull periodically (timeline + mail all-folders + rss); `--once`/`status`; state file; graceful shutdown | Accepted | 2026-08-13 |
 | [F017](F017-task-module.md) | Task module — named no-shell command execution, SQLite history, bounded capture, process-tree timeout, and independent daemon cron loop | Accepted | 2026-08-18 |
+| [F018](F018-agent-skill-distribution.md) | Agent skill distribution — `COMMANDS.md` as single inventory owner, CLI-projected drift check in CI, repo-as-live-source via link (copy keeps a staging gate but can diverge silently) | Accepted | 2026-09-12 |
 
 ## Mail (M-series)
 

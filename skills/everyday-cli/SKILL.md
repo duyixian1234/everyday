@@ -16,7 +16,7 @@ Prebuilt binaries for Linux / macOS / Windows on [GitHub Releases](https://githu
 cargo install --git https://github.com/duyixian1234/everyday.git
 ```
 
-Verify with `everyday --version`. Full per-platform steps: repo root [README.md](../../../README.md).
+Verify with `everyday --version`. Full per-platform steps: repo root [README.md](../../README.md).
 
 ## Command structure
 
@@ -24,7 +24,7 @@ Verify with `everyday --version`. Full per-platform steps: repo root [README.md]
 everyday <module> <action> [options] [--json] [--account NAME]
 ```
 
-Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `task` · `config` · `sync` · `daemon` · `mcp` (+ root-level `health`)
+Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline` · `memory` · `search` · `auth` · `sync` · `task` · `config` · `daemon` · `mcp` (+ root-level `health`)
 
 ## Rules (follow exactly)
 

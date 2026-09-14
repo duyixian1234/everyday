@@ -31,6 +31,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `sync` | ✅ Complete (v0.13.0) | Cross-device **file-level** sync to a WebDAV directory (default Jianguoyun): 4 user DBs (bookmark/note/todo/memory) + config.toml. Snapshot + SHA-256 change detection, LWW conflicts with dual `.conflict-<UTC ts>` copies, first-sync direction auto-detection, `--push-only` / `--pull-only` / `--force`, opt-in `auto_sync` after write commands (D003). Auth via `everyday auth login --module webdav --account <name>` (application password → keyring). Design: D001–D003 |
 | `mcp` | ✅ Complete (v0.15.0) | everyday as an **MCP server** over stdio (rmcp 3.x): every `(module, action)` is projected into a tool `<module>_<action>` (schemas from `module_arg_spec`, single source of truth). `serve` blocks until stdin EOF; `tools` prints the projected list + JSON Schemas. MCP clients connect via `{"mcpServers":{"everyday":{"command":"everyday","args":["mcp","serve"]}}}`. Design: F014 |
 | `task` | ✅ Complete (F017) | Named no-shell commands: add / run / list / remove / history; process-tree timeout; 64 KiB-per-stream capture; SQLite audit history; five-field cron via daemon's independent scheduler loop |
+| `daemon` | ✅ Complete (F016) | Resident auto-sync process: `run` (foreground; `--once` for a single cycle, `--sources mail,rss` to override the whitelist) and `status` (running / last cycle / per-source results). The only role allowed to pull periodically; queries stay SQLite-only (L005). No `start`/`stop`/daemonize — an OS service manager (nssm / launchd / systemd) supervises the foreground process |
 
 ---
 
@@ -76,10 +77,13 @@ Bidirectional file-level sync of the five user data files (`bookmark-<acct>.db` 
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `sync` | Bidirectional sync (pull-then-push) | `everyday sync` / `everyday sync --json` |
-| `sync --push-only` | Upload local changes only (also used by auto_sync) | `everyday sync --push-only --json` |
-| `sync --pull-only` | Download remote changes only | `everyday sync --pull-only --json` |
-| `sync --force` | Ignore `sync-state.json`: re-upload all local files + pull remote-only ones | `everyday sync --force --json` |
+| `sync sync` | Bidirectional sync (pull-then-push) | `everyday sync sync` / `everyday sync sync --json` |
+| `sync sync --push-only` | Upload local changes only (also used by auto_sync) | `everyday sync sync --push-only --json` |
+| `sync sync --pull-only` | Download remote changes only | `everyday sync sync --pull-only --json` |
+| `sync sync --force` | Ignore `sync-state.json`: re-upload all local files + pull remote-only ones | `everyday sync sync --force --json` |
+
+The action name repeats the module (`sync sync`); `everyday sync` alone is the
+common shorthand and takes the same flags.
 
 **JSON output**: `{ "remote": "<dir>", "files": [{name, action, detail?}], "pushed": N, "pulled": N, "skipped": N, "conflicts": N }` (+ `first_sync: "push_all"|"pull_all"` on an unambiguous first sync). `action` ∈ `push|pull|skip|conflict`; conflict entries carry `winner` (`local`|`remote`) and `conflict_copy`.
 
@@ -90,6 +94,27 @@ everyday auth login --module webdav --account personal   # application password 
 ```
 
 **Auto-sync (opt-in, default off)**: `auto_sync = true` on an account → successful write commands (`bookmark add`, `note create/append/update`, `todo add/start/complete/delete`, `memory add/delete`, `cal add/delete`, `config set`) do a best-effort push of changed files before returning. Failures print a warning (text stderr / JSON `_warning` line) and never change the exit code; query paths never sync.
+
+---
+
+## daemon — resident auto-sync ✅ (F016)
+
+`everyday daemon run` is the **only role allowed to pull periodically**. Query
+semantics are unchanged whether or not the daemon runs: queries stay SQLite-only
+and never trigger a sync (L005). The daemon exists so `timeline` / `search` /
+`mail list` read data that is already fresh.
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `daemon run` | Foreground resident: syncs once immediately, then one cycle per `[daemon].interval_seconds` | `everyday daemon run` |
+| `daemon run --once` | Run exactly one cycle and exit (summary to stdout); includes a task-scheduler pass | `everyday daemon run --once --json` |
+| `daemon run --sources` | Override the `[daemon].sources` whitelist (comma-separated) | `everyday daemon run --sources mail,rss` |
+| `daemon status` | Report running state / last cycle / per-source results | `everyday daemon status --json` |
+
+There is deliberately **no** `start` / `stop` / daemonize: the process runs in the
+foreground and an OS service manager (Windows nssm / Task Scheduler, macOS
+launchd, Linux systemd) supervises it. An anti-reentry guard in the state file
+prevents two daemons from running at once, and shutdown is graceful (SIGTERM).
 
 ---
 

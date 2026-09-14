@@ -43,5 +43,16 @@ build:
 check-links:
     uv run scripts/check_doc_links.py
 
-# Full CI pipeline: check → check-links → test → build → typos → deny
-ci: check check-links test build typos deny
+# Assert every CLI (module, action) is documented in the agent skill reference.
+# Requires a built `everyday` (cargo build). Design: docs/adr/F018.
+check-skill-drift:
+    uv run scripts/check_skill_drift.py --binary ./target/debug/everyday
+
+# Link the agent skill into the host skills directory (junction/symlink, not a copy).
+# Idempotent. Target can be overridden: just skill-link /path/to/skills.
+# Design: docs/adr/F018.
+skill-link target="~/.agents/skills":
+    pwsh -NoProfile -File scripts/skill_link.ps1 -Target "{{target}}"
+
+# Full CI pipeline: check → check-links → check-skill-drift → test → build → typos → deny
+ci: check check-links check-skill-drift test build typos deny

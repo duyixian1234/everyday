@@ -1,6 +1,6 @@
 # everyday — Getting Started for Agent Users
 
-`everyday` is a local CLI toolkit written in Rust that acts as the "digital hands" of an AI Agent. It offers a unified command structure covering external-integration scenarios: email (IMAP/SMTP), calendar (CalDAV), RSS feeds, notes (local SQLite), to-dos (local SQLite), bookmarks (local SQLite), and an aggregated **timeline** event log that unifies them.
+`everyday` is a local CLI toolkit written in Rust that acts as the "digital hands" of an AI Agent. It offers a unified command structure covering external-integration scenarios: email (IMAP/SMTP), calendar (CalDAV), RSS feeds, notes / to-dos / bookmarks (local SQLite), an aggregated **timeline** event log that unifies them, cross-module **search**, an agent **memory** notebook, **auth** credential lifecycle, **sync** via WebDAV, named no-shell **task** execution with cron scheduling, a resident **daemon**, and an **mcp** stdio server.
 
 ```
 everyday <module> <action> [options] [--json] [--account NAME]
@@ -16,14 +16,37 @@ everyday <module> <action> [options] [--json] [--account NAME]
 
 ## Module Status
 
-| Module | Status |
-|------|------|
-| `config` · `mail` · `cal` · `rss` · `note` · `todo` · `bookmark` | ✅ Available |
-| `timeline` (v0.5.0) | ✅ Available — unified event log aggregating the modules above |
-| `search` (v0.7.0) | ✅ Available — cross-module unified search (`everyday search query "<q>"`) |
-| `memory` (v0.10.0) | ✅ Available — agent's own structured `(subject, predicate, object)` notebook |
-| `health` (v0.11.0) | ✅ Available — root-level local-only health check (exit 0/1) |
-| `sync` (v0.13.0) | ✅ Available — cross-device file-level sync via WebDAV (`everyday sync`) |
+The authoritative module list, per-module status, actions, options, and output
+schemas live in **[`everyday-cli/references/COMMANDS.md`](everyday-cli/references/COMMANDS.md)**.
+
+For the live surface on a given machine, ask the binary — it is the source of
+truth and cannot go stale:
+
+```bash
+everyday --help              # all modules
+everyday <module> --help     # actions for one module
+everyday mcp tools --json    # every (module, action) with JSON Schema
+```
+
+This file deliberately keeps **no** module inventory and **no** version numbers:
+a hand-maintained copy of the module table previously drifted five releases
+behind. See [F018](../docs/adr/F018-agent-skill-distribution.md).
+
+## Installing the skill files (for agent hosts)
+
+The skill files are repo-only documentation — they ship in no release artifact
+and no packaging step installs them. To make the live skill track this working
+tree, link the repo copy into your agent skills directory instead of copying it:
+
+```bash
+just skill-link
+```
+
+That creates `<agent-skills-dir>/everyday-cli` as a junction / symlink to
+`skills/everyday-cli` in this repo. Because it is a link and not a copy, edits
+here take effect immediately in every agent session and drift becomes
+structurally impossible. A plain copy would work too, but it goes stale silently
+— see [F018](../docs/adr/F018-agent-skill-distribution.md) for the tradeoff.
 
 > This file is a concise intro for Agent users. The full human-readable documentation is in the repository root `README.md` (`README_ZH.md` for Chinese), and collaboration guidelines are in `agents.md`.
 
