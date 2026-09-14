@@ -131,15 +131,22 @@ def documented_actions(text: str, modules: set[str]) -> set[str]:
     Both are anchored on a known module name.  A looser "any ``everyday X Y``"
     pattern was rejected: it also matches prose ("everyday as an MCP server"),
     which would let an undocumented action pass on the strength of a sentence.
+
+    The action character class includes ``_`` and ``-``: `projected_actions`
+    splits a tool name on the *first* underscore only, so an action such as
+    ``items_fetch`` is representable, and a narrower class would silently
+    truncate it to ``items`` and report a false drift.
     """
     found: set[str] = set()
     # A module name from the live inventory keeps prose out of the match set.
     for module, action in re.findall(
-        r"`?everyday\s+([a-z][a-z0-9-]*)\s+([a-z][a-z0-9-]*)", text
+        r"`?everyday\s+([a-z][a-z0-9_-]*)\s+([a-z][a-z0-9_-]*)", text
     ):
         if module in modules:
             found.add(f"{module} {action}")
-    for module, action in re.findall(r"\|\s*`([a-z]+) ([a-z][a-z0-9-]*)[^`]*`", text):
+    for module, action in re.findall(
+        r"\|\s*`([a-z][a-z0-9_-]*) ([a-z][a-z0-9_-]*)[^`]*`", text
+    ):
         if module in modules:
             found.add(f"{module} {action}")
     return found
