@@ -242,9 +242,11 @@ everyday search query "rust timeline" --module note,todo --since 7d
 everyday search query "release" --limit 5
 ```
 
-### memory — Agent 结构化记忆笔记本（v0.10.0 新增）
+### memory — Agent 结构化记忆笔记本（v0.10.0 新增）⚠️ 已冻结
 
 Agent 自身的持久化、append-only 笔记本 —— 以 `(subject, predicate, object)` 三元组形式存放稳定事实，可附 `confidence` 与 `source`。三元组按版本演进：对同一 `(S, P, O)` 再次 `add` 会创建新行（旧行保留在 history 中）。软删除从当前态查询中隐藏该行，但 `history` 仍可见。存储为全局单例 SQLite 文件 `~/.config/everyday/memory.db`（无 `account` 列，不触及 `auth` 模块）。memory 作为 `Searchable` provider 自动参与 `everyday search`。
+
+> **已冻结**（[K005](../docs/adr/K005-memory-module-deprecation.md)）：本模块不再接受新功能，并排期在后续大版本中移除。现有动作行为不变、继续可用。请在移除前用 `everyday memory export` 把数据取走。
 
 | 命令 | 描述 | 用法 |
 |------|------|------|
@@ -255,6 +257,7 @@ Agent 自身的持久化、append-only 笔记本 —— 以 `(subject, predicate
 | `delete` | 软删除某三元组的当前态行 | `everyday memory delete <S> <P> <O>` |
 | `graph` | 从 subject 出发的前向 BFS（深度 1..=5，默认 2） | `everyday memory graph <SUBJECT> [--depth N] [--include-deleted]` |
 | `history` | 查看某三元组的全部版本（含已删除行） | `everyday memory history <S> <P> <O>` |
+| `export` | 导出**整张表**（含历史版本与软删除行）为单个 JSON 文档 | `everyday memory export` |
 
 **选项说明**：
 
@@ -289,7 +292,18 @@ everyday memory graph user --depth 2
 
 # memory 自动接入 search
 everyday search query "rust" --module memory --json
+
+# 在模块被移除前把数据全部取走（无损；无需 --json）
+everyday memory export > mem-backup.json
 ```
+
+**`export`** 把 `memory` 表的每一行 —— 含历史版本与软删除行 —— 导出为单个带版本的信封文档：
+
+```json
+{ "export_version": 1, "exported_at": "2026-09-16T02:39:06+00:00", "count": 1406, "facts": [ … ] }
+```
+
+它是**唯一**能一次性取出历史版本与软删除行的动作：`get` / `list` 只看到当前态，`history` 则需要你先知道确切的 `(S, P, O)`。它恒定输出 JSON（不受 `--json` 影响），因此 `> mem-backup.json` 两种情况下都能拿到合法文档；按 `id` 排序，故同一个未变更的库重复导出结果逐字节一致。空库返回 `count: 0`，不报错。**没有 `import`** —— 恢复需手工进行。
 
 ### health — 模块健康检查（v0.11.0 新增）
 

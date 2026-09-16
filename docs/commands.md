@@ -243,9 +243,11 @@ everyday search query "release" --limit 5
 
 See `CONTEXT.md` + `adr/0001`–`0009` for the full design rationale.
 
-### memory — structured agent notebook (NEW in v0.10.0)
+### memory — structured agent notebook (NEW in v0.10.0) ⚠️ frozen
 
 A persistent, append-only notebook for the agent itself — store stable facts as `(subject, predicate, object)` triples with optional `confidence` and `source`. Triples are versioned: re-adding the same `(S, P, O)` creates a new row (the previous one is preserved in history). Soft delete hides rows from current-state queries but keeps them in `history`. Storage is a single global SQLite file at `~/.config/everyday/memory.db` (no `account`, no `auth` module touch). Memory participates in `everyday search` as a `Searchable` provider over the current-state view.
+
+> **Frozen** ([K005](../docs/adr/K005-memory-module-deprecation.md)): the module takes no new features and is scheduled for removal in a later major version. Existing actions keep working unchanged. Use `everyday memory export` to take your data out before it goes.
 
 | Command | Description | Usage |
 |------|------|------|
@@ -256,6 +258,7 @@ A persistent, append-only notebook for the agent itself — store stable facts a
 | `delete` | Soft-delete the current-state row of a triple | `everyday memory delete <S> <P> <O>` |
 | `graph` | Forward BFS from a subject (depth 1..=5, default 2) | `everyday memory graph <SUBJECT> [--depth N] [--include-deleted]` |
 | `history` | Show all versions of a triple (including deleted rows) | `everyday memory history <S> <P> <O>` |
+| `export` | Dump the **whole table** (incl. superseded versions + soft-deleted rows) as one JSON document | `everyday memory export` |
 
 **Option details**:
 
@@ -289,7 +292,18 @@ everyday memory graph user --depth 2
 
 # Memory facts join `everyday search` automatically
 everyday search query "rust" --module memory --json
+
+# Take everything out before the module is removed (lossless; no --json needed)
+everyday memory export > mem-backup.json
 ```
+
+**`export`** dumps every row of the `memory` table — superseded versions and soft-deleted rows included — as a single versioned document:
+
+```json
+{ "export_version": 1, "exported_at": "2026-09-16T02:39:06+00:00", "count": 1406, "facts": [ … ] }
+```
+
+It is the only action that surfaces superseded versions and soft-deleted rows in one shot: `get`/`list` see current state only, and `history` needs the exact `(S, P, O)` up front. It always emits JSON (ignoring `--json`), so `> mem-backup.json` yields a valid document either way; it is ordered by `id`, so repeated exports of an unchanged database are byte-identical. An empty database returns `count: 0`, not an error. There is **no `import`** — recovery is manual.
 
 ### health — module health check (NEW in v0.11.0)
 
