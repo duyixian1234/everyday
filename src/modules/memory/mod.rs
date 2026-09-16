@@ -376,7 +376,7 @@ fn render_history(q: &actions::QueryResult, json_mode: bool) -> Output {
 /// Deliberate exception to the global `--json` flag: the action's contract
 /// *is* "produce a JSON document", so `everyday memory export > mem.json`
 /// works without remembering the flag. Per
-/// [K005](../../docs/adr/K005-memory-module-deprecation.md) this is the
+/// [K005](../../../docs/adr/K005-memory-module-deprecation.md) this is the
 /// migration artifact for the module's removal, so it must be capturable
 /// verbatim.
 ///
@@ -387,7 +387,8 @@ fn render_export(e: &actions::ExportResult) -> Output {
     Output::Json(serde_json::to_value(e).unwrap_or(Value::Null))
 }
 
-fn render_delete(d: &actions::DeleteResult, json_mode: bool) -> Output {    if json_mode {
+fn render_delete(d: &actions::DeleteResult, json_mode: bool) -> Output {
+    if json_mode {
         let mut obj = serde_json::Map::new();
         obj.insert("id".into(), Value::String(d.id.clone()));
         obj.insert("subject".into(), Value::String(d.subject.clone()));
@@ -974,7 +975,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn dispatch_unknown_action_errors() {        let mock = MockMemoryBackend::default();
+    async fn dispatch_unknown_action_errors() {
+        let mock = MockMemoryBackend::default();
         let err = dispatch(&mock, "bogus", &[]).await.unwrap_err();
         assert_eq!(err.type_name(), "UnknownAction");
     }

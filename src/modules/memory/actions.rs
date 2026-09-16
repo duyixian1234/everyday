@@ -670,8 +670,7 @@ mod tests {
         assert_eq!(current.0, 2, "view hides the soft-deleted row");
 
         // `deleted_at` is populated for the soft-deleted row only.
-        let deleted: Vec<&MemoryFact> =
-            facts.iter().filter(|f| f.deleted_at.is_some()).collect();
+        let deleted: Vec<&MemoryFact> = facts.iter().filter(|f| f.deleted_at.is_some()).collect();
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0].id, "m003");
     }
