@@ -134,6 +134,42 @@ were promoted to ADRs instead — linked where they exist.
 - **`parse_simple_args` must not treat `-1` as a flag.** Single-dash tokens are always
   values; only `--XXX` is a flag ([R005](../docs/adr/R005-parse-simple-args.md)).
 
+## Duplicate transitive versions (accepted, not actionable)
+
+`cargo deny check bans` reports ~27 duplicate-version warnings. They are **warnings,
+not failures** (`multiple-versions = "warn"` in `deny.toml`), and they are **upstream
+major-version splits that cannot be resolved from `Cargo.toml`**. Do not "fix" them by
+pinning — each was traced, and every old version comes from a transitive dependency:
+
+| Duplicate | Old version comes from |
+| --- | --- |
+| `windows-sys` 0.45 + 0.52 + 0.61 | `jni 0.21` (→ `rustls-platform-verifier` → reqwest), `ring 0.17`, our own `0.61` |
+| `thiserror` 1 + 2 | `async-imap 0.11`, `jni 0.21` |
+| `base64` 0.22 + 0.23 | `async-imap`, `charset` (mailparse), `hyper-util` |
+| `sha2` 0.10 + 0.11 | `sqlx-core 0.9` |
+| `tower-http` 0.6 + 0.7 | `reqwest 0.13`'s internal use |
+| `getrandom` 0.2 + 0.4 | `ring 0.17`, `redox_users` (dirs-sys) |
+| `syn` 2 + 3, `darling`, `nom`, `hashbrown`, `digest`, `block-buffer`, `cpufeatures`, `crypto-common`, `event-listener`, `async-channel` | mixed build-time (proc-macro) vs runtime strata — a proc-macro's `syn 2` and a runtime `syn 3` cannot unify |
+
+- **`windows-sys 0.45` cannot be removed.** It reaches us only via
+  `rustls-platform-verifier 0.6.2` → `jni 0.21.1`, whose Windows dep is
+  `windows-sys ^0.45.0`. `rustls-platform-verifier` is a **non-optional** dependency of
+  reqwest's `rustls-no-provider` / `rustls` features (not something we opt into), and it
+  requires `jni ^0.21`. `jni 0.22` dropped that pin (moved `windows-sys` to a
+  dev-dependency), but we cannot reach 0.22 until upstream raises its `jni`
+  requirement. `cargo update -p windows-sys@0.45.0` and `-p jni` both report
+  "Locking 0 packages".
+- **`reqwest` 0.13.1 is the ceiling while the `webpki-roots` feature is named.**
+  reqwest **removed** that feature in 0.13.5, so `cargo update` refuses to move past
+  0.13.1. Dropping the token *does* unlock 0.13.5 — but was measured to remove
+  **zero** duplicates (still `windows-sys` 0.45/0.52/0.61, `tower-http` 0.6/0.7,
+  `thiserror` 1/2), so it buys the upgrade and nothing else. `webpki-roots` is also a
+  direct dependency and the root store for `email.rs` / `calendar.rs`, so the crate
+  stays regardless.
+- The v0.19.0 dependency sweep that introduced these splits is recorded in
+  [docs/releases.md](../docs/releases.md) and
+  [G001](../docs/adr/G001-quality-tools-suite.md).
+
 ## New crate policy
 
 - Always check what the crate already gives you before reaching for a

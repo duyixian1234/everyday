@@ -25,6 +25,14 @@ allow = [
 ]
 
 [bans]
+# Duplicate transitive versions are WARN, not DENY, deliberately.
+# cargo-deny reports ~27 duplicates; all are upstream major-version splits
+# (windows-sys 0.45/0.52/0.61, thiserror 1/2, base64, sha2, tower-http, ...)
+# whose old versions live in transitive deps we do not control. They were each
+# traced and are documented in .rules/07-dependency-pitfalls.md
+# §"Duplicate transitive versions" — the windows-sys 0.45 one is unreachable
+# until rustls-platform-verifier raises its `jni ^0.21` requirement.
+# Promoting this to "deny" would fail CI with no available fix.
 multiple-versions = "warn"
 wildcards = "deny"
 
