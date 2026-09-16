@@ -24,10 +24,10 @@ serde_json = "1"
 toml = "0.8"
 
 # 跨平台路径
-dirs = "5"
+dirs = "7"
 
 # 错误处理
-thiserror = "1"
+thiserror = "2"
 anyhow = "1"
 
 # 凭证安全（系统密钥环）
@@ -42,8 +42,8 @@ lettre = { version = "0.11", default-features = false, features = ["tokio1-rustl
 futures = "0.3"
 tokio-rustls = "0.26"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
-webpki-roots = "0.26"
-mailparse = "0.15"
+webpki-roots = "1"
+mailparse = "0.17"
 rpassword = "7"
 tokio-util = { version = "0.7", features = ["compat"] }
 
@@ -53,7 +53,7 @@ icalendar = { version = "0.17", features = ["parser"] }
 hyper = { version = "1", features = ["client", "http1"] }
 hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", "tokio"] }
 hyper-rustls = { version = "0.27", default-features = false, features = ["ring", "http1", "webpki-tokio"] }
-tower-http = { version = "0.6", features = ["auth"] }
+tower-http = { version = "0.7", features = ["auth"] }
 http = "1"
 http-body-util = "0.1"
 roxmltree = "0.21"
@@ -71,7 +71,7 @@ chrono = { version = "0.4", features = ["serde"] }
 tabled = "0.15"
 
 # 内容 hash（WebDAV sync 变更检测，D002）
-sha2 = "0.10"
+sha2 = "0.11"
 
 # HTTP-date 解析（WebDAV Last-Modified → LWW 仲裁，D001/D002）
 httpdate = "1"
@@ -84,7 +84,7 @@ tracing-subscriber = { version = "0.3", default-features = false, features = ["r
 
 # Task module (F017): comment-preserving config edits + five-field cron parsing.
 toml_edit = "0.22"
-croner = "3.0.1"
+croner = "4"
 
 # Task runner capture decode (F017): child output may be GBK on a Chinese
 # Windows console (e.g. `ipconfig`); encoding_rs decodes it to readable UTF-8
@@ -96,7 +96,7 @@ encoding_rs = "0.8"
 # std's `Stdout` rejects in console mode; the relay writes via the OS handle
 # (`WriteFile`) instead.
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 [dev-dependencies]
 tokio-test = "0.4"

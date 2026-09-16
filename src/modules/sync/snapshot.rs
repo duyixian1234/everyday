@@ -23,6 +23,24 @@ fn sql_quote_path(path: &Path) -> String {
         .replace('\'', "''")
 }
 
+/// Lowercase hex encoding of a digest.
+///
+/// `sha2` 0.11 moved to the `digest` 0.11 generation, whose `finalize()`
+/// returns a `hybrid-array` `Array` that no longer implements `LowerHex` —
+/// so `format!("{:x}", hasher.finalize())` stopped compiling. Encoding the
+/// bytes here keeps the 64-char lowercase hex contract that the sync state
+/// file stores and compares, and avoids adding a `hex` dependency for four
+/// lines.
+pub(crate) fn hex_lower(bytes: &[u8]) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        // Writing into a String cannot fail.
+        let _ = write!(out, "{b:02x}");
+    }
+    out
+}
+
 /// Create a consistent snapshot of a SQLite database via `VACUUM INTO`.
 ///
 /// The snapshot is written to `<dir>/.sync-tmp/<rand>.db` and returned. The
@@ -72,7 +90,7 @@ pub fn sha256_file(path: &Path) -> Result<String> {
         }
         hasher.update(&buf[..n]);
     }
-    Ok(format!("{:x}", hasher.finalize()))
+    Ok(hex_lower(&hasher.finalize()))
 }
 
 /// A unique-enough suffix for temp files: process id + high-resolution

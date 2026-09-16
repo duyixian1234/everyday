@@ -499,7 +499,7 @@ fn sha256_bytes(bytes: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut h = Sha256::new();
     h.update(bytes);
-    format!("{:x}", h.finalize())
+    crate::modules::sync::snapshot::hex_lower(&h.finalize())
 }
 
 /// Temporary directory for snapshots, keyed by remote URL basename.
