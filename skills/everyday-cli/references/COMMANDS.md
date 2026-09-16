@@ -572,8 +572,7 @@ A persistent, append-only notebook for the agent itself. Triples `(subject, pred
 {
   "export_version": 1,
   "exported_at": "2026-09-16T02:39:06+00:00",
-  "count": 2,
-  "facts": [
+  "count": 2,  "facts": [
     {
       "id": "m18c231655d30f254-1c",
       "subject": "user",
@@ -607,7 +606,8 @@ A persistent, append-only notebook for the agent itself. Triples `(subject, pred
 - **Graph**: forward-only BFS over current state; cycle detection via visited set keyed by `(subject, predicate, object)`. `--include-deleted` flips the source view to the underlying table for the traversal.
 - **Searchable**: memory facts (current state) participate in `everyday search`. `Hit.id` is `"memory:<row_id>"` so agents can drill into `memory history` / `memory get` via the id.
 - **`export` is always JSON**, regardless of the global `--json` flag — its contract *is* "produce a JSON document", so `everyday memory export > mem-backup.json` works without the flag. It is the one action in this module that ignores `--json`.
-- **`export` is lossless**: it reads the base table, not the current-state view, so superseded versions and soft-deleted rows are included. It is the only way to retrieve data the view hides. Ordered by `id` (a total order), so repeated exports of an unchanged database are byte-identical.
+- **`export` is lossless**: it reads the base table, not the current-state view, so superseded versions and soft-deleted rows are included. It is the only way to retrieve data the view hides.
+- **`export` is ordered by `id`, which is NOT chronological.** The order is stable and reproducible (repeated exports return identical `facts`; only `exported_at` differs), but date-sequence ids do not sort lexicographically — the hex PID segment is unpadded and legacy ids form a separate block. To read facts in time order, sort on `created_at` yourself or use `history`.
 - **`export` on an empty database** returns `count: 0` with an empty `facts` array and exit code 0 — an empty notebook is a valid complete state, not an error.
 - **No `import`.** Recovery from an export is manual; there is no re-import action (K005).
 

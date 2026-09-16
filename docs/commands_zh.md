@@ -300,10 +300,14 @@ everyday memory export > mem-backup.json
 **`export`** 把 `memory` 表的每一行 —— 含历史版本与软删除行 —— 导出为单个带版本的信封文档：
 
 ```json
-{ "export_version": 1, "exported_at": "2026-09-16T02:39:06+00:00", "count": 1406, "facts": [ … ] }
+{ "export_version": 1, "exported_at": "2026-09-16T02:39:06+00:00", "count": 1427, "facts": [ … ] }
 ```
 
-它是**唯一**能一次性取出历史版本与软删除行的动作：`get` / `list` 只看到当前态，`history` 则需要你先知道确切的 `(S, P, O)`。它恒定输出 JSON（不受 `--json` 影响），因此 `> mem-backup.json` 两种情况下都能拿到合法文档；按 `id` 排序，故同一个未变更的库重复导出结果逐字节一致。空库返回 `count: 0`，不报错。**没有 `import`** —— 恢复需手工进行。
+它是**唯一**能一次性取出历史版本与软删除行的动作：`get` / `list` 只看到当前态，`history` 则需要你先知道确切的 `(S, P, O)`。它恒定输出 JSON（不受 `--json` 影响），因此 `> mem-backup.json` 两种情况下都能拿到合法文档。
+
+**排序按 `id`，但 `id` 顺序不是时间顺序** —— 日期序号 ID 并非字典序有序（hex 形式的 PID 段不补零，且 R021 之前的旧格式 id 自成一段）。该顺序稳定，故重复导出的 `facts` 完全一致（只有 `exported_at` 不同）。需要按时间阅读时请自行按 `created_at` 排序，或使用 `history`。
+
+空库返回 `count: 0`，不报错。**没有 `import`** —— 恢复需手工进行。
 
 ### health — 模块健康检查（v0.11.0 新增）
 

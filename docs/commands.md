@@ -300,10 +300,14 @@ everyday memory export > mem-backup.json
 **`export`** dumps every row of the `memory` table — superseded versions and soft-deleted rows included — as a single versioned document:
 
 ```json
-{ "export_version": 1, "exported_at": "2026-09-16T02:39:06+00:00", "count": 1406, "facts": [ … ] }
+{ "export_version": 1, "exported_at": "2026-09-16T02:39:06+00:00", "count": 1427, "facts": [ … ] }
 ```
 
-It is the only action that surfaces superseded versions and soft-deleted rows in one shot: `get`/`list` see current state only, and `history` needs the exact `(S, P, O)` up front. It always emits JSON (ignoring `--json`), so `> mem-backup.json` yields a valid document either way; it is ordered by `id`, so repeated exports of an unchanged database are byte-identical. An empty database returns `count: 0`, not an error. There is **no `import`** — recovery is manual.
+It is the only action that surfaces superseded versions and soft-deleted rows in one shot: `get`/`list` see current state only, and `history` needs the exact `(S, P, O)` up front. It always emits JSON (ignoring `--json`), so `> mem-backup.json` yields a valid document either way.
+
+**Ordering is by `id`, which is NOT chronological** — date-sequence ids don't sort lexicographically (unpadded hex PID segment, plus a separate block of pre-R021 legacy ids). The order is stable, so repeated exports return identical `facts` (only `exported_at` differs). To read facts in time order, sort on `created_at` yourself or use `history`.
+
+An empty database returns `count: 0`, not an error. There is **no `import`** — recovery is manual.
 
 ### health — module health check (NEW in v0.11.0)
 

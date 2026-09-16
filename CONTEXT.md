@@ -253,7 +253,7 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 `export` 不新增错误路径：空库是合法完整状态，返回 `count: 0`。
 
 ### Export（导出信封）
-`everyday memory export` —— 把**整张 `memory` 表**（非 `current_state_view`）导出为单个 JSON 文档，因此历史版本与软删除行都在其中；这是唯一能取出视图所隐藏数据的动作。信封 `{export_version, exported_at, count, facts[]}`，`export_version` 是承重字段（没有它，未来读者无法判断归档文档的形状）。恒定输出 JSON、不受全局 `--json` 影响；按 `id` 排序（全序，可逐字节复现）。**无 `import`**。详见 [K005](docs/adr/K005-memory-module-deprecation.md)。
+`everyday memory export` —— 把**整张 `memory` 表**（非 `current_state_view`）导出为单个 JSON 文档，因此历史版本与软删除行都在其中；这是唯一能取出视图所隐藏数据的动作。信封 `{export_version, exported_at, count, facts[]}`，`export_version` 是承重字段（没有它，未来读者无法判断归档文档的形状）。恒定输出 JSON、不受全局 `--json` 影响；按 `id` 排序——**该顺序稳定可复现，但不是时间顺序**（日期序号 ID 的 hex PID 段不补零，且旧格式 id 自成一段），需要时间序请自行按 `created_at` 排序或改用 `history`。**无 `import`**。详见 [K005](docs/adr/K005-memory-module-deprecation.md)。
 
 ### Deferred to v2（已取消）
 下列项**不会实现**——模块已冻结（[K005](docs/adr/K005-memory-module-deprecation.md)），"延后"实为取消：

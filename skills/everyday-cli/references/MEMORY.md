@@ -77,9 +77,11 @@ These were out of scope for v1 and will **never ship**: `undelete-by-id`, `searc
 `everyday memory export` dumps the entire `memory` table — every version, including soft-deleted rows — as one JSON document:
 
 ```json
-{ "export_version": 1, "exported_at": "…", "count": 1406, "facts": [ … ] }
+{ "export_version": 1, "exported_at": "…", "count": 1427, "facts": [ … ] }
 ```
 
-It is the **only** action that surfaces superseded versions and soft-deleted rows in one shot; `get` / `list` see current state only, and `history` requires you to already know the exact `(S, P, O)`. It always emits JSON and ignores the global `--json` flag, so `> file.json` captures a valid document either way. Ordered by `id`, so two exports of an unchanged database are byte-identical — safe to diff or archive.
+It is the **only** action that surfaces superseded versions and soft-deleted rows in one shot; `get` / `list` see current state only, and `history` requires you to already know the exact `(S, P, O)`. It always emits JSON and ignores the global `--json` flag, so `> file.json` captures a valid document either way.
+
+**Ordering is by `id`, which is NOT chronological** — date-sequence ids don't sort lexicographically (the hex PID segment is unpadded, and pre-R021 ids form a separate block). The order is stable, so repeated exports return identical `facts` (only `exported_at` differs) and the file is safe to diff or archive. To read facts in time order, sort on `created_at` yourself or use `history`.
 
 There is **no `import`**. Keep the file; recovering from it is a manual exercise.
