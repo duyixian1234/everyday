@@ -32,12 +32,10 @@ wildcards = "deny"
 version = 2
 # v0.20+: unmaintained/yanked take a SCOPE value (all | workspace | transitive | none),
 # not a severity. Security-class advisories stay error (hard CI gate) by default.
-# The 4 known unmaintained crates are discontinued-but-not-vulnerable — explicitly
+# The known unmaintained crates are discontinued-but-not-vulnerable — explicitly
 # ignored below and recorded with reasons in G001. New unmaintained deps WILL fail
 # CI until reviewed (add an ADR note + ignore entry).
 unmaintained = "all"
 ignore = [
     "RUSTSEC-2025-0052", # async-std discontinued — via async-imap (mail module)
-    "RUSTSEC-2024-0388", # derivative unmaintained — via keyring -> zbus (Linux secret-service chain)
-    "RUSTSEC-2024-0384", # instant unmaintained — via zbus -> futures-lite chain
 ]
