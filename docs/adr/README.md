@@ -149,14 +149,15 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 
 ## Knowledge base (K-series)
 
-Append-only triple store for the agent's own notebook. Distinguishes from Timeline (timestamped events) and Note (unstructured prose) — see [`CONTEXT.md` §Memory](../../CONTEXT.md) for the conceptual boundary.
+Append-only triple store for the agent's own notebook. Distinguishes from Timeline (timestamped events) and Note (unstructured prose) — see [`CONTEXT.md` §Memory](../../CONTEXT.md) for the conceptual boundary. **Frozen as of K005**: the module keeps working but takes no new features and is scheduled for removal in a later major version.
 
 | # | Title | Status | Date |
 |---|-------|--------|------|
-| [K001](K001-memory-module.md) | Memory module — agent's own notebook (append-only triple store) | Accepted | 2026-07-14 |
-| [K002](K002-memory-graph-query.md) | Memory graph query — forward-only recursive traversal on current state | Accepted | 2026-07-14 |
-| [K003](K003-memory-searchable.md) | Memory participates in cross-module `Searchable` trait (current-state GLOB) | Accepted | 2026-07-14 |
-| [K004](K004-memory-single-instance.md) | Memory single-instance storage — no account column | Accepted | 2026-07-14 |
+| [K001](K001-memory-module.md) | Memory module — agent's own notebook (append-only triple store) | Accepted (rev. K005) | 2026-07-14 |
+| [K002](K002-memory-graph-query.md) | Memory graph query — forward-only recursive traversal on current state | Accepted (rev. K005) | 2026-07-14 |
+| [K003](K003-memory-searchable.md) | Memory participates in cross-module `Searchable` trait (current-state GLOB) | Accepted (rev. K005) | 2026-07-14 |
+| [K004](K004-memory-single-instance.md) | Memory single-instance storage — no account column | Accepted (rev. K005) | 2026-07-14 |
+| [K005](K005-memory-module-deprecation.md) | Deprecate the memory module — frozen, export-then-remove | Accepted | 2026-09-16 |
 
 ## Device sync (D-series)
 

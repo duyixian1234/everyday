@@ -1,7 +1,9 @@
 # ADR K001: Memory module — agent's own notebook (append-only triple store)
 
-**Status:** Accepted
+**Status:** Accepted (revised 2026-09-16 by [K005](K005-memory-module-deprecation.md) — module frozen, removal scheduled)
 **Date:** 2026-07-14
+
+> **Update (2026-09-16):** The `memory` module is **frozen and scheduled for removal** in a later major version; see [K005](K005-memory-module-deprecation.md). The design below still describes live code — the schema, the append-only versioning, the soft-delete semantics and the 7 actions all work exactly as written, and none of them changed. What changed is the *status*: no new features, no schema changes, and the "Deferred to v2" list at the end of this ADR is **cancelled rather than deferred**. One action was added, `memory export`, a lossless JSON dump of the whole table (K005). Read this ADR for how memory works, not as a statement that it is actively evolving.
 
 ## Context
 

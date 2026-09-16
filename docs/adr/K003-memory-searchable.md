@@ -1,7 +1,9 @@
 # ADR K003: Memory participates in cross-module `Searchable` trait (current-state GLOB)
 
-**Status:** Accepted
+**Status:** Accepted (revised 2026-09-16 by [K005](K005-memory-module-deprecation.md) — module frozen, removal scheduled)
 **Date:** 2026-07-14
+
+> **Update (2026-09-16):** The `memory` module is **frozen and scheduled for removal** in a later major version; see [K005](K005-memory-module-deprecation.md). The `MemorySearchProvider` is unchanged and memory facts (current state) still participate in `everyday search` exactly as described below — it remains the only unconditionally-registered provider, since it needs no configured account. Only the module's lifecycle status changed.
 
 ## Context
 

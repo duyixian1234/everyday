@@ -1,7 +1,9 @@
 # ADR K002: Memory graph query — forward-only recursive traversal on current state
 
-**Status:** Accepted
+**Status:** Accepted (revised 2026-09-16 by [K005](K005-memory-module-deprecation.md) — module frozen, removal scheduled)
 **Date:** 2026-07-14
+
+> **Update (2026-09-16):** The `memory` module is **frozen and scheduled for removal** in a later major version; see [K005](K005-memory-module-deprecation.md). `memory graph` is unchanged and still behaves exactly as described below — forward-only BFS on current state, depth default 2 / max 5, cycle detection via a visited set. Only the module's lifecycle status changed.
 
 ## Context
 

@@ -1,7 +1,9 @@
 # ADR K004: Memory single-instance storage — no account column
 
-**Status:** Accepted
+**Status:** Accepted (revised 2026-09-16 by [K005](K005-memory-module-deprecation.md) — module frozen, removal scheduled)
 **Date:** 2026-07-14
+
+> **Update (2026-09-16):** The `memory` module is **frozen and scheduled for removal** in a later major version; see [K005](K005-memory-module-deprecation.md). Storage is unchanged: one `~/.config/everyday/memory.db`, no `account` column, no `auth` module touch. The subject-naming convention documented below is still the only mechanism providing multi-agent isolation, and it is why `skills/everyday-cli/references/MEMORY.md` is kept (with a deprecation banner) rather than deleted while the module is live.
 
 ## Context
 
