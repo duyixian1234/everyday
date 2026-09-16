@@ -335,7 +335,7 @@ pub fn delete_credential(config: &Config, module: &str, account: &str) -> Result
     let entry = keyring::Entry::new(&service, &user)
         .map_err(|e| AgentError::Auth(format!("keyring entry: {e}")))?;
     entry
-        .delete_password()
+        .delete_credential()
         .map_err(|e| AgentError::Auth(format!("keyring delete: {e}")))?;
     Ok(())
 }

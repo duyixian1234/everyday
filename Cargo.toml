@@ -31,7 +31,7 @@ thiserror = "2"
 anyhow = "1"
 
 # 凭证安全（系统密钥环）
-keyring = "2"
+keyring = "4"
 
 # HTTP 客户端（RSS 抓取复用）
 # reqwest 0.13 renamed the `rustls-tls` feature to `rustls`, and that feature
