@@ -83,7 +83,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", default-features = false, features = ["registry"] }
 
 # Task module (F017): comment-preserving config edits + five-field cron parsing.
-toml_edit = "0.22"
+toml_edit = "0.25"
 croner = "4"
 
 # Task runner capture decode (F017): child output may be GBK on a Chinese
