@@ -34,7 +34,7 @@ Modules: `mail` · `cal` · `rss` · `bookmark` · `note` · `todo` · `timeline
 4. **Verify per action before assuming.** Modules are implemented but feature sets differ — the exact actions, options, and output schemas are in [references/COMMANDS.md](references/COMMANDS.md).
 5. **`everyday health --json`** runs a local-only health probe of every module (cache DB openable, keyring credential present — never network). Exit code 1 + `"healthy": false` rows identify degraded modules. Use it to diagnose before deeper debugging. Dispatch logs (`_log` lines, request ids) go to stderr and are safe to ignore unless debugging.
 6. **`timeline today --json` is the aggregated activity snapshot.** Prefer it over per-module polling unless the user explicitly asks for a specific module.
-7. **`memory` is the agent's own structured notebook.** Use `everyday memory add` to persist stable facts about the user, projects, or the world; use `memory get <SUBJECT>` to recall them. Subject naming is a convention, not enforced — see [references/MEMORY.md](references/MEMORY.md). Memory facts automatically participate in `everyday search`.
+7. **`memory` is the agent's own structured notebook — ⚠️ frozen (K005).** Use `everyday memory add` to persist stable facts about the user, projects, or the world; use `memory get <SUBJECT>` to recall them. Subject naming is a convention, not enforced — see [references/MEMORY.md](references/MEMORY.md). Memory facts automatically participate in `everyday search`. **The module takes no new features and is scheduled for removal in a later major version**; it still works, so prefer other modules for new work, and use `everyday memory export` to take existing data out before it goes.
 8. **`sync` is cross-device file-level sync** (`everyday sync`). It syncs the 4 user DBs (bookmark/note/todo/memory) + `config.toml` to the WebDAV directory (default Jianguoyun). Bidirectional by default; `--push-only` / `--pull-only` / `--force` override. Conflicts are Last-Write-Wins with dual `.conflict-<UTC ts>` copies (local + remote). Configure `[[webdav.accounts]]` in `config.toml` (name/url/username) and store the **application password** (not the login password): `everyday auth login --module webdav --account <name>`. Sync state lives in `sync-state.json`; never sync caches (mail_cache/rss-items/timeline).
 9. **`task run` executes configured code.** Treat `[tasks]` as a trusted code-execution surface. Commands run directly without a shell; use `--json` so child output is captured into the `_result.stdout`/`_result.stderr` fields and **not echoed** — stdout carries only the single `_result` envelope. Child output that isn't UTF-8 (e.g. `ipconfig` GBK on a Chinese Windows console) is decoded to readable text, never `�` mojibake. Review [references/COMMANDS.md](references/COMMANDS.md) before adding schedules.
 
@@ -56,9 +56,11 @@ After this, `mail` commands work without re-entering credentials.
 
 Everyday recipes — read/send mail, calendar events, notes, todos, timeline queries — are in [references/TASKS.md](references/TASKS.md).
 
-## Memory notebook
+## Memory notebook — ⚠️ frozen (K005)
 
 `memory` semantics, subject naming convention, and what belongs in memory vs timeline: [references/MEMORY.md](references/MEMORY.md).
+
+The module is frozen and slated for removal in a later major version; settings are not being added to it. Run `everyday memory export > mem-backup.json` to dump the whole table losslessly (every version, including soft-deleted rows — nothing else can retrieve those) before that happens. There is no `import`. Decision record: [K005](../../docs/adr/K005-memory-module-deprecation.md).
 
 ## Error format
 

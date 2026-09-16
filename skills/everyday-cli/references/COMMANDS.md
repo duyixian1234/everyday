@@ -518,9 +518,11 @@ Append-only event log aggregating `mail` / `cal` / `rss` + local `note` / `todo`
 
 ---
 
-## memory — structured agent notebook ✅ (v0.10.0)
+## memory — structured agent notebook ✅ (v0.10.0) ⚠️ frozen (K005)
 
 A persistent, append-only notebook for the agent itself. Triples `(subject, predicate, object)` with optional `--confidence` (default `1.0`) and `--source`. Re-adding the same triple creates a new version row; `delete` soft-deletes the current-state row; `history` returns every version including deleted ones. Storage is a single global SQLite file at `~/.config/everyday/memory.db` — no `account` column, no `auth` module touch (K004).
+
+> **Frozen.** The module takes no new features and is scheduled for removal in a later major version (K005). Existing actions keep working unchanged. Before it goes, use `memory export` to take your data out.
 
 | Command | Description | Example |
 |---------|-------------|---------|
@@ -531,6 +533,7 @@ A persistent, append-only notebook for the agent itself. Triples `(subject, pred
 | `memory delete <S> <P> <O>` | Soft-delete the current-state row of a triple | `everyday memory delete user prefers rust --json` |
 | `memory graph <SUBJECT>` | Forward BFS from a subject (depth default 2, max 5) | `everyday memory graph user --depth 2` |
 | `memory history <S> <P> <O>` | Show all versions of a triple (incl. deleted) | `everyday memory history user prefers rust --json` |
+| `memory export` | Dump the **whole table** (incl. superseded versions + soft-deleted rows) as one JSON document | `everyday memory export > mem-backup.json` |
 
 ### memory options
 
@@ -544,7 +547,7 @@ A persistent, append-only notebook for the agent itself. Triples `(subject, pred
 
 ### memory JSON output
 
-`add` returns the inserted fact; `get` / `relation` / `list` return `{"facts": [...], "count": N}`; `delete` returns `{id, subject, predicate, object, deleted_at}`; `history` returns `{"history": [...], "count": N}` (each row carries `deleted_at`); `graph` returns a nested object (text mode: indented markdown tree).
+`add` returns the inserted fact; `get` / `relation` / `list` return `{"facts": [...], "count": N}`; `delete` returns `{id, subject, predicate, object, deleted_at}`; `history` returns `{"history": [...], "count": N}` (each row carries `deleted_at`); `graph` returns a nested object (text mode: indented markdown tree); `export` returns the versioned envelope below.
 
 ```json
 {
@@ -563,6 +566,38 @@ A persistent, append-only notebook for the agent itself. Triples `(subject, pred
 }
 ```
 
+`export` output — note `export_version` and that every fact carries `deleted_at` (`null` when live):
+
+```json
+{
+  "export_version": 1,
+  "exported_at": "2026-09-16T02:39:06+00:00",
+  "count": 2,
+  "facts": [
+    {
+      "id": "m18c231655d30f254-1c",
+      "subject": "user",
+      "predicate": "prefers",
+      "object": "java",
+      "confidence": 0.5,
+      "source": "conversation",
+      "created_at": "2026-07-14T15:25:13+00:00",
+      "deleted_at": "2026-07-14T15:25:13+00:00"
+    },
+    {
+      "id": "m18c231655d30f254-2d",
+      "subject": "user",
+      "predicate": "prefers",
+      "object": "rust",
+      "confidence": 0.9,
+      "source": "explicit",
+      "created_at": "2026-07-14T16:02:00+00:00",
+      "deleted_at": null
+    }
+  ]
+}
+```
+
 ### memory behavior & semantics
 
 - **Append-only**: `add` always inserts a new row. Re-adding the same `(S, P, O)` does **not** update the existing row; it appends a new version. `history` returns every version.
@@ -571,6 +606,10 @@ A persistent, append-only notebook for the agent itself. Triples `(subject, pred
 - **No semantic validation**: the program does not enforce `prefers`/`knows`/etc.; triples are free-form. Conventions live in [MEMORY.md](MEMORY.md).
 - **Graph**: forward-only BFS over current state; cycle detection via visited set keyed by `(subject, predicate, object)`. `--include-deleted` flips the source view to the underlying table for the traversal.
 - **Searchable**: memory facts (current state) participate in `everyday search`. `Hit.id` is `"memory:<row_id>"` so agents can drill into `memory history` / `memory get` via the id.
+- **`export` is always JSON**, regardless of the global `--json` flag — its contract *is* "produce a JSON document", so `everyday memory export > mem-backup.json` works without the flag. It is the one action in this module that ignores `--json`.
+- **`export` is lossless**: it reads the base table, not the current-state view, so superseded versions and soft-deleted rows are included. It is the only way to retrieve data the view hides. Ordered by `id` (a total order), so repeated exports of an unchanged database are byte-identical.
+- **`export` on an empty database** returns `count: 0` with an empty `facts` array and exit code 0 — an empty notebook is a valid complete state, not an error.
+- **No `import`.** Recovery from an export is manual; there is no re-import action (K005).
 
 ### Subject naming convention
 

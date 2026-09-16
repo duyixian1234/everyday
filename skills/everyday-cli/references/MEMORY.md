@@ -1,5 +1,15 @@
 # everyday CLI — Memory Notebook (agent's own)
 
+> **⚠️ Deprecated / frozen (K005).** The `memory` module takes no new features and is
+> scheduled for removal in a later major version. Everything below still works exactly
+> as documented — read it as the semantics of a live, if frozen, module.
+>
+> **Before it is removed, export your data**: `everyday memory export > mem-backup.json`
+> dumps the whole table losslessly (including superseded versions and soft-deleted rows,
+> which no other action can retrieve). There is no `import`.
+>
+> Decision record: [K005](../../../docs/adr/K005-memory-module-deprecation.md).
+
 Semantics and conventions for the `memory` module. Loaded on demand by the `everyday-cli` skill when persisting or recalling structured facts. Full command table, options, and output schema: [COMMANDS.md](COMMANDS.md) (Memory section).
 
 `memory` is a single global instance (`~/.config/everyday/memory.db`, no `account` column, no `auth` module touch). It stores append-only `(subject, predicate, object)` triples with optional `--confidence` and `--source`. Re-adding the same triple creates a new version; `history` shows all versions including soft-deleted rows.
@@ -30,6 +40,9 @@ everyday memory add user prefers go --json          # resurrection = a new versi
 
 # Memory participates in cross-module search automatically
 everyday search query "rust" --module memory --json
+
+# Take everything out before the module is removed (lossless; no --json needed)
+everyday memory export > mem-backup.json
 ```
 
 ## Subject naming convention
@@ -55,6 +68,18 @@ Hierarchy is colon-delimited; agents that produce triples are expected to pick t
 
 Decision rule: if there is a clear "moment T" at which a fact became true, it belongs in `timeline`. If it is a stable assertion that survives many days, it belongs in `memory`.
 
-## Memory v2 deferred
+## Memory v2 deferred — cancelled
 
-These are explicitly out of scope for v1 and should not be assumed by callers: `undelete-by-id`, `search` (embedding-based), `merge`, `expire (TTL)`, `cleanup` (physical GC of soft-deleted rows), `stats`. Use `history` + `--include-deleted` for forensics.
+These were out of scope for v1 and will **never ship**: `undelete-by-id`, `search` (embedding-based), `merge`, `expire (TTL)`, `cleanup` (physical GC of soft-deleted rows), `stats`. The module is frozen (K005), so the deferral is now a cancellation, not a roadmap. Use `history` + `--include-deleted` for forensics, and `export` to take the data out.
+
+## Exporting (before removal)
+
+`everyday memory export` dumps the entire `memory` table — every version, including soft-deleted rows — as one JSON document:
+
+```json
+{ "export_version": 1, "exported_at": "…", "count": 1406, "facts": [ … ] }
+```
+
+It is the **only** action that surfaces superseded versions and soft-deleted rows in one shot; `get` / `list` see current state only, and `history` requires you to already know the exact `(S, P, O)`. It always emits JSON and ignores the global `--json` flag, so `> file.json` captures a valid document either way. Ordered by `id`, so two exports of an unchanged database are byte-identical — safe to diff or archive.
+
+There is **no `import`**. Keep the file; recovering from it is a manual exercise.
