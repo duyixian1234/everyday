@@ -2,6 +2,25 @@
 
 Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
 
+**This tracker is the project's plan and progress record** — the repo deliberately has
+no `progress.md` / `task_plan.md`. See
+[F019](../adr/F019-github-issues-as-plan-tracker.md) for the reasoning and the
+content-boundary table.
+
+## What lives where
+
+| Intent | Home |
+| --- | --- |
+| Work to be done, in flight, or done | Issue (assignee + open/closed) |
+| A phase / release train | **Milestone** |
+| A design decision (constrains code, interface, or data model) | **ADR** — never the issue body |
+| A non-decisional convention or runbook | `.rules/*.md` |
+| A crate or toolchain gotcha | `.rules/07-dependency-pitfalls.md` |
+| Release history | [`docs/releases.md`](../releases.md) |
+
+If a fact would still be true after the issue closes, it belongs in an ADR or
+`.rules/`, not in the issue. Link it from the closing comment instead.
+
 ## Conventions
 
 - **Create an issue**: `gh issue create --title "..." --body "..."`. Use a heredoc for multi-line bodies.
@@ -12,6 +31,35 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 - **Close**: `gh issue close <number> --comment "..."`
 
 Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
+
+## Finding and claiming work
+
+```bash
+gh issue list --state open --label ready-for-agent     # claimable
+gh issue view <n> --comments                           # read before starting
+gh issue edit <n> --add-assignee @me                   # claim
+gh issue close <n> --comment "<what shipped> (<ADR id>)"  # finish
+```
+
+**Spec / ticket pattern.** A multi-part feature gets one **spec issue** holding the
+design and intent, plus child issues numbered `t1:`…`tN:` as the actual units of work.
+Work the ticket, not the spec, and close the spec only when every child is closed.
+Recent examples: #28 `Mail 补遗 (spec)` with children #29/#30, and #17 `task 模块
+(spec)` with children #18–#21.
+
+## Phases as milestones
+
+Phases used to be a list in `task_plan.md`. They are now **GitHub milestones** — one
+milestone per phase, carrying its completion state and its issues:
+
+```bash
+gh api repos/{owner}/{repo}/milestones --jq '.[] | {number, title, state, open_issues, closed_issues}'
+gh issue list --milestone "<phase>" --state all
+gh issue create --title "..." --milestone "<phase>"
+```
+
+Milestone titles mirror the historical phase names (`Phase 22: Daemon 自动同步`) so
+the pre-F019 history stays traceable.
 
 ## Pull requests as a triage surface
 

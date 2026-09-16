@@ -105,6 +105,35 @@ The Notion API client dependency was removed in v0.13.0
 ([R019](../docs/adr/R019-remove-notion-provider.md)); its API quirks and error
 handling notes below applied to the then-current code and no longer apply.
 
+## Platform and toolchain traps
+
+Non-obvious errors whose fix is mechanical. Entries that turned out to be *decisions*
+were promoted to ADRs instead — linked where they exist.
+
+- **Windows: cross-target typecheck fails without a Linux linker.** `cargo check
+  --target x86_64-unknown-linux-gnu` needs `x86_64-linux-gnu-gcc` for `ring`'s build
+  script. Keep Unix-only code under `#[cfg]` unit tests / CI coverage; do Windows
+  full-test + `--all-targets` clippy locally.
+- **Windows: `task run` output must go through the OS handle.** Rust std's UTF-8
+  validation panics on a GBK console (e.g. `ipconfig`). Write via `WriteFile` and let
+  the console code page render it ([F017](../docs/adr/F017-task-module.md)); captured
+  records are decoded UTF-8-first with a GBK fallback, so stored text stays lossy.
+- **Windows CI: `tasklist` CSV quotes PIDs.** Match the quoted PID field rather than
+  parsing raw columns when testing liveness ([F016](../docs/adr/F016-daemon-sync-scheduler.md)).
+- **`Drop` + `tokio::spawn` panics after runtime shutdown.** Probe
+  `tokio::runtime::Handle::try_current()` first; if there is no handle, release the
+  resource synchronously ([R003](../docs/adr/R003-pool-guard-drop.md)).
+- **`Local.from_local_datetime(&ndt).unwrap()` panics on DST boundaries.** Use
+  `.earliest()` for the spring-forward gap and `.latest()` for the fall-back ambiguous
+  hour ([R004](../docs/adr/R004-dst-boundary-dates.md)).
+- **`config get/set` needs array indices.** `get_dotted`/`set_dotted` take a numeric
+  segment branch that indexes `Value::as_array()`; `resize` extends as needed.
+- **Rust 1.97 clippy `doc_lazy_continuation` / `doc_overindented_list_items` are
+  deny-by-default.** A `///` list item continued on the next line must be indented two
+  spaces. rustfmt does not reflow docs, so any doc edit requires a local clippy run.
+- **`parse_simple_args` must not treat `-1` as a flag.** Single-dash tokens are always
+  values; only `--XXX` is a flag ([R005](../docs/adr/R005-parse-simple-args.md)).
+
 ## New crate policy
 
 - Always check what the crate already gives you before reaching for a

@@ -59,7 +59,8 @@ Run in order (most are handled by `just ci`):
 - [ ] `just check-links` passes
 - [ ] [ADR extraction step](01-workflow.md#adr-extraction-step) is complete for
       decision-class changes
-- [ ] [progress.md](../progress.md) timeline index updated with new ADR id
+- [ ] New ADR registered in [docs/adr/README.md](../docs/adr/README.md) — a row in
+      the series table **and** one in the ADR timeline
 - [ ] Commit message follows the format above
 - [ ] Single task — no unrelated drive-by changes
 
@@ -71,7 +72,7 @@ A release is **always** a separate `chore` commit that:
 2. Lets `cargo build` regenerate `Cargo.lock`.
 3. Updates version references in docs (`README.md`, `README_ZH.md`,
    `skills/*`).
-4. Adds the new version line to [progress.md](../progress.md).
+4. Prepends the new version row to [docs/releases.md](../docs/releases.md).
 5. Tags annotated: `git tag -a vX.Y.Z -m "vX.Y.Z: <highlights>"`.
 
 See [06-justfile.md](06-justfile.md) and the release runbook summary in

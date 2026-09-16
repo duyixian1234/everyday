@@ -37,7 +37,9 @@ A second matrix job adds `macos-latest` with target `aarch64-apple-darwin` to co
 
 - The `origin` remote is `git@github.com:duyixian1234/everyday.git` (SSH) in this clone.
 - The `cnb` remote (`https://cnb.cool/c10ve/everyday`) is **not pushed** during releases. There are no usable credentials, and pushing tags to it would orphan the release.
-- The release runbook (`progress.md`, the long-term memory file) spells out: `git push origin master && git push origin vX.Y.Z`.
+- The release runbook (in the long-term memory file, and since
+  [F019](F019-github-issues-as-plan-tracker.md) also `docs/releases.md`) spells out:
+  `git push origin master && git push origin vX.Y.Z`.
 
 ### Release commit convention
 

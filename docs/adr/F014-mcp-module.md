@@ -153,7 +153,9 @@ Add an `mcp` module implementing `Executor`, exposing every other module's
 4. Contract tests: `mcp serve`/`mcp tools` in the command tree; a stdio
    end-to-end test asserting initialize round-trip, tool call semantics, and
    that stdout carries JSON-RPC only (tests/mcp_stdio.rs).
-5. Update README(/_ZH), skills/everyday-cli, ADR index, progress.md.
+5. Update README(/_ZH), skills/everyday-cli, ADR index. (At the time this
+   also meant `progress.md`, since deleted — see
+   [F019](F019-github-issues-as-plan-tracker.md).)
 
 ## Related decisions
 

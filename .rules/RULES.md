@@ -29,8 +29,10 @@
 3. If the work introduces or changes a **decision** (architecture, contract, long-lived
    constraint), open [docs/adr/README.md](../docs/adr/README.md) and add an ADR.
 4. After finishing a task, follow [01-workflow.md §"Finishing a task"](01-workflow.md) —
-   it includes the **ADR extraction step** that keeps `progress.md` and
-   `task_plan.md` as thin index files with no execution traces.
+   it includes the **ADR extraction step** that keeps decision-class content in
+   `docs/adr/` and the tracker free of prose. Planning state lives in **GitHub
+   Issues** ([F019](../docs/adr/F019-github-issues-as-plan-tracker.md)); the repo
+   deliberately has no `progress.md` / `task_plan.md`.
 
 ## Link integrity
 
