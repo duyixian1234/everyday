@@ -34,7 +34,11 @@ anyhow = "1"
 keyring = "2"
 
 # HTTP 客户端（RSS 抓取复用）
-reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+# reqwest 0.13 renamed the `rustls-tls` feature to `rustls`, and that feature
+# pulls in aws-lc-rs as the crypto provider. main.rs installs the *ring*
+# provider process-wide, so we take `rustls-no-provider` (no forced backend)
+# plus `webpki-roots` to match the root store the rest of the TLS stack uses.
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider", "webpki-roots"] }
 
 # 邮件
 async-imap = "0.9"
