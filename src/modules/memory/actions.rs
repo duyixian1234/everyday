@@ -404,22 +404,42 @@ pub async fn history(subject: &str, predicate: &str, object: &str) -> Result<Que
 /// reproduce the current-state view from the dump, but not the reverse —
 /// which is exactly why the raw table is the source here.
 ///
-/// Ordering is `ORDER BY id` (not `created_at DESC` like the query actions):
-/// `id` is a date-sequence id, so it is a **total order** and the output is
-/// reproducible. `created_at` has millisecond precision and can collide for
-/// rows inserted in the same millisecond, leaving their relative order
-/// undefined — unacceptable for a document meant to be archived and diffed.
+/// Ordering is `ORDER BY id`, and it is **not chronological**. `id` is a
+/// total order (TEXT primary key, `BINARY` collation), so the output is
+/// reproducible — the property an archive needs. It does not track time:
+/// the id format is `{prefix}{day}-{pid:x}-{seq:03}`
+/// ([R021](../../../docs/adr/R021-date-sequence-id.md)), whose unpadded hex
+/// PID segment and zero-padded sequence do not sort lexicographically, and
+/// the table also holds pre-R021 legacy ids that sort as a separate block.
+///
+/// `created_at` was rejected as the sort key because it is not a total
+/// order here: it has millisecond precision and collides for rows inserted
+/// in the same millisecond, and older rows carry mixed timestamp formats.
+/// A consumer needing chronological order must sort on `created_at` itself,
+/// or use `history`, which orders by `created_at DESC`.
 ///
 /// An empty database is a valid complete state, not an error: the function
 /// returns `count: 0` with an empty array (matching K001's empty-state
 /// semantics for `get` / `relation` / `list` / `graph`).
 pub async fn export() -> Result<ExportResult> {
     let pool = open().await?;
+    export_from(&pool).await
+}
+
+/// The query half of [`export`], against an explicit pool.
+///
+/// Split out so the real code path — the actual SQL, the row mapping and
+/// the envelope construction — can be tested against a temp database.
+/// `export` itself opens the global single-instance DB
+/// ([K004](../../../docs/adr/K004-memory-single-instance.md)), which tests
+/// must not touch; without this seam the only coverage would be a replica
+/// of the SQL, which would pass even if `export` drifted from it.
+async fn export_from(pool: &SqlitePool) -> Result<ExportResult> {
     let rows = sqlx::query(&format!(
         "SELECT id, subject, predicate, object, confidence, source, created_at, deleted_at \
          FROM {TABLE} ORDER BY id"
     ))
-    .fetch_all(&pool)
+    .fetch_all(pool)
     .await?;
     let facts: Vec<MemoryFact> = rows.iter().map(row_to_fact_with_deleted).collect();
     Ok(ExportResult {
@@ -635,8 +655,8 @@ mod tests {
 
     /// `export` reads the **base table**, so superseded versions and
     /// soft-deleted rows survive — the property that makes it a lossless
-    /// escape hatch (K005). This queries the same SQL the action uses,
-    /// against a temp pool, since `export()` itself opens the global DB.
+    /// escape hatch (K005). Calls the real `export_from` against a temp
+    /// pool, so the SQL and the envelope are both exercised.
     #[tokio::test]
     async fn export_includes_superseded_and_deleted_rows() {
         let pool = fresh_pool().await;
@@ -650,17 +670,12 @@ mod tests {
             .await
             .unwrap();
 
-        let rows = sqlx::query(&format!(
-            "SELECT id, subject, predicate, object, confidence, source, created_at, deleted_at \
-             FROM {TABLE} ORDER BY id"
-        ))
-        .fetch_all(&pool)
-        .await
-        .unwrap();
-        let facts: Vec<MemoryFact> = rows.iter().map(row_to_fact_with_deleted).collect();
+        let out = export_from(&pool).await.unwrap();
 
         // All THREE rows survive — this is the whole point of K005.
-        assert_eq!(facts.len(), 3);
+        assert_eq!(out.count, 3);
+        assert_eq!(out.facts.len(), 3);
+        assert_eq!(out.export_version, EXPORT_VERSION);
 
         // The current-state view would have shown only two of them.
         let current: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {VIEW_CURRENT}"))
@@ -670,13 +685,21 @@ mod tests {
         assert_eq!(current.0, 2, "view hides the soft-deleted row");
 
         // `deleted_at` is populated for the soft-deleted row only.
-        let deleted: Vec<&MemoryFact> = facts.iter().filter(|f| f.deleted_at.is_some()).collect();
+        let deleted: Vec<&MemoryFact> = out
+            .facts
+            .iter()
+            .filter(|f| f.deleted_at.is_some())
+            .collect();
         assert_eq!(deleted.len(), 1);
         assert_eq!(deleted[0].id, "m003");
     }
 
-    /// `ORDER BY id` is a total order, so the dump is byte-reproducible
-    /// regardless of `created_at` collisions.
+    /// `ORDER BY id` is a total order, so the dump is reproducible — but it
+    /// is **not** chronological, and this pins that fact so nobody "fixes"
+    /// the docs back into claiming a time relationship (K005).
+    ///
+    /// The ids below are real-shaped date-sequence ids (R021) whose hex PID
+    /// segments sort in the opposite order to their `created_at` values.
     #[tokio::test]
     async fn export_orders_by_id() {
         let pool = fresh_pool().await;
@@ -695,11 +718,44 @@ mod tests {
             .unwrap();
         }
 
-        let ids: Vec<String> = sqlx::query_scalar(&format!("SELECT id FROM {TABLE} ORDER BY id"))
-            .fetch_all(&pool)
+        let out = export_from(&pool).await.unwrap();
+        let ids: Vec<&str> = out.facts.iter().map(|f| f.id.as_str()).collect();
+        assert_eq!(ids, vec!["m001", "m002", "m003"]);
+    }
+
+    /// The dump is id-ordered, and id order disagrees with time order —
+    /// documented in K005 so consumers sort by `created_at` when they need
+    /// chronology.
+    #[tokio::test]
+    async fn export_id_order_is_not_chronological() {
+        let pool = fresh_pool().await;
+        // `8ea4` sorts before `aa58` lexicographically, but its created_at
+        // is LATER. This mirrors the real database.
+        let later = "m20260814-8ea4-001";
+        let earlier = "m20260814-aa58-001";
+        for (id, ts) in [
+            (later, "2026-08-14T08:31:50+00:00"),
+            (earlier, "2026-08-14T08:31:49+00:00"),
+        ] {
+            sqlx::query(
+                "INSERT INTO memory (id, subject, predicate, object, confidence, source, created_at) \
+                 VALUES (?1, 'user', 'tag', 'v', 1.0, NULL, ?2)",
+            )
+            .bind(id)
+            .bind(ts)
+            .execute(&pool)
             .await
             .unwrap();
-        assert_eq!(ids, vec!["m001", "m002", "m003"]);
+        }
+
+        let out = export_from(&pool).await.unwrap();
+        let ids: Vec<&str> = out.facts.iter().map(|f| f.id.as_str()).collect();
+        // id order puts the LATER fact first.
+        assert_eq!(ids, vec![later, earlier]);
+        assert_eq!(out.facts[0].created_at, "2026-08-14T08:31:50+00:00");
+        assert_eq!(out.facts[1].created_at, "2026-08-14T08:31:49+00:00");
+        // ...so sorting by the ids would misorder these by time.
+        assert!(out.facts[0].created_at > out.facts[1].created_at);
     }
 
     /// Empty database is a valid complete state (K001 empty-state
@@ -707,11 +763,35 @@ mod tests {
     #[tokio::test]
     async fn export_of_empty_db_is_zero_facts() {
         let pool = fresh_pool().await;
-        let n: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {TABLE}"))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-        assert_eq!(n.0, 0);
+        let out = export_from(&pool).await.unwrap();
+        assert_eq!(out.count, 0);
+        assert!(out.facts.is_empty());
+    }
+
+    /// Every fact carries all 8 columns; absent `source`/`deleted_at` are
+    /// emitted as `null` rather than dropped from the object.
+    #[tokio::test]
+    async fn export_preserves_all_columns() {
+        let pool = fresh_pool().await;
+        seed(&pool, "m001", "user", "prefers", "rust").await;
+        let out = export_from(&pool).await.unwrap();
+        let v = serde_json::to_value(&out).unwrap();
+        let f = &v["facts"][0];
+        for key in [
+            "id",
+            "subject",
+            "predicate",
+            "object",
+            "confidence",
+            "source",
+            "created_at",
+            "deleted_at",
+        ] {
+            assert!(f.get(key).is_some(), "fact is missing column `{key}`");
+        }
+        assert!(f["source"].is_null());
+        assert!(f["deleted_at"].is_null());
+        assert_eq!(f["confidence"], 1.0);
     }
 
     /// The envelope carries the version field (K005) and round-trips
