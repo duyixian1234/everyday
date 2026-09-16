@@ -1,4 +1,5 @@
-//! Memory action handlers: add / get / relation / list / delete / graph / history.
+//! Memory action handlers: add / get / relation / list / delete / graph /
+//! history / export.
 //!
 //! Each handler returns a typed domain struct. Rendering happens in
 //! [`super::mod`] (the module layer). This split mirrors the
@@ -67,6 +68,37 @@ pub struct DeleteResult {
     pub object: String,
     pub deleted_at: String,
 }
+
+/// Result of `memory export`: a **lossless** dump of the whole `memory`
+/// table, including superseded versions and soft-deleted rows.
+///
+/// Per [K005](../../../docs/adr/K005-memory-module-deprecation.md) this is
+/// the escape hatch for the module's scheduled removal: it is the only
+/// operation that preserves data `current_state_view` would hide, so a
+/// consumer can reconstruct both the current state and the full version
+/// history from the artifact alone.
+///
+/// `export_version` is the load-bearing field — without it a future reader
+/// cannot tell which shape an archived document has.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExportResult {
+    /// Envelope schema version. Bump on any shape change.
+    pub export_version: u32,
+    /// RFC3339 UTC timestamp of when the export ran.
+    pub exported_at: String,
+    /// Number of `facts` entries (redundant with `facts.len()`, but kept so
+    /// a consumer can sanity-check a document without parsing the array).
+    pub count: usize,
+    /// Every row of the `memory` table, ordered by `id`.
+    pub facts: Vec<MemoryFact>,
+}
+
+/// Current [`ExportResult::export_version`].
+///
+/// Per [K005](../../../docs/adr/K005-memory-module-deprecation.md): v1 is
+/// the raw `memory` table shape (all 8 columns, `deleted_at` populated for
+/// soft-deleted rows).
+pub const EXPORT_VERSION: u32 = 1;
 
 /// Recursive graph node — used for `memory graph` text + JSON output.
 ///
@@ -361,6 +393,43 @@ pub async fn history(subject: &str, predicate: &str, object: &str) -> Result<Que
     Ok(QueryResult { facts })
 }
 
+// ============ export ============
+
+/// `memory export`: dump every row of the `memory` table as a single
+/// versioned JSON document.
+///
+/// Per [K005](../../../docs/adr/K005-memory-module-deprecation.md) this is
+/// **lossless**: it reads the base table, not [`VIEW_CURRENT`], so
+/// superseded versions and soft-deleted rows are included. A consumer can
+/// reproduce the current-state view from the dump, but not the reverse —
+/// which is exactly why the raw table is the source here.
+///
+/// Ordering is `ORDER BY id` (not `created_at DESC` like the query actions):
+/// `id` is a date-sequence id, so it is a **total order** and the output is
+/// reproducible. `created_at` has millisecond precision and can collide for
+/// rows inserted in the same millisecond, leaving their relative order
+/// undefined — unacceptable for a document meant to be archived and diffed.
+///
+/// An empty database is a valid complete state, not an error: the function
+/// returns `count: 0` with an empty array (matching K001's empty-state
+/// semantics for `get` / `relation` / `list` / `graph`).
+pub async fn export() -> Result<ExportResult> {
+    let pool = open().await?;
+    let rows = sqlx::query(&format!(
+        "SELECT id, subject, predicate, object, confidence, source, created_at, deleted_at \
+         FROM {TABLE} ORDER BY id"
+    ))
+    .fetch_all(&pool)
+    .await?;
+    let facts: Vec<MemoryFact> = rows.iter().map(row_to_fact_with_deleted).collect();
+    Ok(ExportResult {
+        export_version: EXPORT_VERSION,
+        exported_at: chrono::Utc::now().to_rfc3339(),
+        count: facts.len(),
+        facts,
+    })
+}
+
 // ============ helpers ============
 
 fn row_to_fact(r: &sqlx::sqlite::SqliteRow) -> MemoryFact {
@@ -543,5 +612,135 @@ mod tests {
         assert_eq!(v["predicates"][0]["objects"][0]["name"], "rust");
         // Suppress unused warnings on assert_fact_eq.
         let _ = assert_fact_eq;
+    }
+
+    // ============ export (K005) ============
+
+    /// Insert a row directly against a temp pool, bypassing the global
+    /// single-instance path that `actions::*` would hit.
+    async fn seed(pool: &SqlitePool, id: &str, s: &str, p: &str, o: &str) {
+        sqlx::query(
+            "INSERT INTO memory (id, subject, predicate, object, confidence, source, created_at) \
+             VALUES (?1, ?2, ?3, ?4, 1.0, NULL, ?5)",
+        )
+        .bind(id)
+        .bind(s)
+        .bind(p)
+        .bind(o)
+        .bind(chrono::Utc::now().to_rfc3339())
+        .execute(pool)
+        .await
+        .unwrap();
+    }
+
+    /// `export` reads the **base table**, so superseded versions and
+    /// soft-deleted rows survive — the property that makes it a lossless
+    /// escape hatch (K005). This queries the same SQL the action uses,
+    /// against a temp pool, since `export()` itself opens the global DB.
+    #[tokio::test]
+    async fn export_includes_superseded_and_deleted_rows() {
+        let pool = fresh_pool().await;
+        // Two versions of the same triple, plus one soft-deleted row.
+        seed(&pool, "m001", "user", "prefers", "java").await;
+        seed(&pool, "m002", "user", "prefers", "rust").await;
+        seed(&pool, "m003", "user", "dropped", "x").await;
+        sqlx::query("UPDATE memory SET deleted_at = ?1 WHERE id = 'm003'")
+            .bind(chrono::Utc::now().to_rfc3339())
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let rows = sqlx::query(&format!(
+            "SELECT id, subject, predicate, object, confidence, source, created_at, deleted_at \
+             FROM {TABLE} ORDER BY id"
+        ))
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let facts: Vec<MemoryFact> = rows.iter().map(row_to_fact_with_deleted).collect();
+
+        // All THREE rows survive — this is the whole point of K005.
+        assert_eq!(facts.len(), 3);
+
+        // The current-state view would have shown only two of them.
+        let current: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {VIEW_CURRENT}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(current.0, 2, "view hides the soft-deleted row");
+
+        // `deleted_at` is populated for the soft-deleted row only.
+        let deleted: Vec<&MemoryFact> =
+            facts.iter().filter(|f| f.deleted_at.is_some()).collect();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].id, "m003");
+    }
+
+    /// `ORDER BY id` is a total order, so the dump is byte-reproducible
+    /// regardless of `created_at` collisions.
+    #[tokio::test]
+    async fn export_orders_by_id() {
+        let pool = fresh_pool().await;
+        // Insert out of id order, all with the same created_at instant.
+        let now = chrono::Utc::now().to_rfc3339();
+        for id in ["m003", "m001", "m002"] {
+            sqlx::query(
+                "INSERT INTO memory (id, subject, predicate, object, confidence, source, created_at) \
+                 VALUES (?1, 'user', 'tag', ?2, 1.0, NULL, ?3)",
+            )
+            .bind(id)
+            .bind(id)
+            .bind(&now)
+            .execute(&pool)
+            .await
+            .unwrap();
+        }
+
+        let ids: Vec<String> = sqlx::query_scalar(&format!("SELECT id FROM {TABLE} ORDER BY id"))
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        assert_eq!(ids, vec!["m001", "m002", "m003"]);
+    }
+
+    /// Empty database is a valid complete state (K001 empty-state
+    /// semantics), not an error.
+    #[tokio::test]
+    async fn export_of_empty_db_is_zero_facts() {
+        let pool = fresh_pool().await;
+        let n: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {TABLE}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(n.0, 0);
+    }
+
+    /// The envelope carries the version field (K005) and round-trips
+    /// through serde with `deleted_at` present on every fact.
+    #[test]
+    fn export_result_serializes_with_version_and_deleted_at() {
+        let out = ExportResult {
+            export_version: EXPORT_VERSION,
+            exported_at: "2026-09-20T00:00:00+00:00".into(),
+            count: 1,
+            facts: vec![MemoryFact {
+                id: "m001".into(),
+                subject: "user".into(),
+                predicate: "prefers".into(),
+                object: "rust".into(),
+                confidence: 0.9,
+                source: Some("explicit".into()),
+                created_at: "2026-09-20T00:00:00+00:00".into(),
+                deleted_at: None,
+            }],
+        };
+        let v = serde_json::to_value(&out).unwrap();
+        assert_eq!(v["export_version"], EXPORT_VERSION);
+        assert_eq!(v["count"], 1);
+        assert_eq!(v["facts"][0]["id"], "m001");
+        // `deleted_at` is emitted as null (not omitted) so a consumer sees
+        // the column on every row.
+        assert!(v["facts"][0].get("deleted_at").is_some());
+        assert!(v["facts"][0]["deleted_at"].is_null());
     }
 }

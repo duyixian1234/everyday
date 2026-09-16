@@ -5,7 +5,12 @@
 //! [K004](../../../docs/adr/K004-memory-single-instance.md) for the
 //! supporting details.
 //!
-//! CLI surface (7 actions):
+//! **Deprecated / frozen** ([K005](../../../docs/adr/K005-memory-module-deprecation.md)):
+//! the module is feature-frozen and scheduled for removal in a later major
+//! version. Existing actions keep working; `export` exists so data can be
+//! taken out before that happens.
+//!
+//! CLI surface (8 actions):
 //! - `add <S> <P> <O> [--confidence N] [--source LABEL]`
 //! - `get <SUBJECT>`
 //! - `relation <SUBJECT> <PREDICATE>`
@@ -13,13 +18,15 @@
 //! - `delete <S> <P> <O>`
 //! - `graph <SUBJECT> [--depth N] [--include-deleted]`
 //! - `history <S> <P> <O>`
+//! - `export` — lossless JSON dump of the whole table (always JSON)
 //!
 //! Storage is `~/.config/everyday/memory.db`, single global instance, no
 //! account column, no `auth` module touch. Memory is not a multi-account
 //! module — see K004.
 //!
 //! Rendering: tabular for add/get/relation/list/delete/history, nested
-//! tree for graph (text: indented markdown; JSON: nested object).
+//! tree for graph (text: indented markdown; JSON: nested object), and a
+//! versioned JSON document for export.
 
 pub mod actions;
 pub mod backend;
@@ -113,6 +120,12 @@ impl Executor for MemoryModule {
                 "everyday memory history <SUBJECT> <PREDICATE> <OBJECT>",
                 &[],
                 Positional::Exactly(3)
+            ),
+            cli_action!(
+                "export",
+                "导出整张 memory 表为单个 JSON 文档（无损，含历史版本与软删除行）；恒定输出 JSON，不受全局 --json 影响。模块已冻结，见 ADR K005",
+                "everyday memory export",
+                &[]
             ),
         ];
 
@@ -212,6 +225,10 @@ async fn dispatch(
             let (s, p, o) = take_pos3(&positional, "memory history")?;
             let result = backend.history(&s, &p, &o).await?;
             Ok(render_history(&result, json_mode))
+        }
+        "export" => {
+            let result = backend.export().await?;
+            Ok(render_export(&result))
         }
         other => Err(AgentError::UnknownAction(format!("memory {other}"))),
     }
@@ -354,8 +371,23 @@ fn render_history(q: &actions::QueryResult, json_mode: bool) -> Output {
     }
 }
 
-fn render_delete(d: &actions::DeleteResult, json_mode: bool) -> Output {
-    if json_mode {
+/// Render `memory export` — **always** JSON, never a text table.
+///
+/// Deliberate exception to the global `--json` flag: the action's contract
+/// *is* "produce a JSON document", so `everyday memory export > mem.json`
+/// works without remembering the flag. Per
+/// [K005](../../docs/adr/K005-memory-module-deprecation.md) this is the
+/// migration artifact for the module's removal, so it must be capturable
+/// verbatim.
+///
+/// Field order is fixed by [`serde_json::to_value`] over the struct
+/// definition; `deleted_at` is emitted as `null` for live rows rather than
+/// omitted, so every fact carries all 8 columns.
+fn render_export(e: &actions::ExportResult) -> Output {
+    Output::Json(serde_json::to_value(e).unwrap_or(Value::Null))
+}
+
+fn render_delete(d: &actions::DeleteResult, json_mode: bool) -> Output {    if json_mode {
         let mut obj = serde_json::Map::new();
         obj.insert("id".into(), Value::String(d.id.clone()));
         obj.insert("subject".into(), Value::String(d.subject.clone()));
@@ -542,16 +574,16 @@ mod tests {
     }
 
     #[test]
-    fn module_arg_spec_has_seven_actions() {
+    fn module_arg_spec_has_eight_actions() {
         let m = MemoryModule::new();
         let spec = m.module_arg_spec();
         assert_eq!(spec.name, "memory");
-        assert_eq!(spec.actions.len(), 7);
+        assert_eq!(spec.actions.len(), 8);
         let names: Vec<&str> = spec.actions.iter().map(|a| a.name).collect();
         assert_eq!(
             names,
             vec![
-                "add", "get", "relation", "list", "delete", "graph", "history"
+                "add", "get", "relation", "list", "delete", "graph", "history", "export"
             ]
         );
     }
@@ -900,9 +932,49 @@ mod tests {
         }
     }
 
+    /// `export` emits JSON **even when the global `--json` flag is off**
+    /// (K005: the action's contract is a JSON document).
     #[tokio::test]
-    async fn dispatch_unknown_action_errors() {
+    async fn dispatch_export_is_json_regardless_of_global_flag() {
+        let mock = MockMemoryBackend {
+            facts: vec![
+                fact("user", "prefers", "rust"),
+                fact("user", "prefers", "go"),
+            ],
+            ..Default::default()
+        };
+        // Explicitly NOT json mode — the default for these tests.
+        crate::util::json_mode::set_json_mode(false);
+        let out = dispatch(&mock, "export", &[]).await.unwrap();
+        match out {
+            Output::Json(v) => {
+                assert_eq!(v["export_version"], actions::EXPORT_VERSION);
+                assert_eq!(v["count"], 2);
+                assert_eq!(v["facts"].as_array().unwrap().len(), 2);
+                // `deleted_at` present (null) on every fact.
+                assert!(v["facts"][0]["deleted_at"].is_null());
+            }
+            other => panic!("expected Json output without --json, got {other:?}"),
+        }
+    }
+
+    /// Empty export is a valid complete state, not an error (K001
+    /// empty-state semantics, reaffirmed by K005).
+    #[tokio::test]
+    async fn dispatch_export_empty_is_zero_count() {
         let mock = MockMemoryBackend::default();
+        let out = dispatch(&mock, "export", &[]).await.unwrap();
+        match out {
+            Output::Json(v) => {
+                assert_eq!(v["count"], 0);
+                assert_eq!(v["facts"].as_array().unwrap().len(), 0);
+            }
+            other => panic!("expected Json output, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_unknown_action_errors() {        let mock = MockMemoryBackend::default();
         let err = dispatch(&mock, "bogus", &[]).await.unwrap_err();
         assert_eq!(err.type_name(), "UnknownAction");
     }

@@ -13,7 +13,9 @@
 use async_trait::async_trait;
 
 use crate::error::Result;
-use crate::modules::memory::actions::{self, AddResult, DeleteResult, GraphNode, QueryResult};
+use crate::modules::memory::actions::{
+    self, AddResult, DeleteResult, ExportResult, GraphNode, QueryResult,
+};
 
 /// Memory service trait: domain methods, no `Output` in sight (P1).
 ///
@@ -55,6 +57,10 @@ pub trait MemoryBackend: Send + Sync {
 
     /// `memory history <S> <P> <O>`: full version history (incl. deleted).
     async fn history(&self, subject: &str, predicate: &str, object: &str) -> Result<QueryResult>;
+
+    /// `memory export`: lossless dump of the whole `memory` table as a
+    /// versioned JSON document ([K005](../../../docs/adr/K005-memory-module-deprecation.md)).
+    async fn export(&self) -> Result<ExportResult>;
 }
 
 /// Real backend: delegates to the action handlers in `actions.rs`.
@@ -100,6 +106,10 @@ impl MemoryBackend for MemoryBackendImpl {
 
     async fn history(&self, subject: &str, predicate: &str, object: &str) -> Result<QueryResult> {
         actions::history(subject, predicate, object).await
+    }
+
+    async fn export(&self) -> Result<ExportResult> {
+        actions::export().await
     }
 }
 
@@ -246,6 +256,15 @@ pub mod testkit {
                     })
                     .cloned()
                     .collect(),
+            })
+        }
+
+        async fn export(&self) -> Result<ExportResult> {
+            Ok(ExportResult {
+                export_version: actions::EXPORT_VERSION,
+                exported_at: "2026-08-05T00:00:00Z".to_string(),
+                count: self.facts.len(),
+                facts: self.facts.clone(),
             })
         }
     }

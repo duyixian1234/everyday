@@ -35,7 +35,7 @@ const MODULE_ACTIONS: &[(&str, &[&str])] = &[
     (
         "memory",
         &[
-            "add", "get", "relation", "list", "delete", "graph", "history",
+            "add", "get", "relation", "list", "delete", "graph", "history", "export",
         ],
     ),
     ("config", &["path", "list", "get", "set", "init"]),
