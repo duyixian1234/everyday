@@ -55,7 +55,6 @@ hyper-util = { version = "0.1", features = ["client", "client-legacy", "http1", 
 hyper-rustls = { version = "0.27", default-features = false, features = ["ring", "http1", "webpki-tokio"] }
 tower-http = { version = "0.7", features = ["auth"] }
 http = "1"
-http-body-util = "0.1"
 roxmltree = "0.21"
 
 # RSS
@@ -66,9 +65,6 @@ sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio",
 
 # 时间
 chrono = { version = "0.4", features = ["serde"] }
-
-# 表格输出
-tabled = "0.15"
 
 # 内容 hash（WebDAV sync 变更检测，D002）
 sha2 = "0.11"
@@ -99,8 +95,6 @@ encoding_rs = "0.8"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_IO"] }
 
 [dev-dependencies]
-tokio-test = "0.4"
-
 # CLI contract tests (tests/cli_contract.rs) — assert_cmd drives the built binary
 assert_cmd = "2"
 

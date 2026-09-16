@@ -40,5 +40,4 @@ ignore = [
     "RUSTSEC-2025-0052", # async-std discontinued — via async-imap (mail module)
     "RUSTSEC-2024-0388", # derivative unmaintained — via keyring -> zbus (Linux secret-service chain)
     "RUSTSEC-2024-0384", # instant unmaintained — via zbus -> futures-lite chain
-    "RUSTSEC-2024-0370", # proc-macro-error unmaintained — via tabled_derive (table output)
 ]
