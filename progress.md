@@ -10,6 +10,7 @@
 
 每行 ≤ 1 句话；详细任务执行细节、子任务清单、完成小结一律不进本文件。
 
+- **memory 模块冻结 + `export` 逃生通道**（[K005](./docs/adr/K005-memory-module-deprecation.md)，2026-09-16）：模块进入冻结态——现有 7 个动作行为不变、继续注册于 Registry/MCP/Search，但不再接受新功能、schema 不变、v2 延后项**改为取消**，并排期在后续大版本移除（不承诺具体版本）；新增第 8 个动作 `everyday memory export`，**读取基表而非 `current_state_view`**，故历史版本与软删除行都在导出内——这是唯一能取出视图所隐藏数据的动作；信封 `{export_version, exported_at, count, facts[]}`（`export_version` 为承重字段），恒定输出 JSON 且**不受全局 `--json` 影响**（动作契约即"产出 JSON 文档"），`ORDER BY id` 保证逐字节可复现，空库返回 `count: 0` 而非报错；只读故 `sync::is_write_action` 无需登记、MCP tool `memory_export` 不带 `[WRITE]`；K001–K004 标为 `Accepted (revised)` 而非 Superseded（它们描述的仍是运行中的代码）；**无 `import`**，恢复需手工。非破坏性（additive action）。
 - **skills 文档纠偏 + 漂移门禁**（[F018](./docs/adr/F018-agent-skill-distribution.md)，2026-09-12）：`skills/README.md` 删除与 `COMMANDS.md` 重复的模块表（已落后五个版本）改为指针，`COMMANDS.md` 补 `daemon` 行 / 节与 `sync sync` 显式动作、修复 `SKILL.md` 越界链接，新增 `just check-skill-drift`（从 `everyday mcp tools --json` 反查 58 个动作是否都有文档，排除 `{mcp, health}`）并接入 `just ci`，`just skill-link` 把技能目录以 junction/symlink 接入 agent 宿主（复制会静默失配）。文档与工具变更，非破坏性。
 - **v0.18.2 已发布** — **邮件缓存文件夹键归一化 + 读取侧去重**（[M008](./docs/adr/M008-mail-folder-key-canonicalization.md)，2026-09-12）：`--folder` 传入的中文名与 IMAP LIST 的 raw modified-UTF-7 名归一化到**同一缓存主键**（`INBOX` 大小写折叠），`mail list` / `search` 输出按 (account, Message-ID) 去重——修复同一封邮件被两个 folder 键各存一份、简报误报「重复投递 2 次」的幻影重复；配套一次性迁移合并既有双命名空间缓存。非破坏性。
 - **v0.18.1 已发布** — **IMAP 会话池归还竞态修复**（[M002](./docs/adr/M002-imap-connection-pool.md)/[R003](./docs/adr/R003-pool-guard-drop.md) 修订，2026-08-27）：文件夹数超池大小时 semaphore 与队列双重记账的归还竞态导致池耗尽、失效会话永久减容——改为 mutex 保护的空闲队列 + `Notify`（归还同步完成后再唤醒等待者），失效会话后台重建、重建成功才重新可用；daemon 聚合每个失败文件夹的错误。非破坏性。
@@ -36,7 +37,7 @@
 - **v0.8.0 已发布** — 凭据 / `login` 收拢到顶层 `auth` 模块（[R013–R015](./docs/adr/R013-auth-module-consolidation.md)；破坏性）。
 - **v0.7.0 已发布** — 跨模块统一搜索 `everyday search`（[S001–S006](./docs/adr/S001-search-architecture.md)）。
 - **v0.6.x 已发布** — Mail Cache 落地（[M002–M005](./docs/adr/M002-imap-connection-pool.md)）+ timeline `--from` 显式报错（[L013](./docs/adr/L013-from-explicit-error.md)）+ Rust 1.97 clippy 注释 lint 修复。
-- **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline` / `memory` / `config` / `search`（10 个，走 Executor trait）。
+- **模块**：`mail` / `cal` / `rss` / `note` / `todo` / `bookmark` / `timeline` / `memory`（**已冻结**，[K005](./docs/adr/K005-memory-module-deprecation.md)）/ `config` / `search`（10 个，走 Executor trait）。
 - **本地 provider 唯一**：`note` / `todo` / `bookmark` 三模块仅本地 SQLite（Notion provider 已移除，[R019](./docs/adr/R019-remove-notion-provider.md)，v0.13.0）。
 - **Timeline**：append-only event log 统一 6 source 事件捕获（[L001–L013](./docs/adr/L001-append-only-event-log.md)）。
 - **质量门禁**：`cargo build` / `cargo clippy --all-targets -- -D warnings` 零警告 / `cargo test` / `cargo fmt --check` 全绿；CI 三平台 + aarch64 mac 全绿（[F006](./docs/adr/F006-ci-release-github-only.md)）。
@@ -49,6 +50,7 @@
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-09-16 | K | [K005](./docs/adr/K005-memory-module-deprecation.md) | memory 模块冻结：现有 7 动作不变、不再演进，排期后续大版本移除（不承诺版本号）；新增 `memory export` 读基表导出全量（含历史版本 + 软删除行，唯一能取出视图隐藏数据的动作），`{export_version, exported_at, count, facts[]}` 信封、恒定 JSON 不受 `--json` 影响、`ORDER BY id` 可复现、空库 `count:0`；只读故 MCP 不带 `[WRITE]`；K001–K004 改 `Accepted (revised)` 而非 Superseded；无 `import`（非破坏性） |
 | 2026-09-12 | F | [F018](./docs/adr/F018-agent-skill-distribution.md) | Agent 技能分发：`COMMANDS.md` 为模块清单唯一持有者（`skills/README.md` 去重复表、去版本号，改指针）；以 `everyday mcp tools --json` 为机器可读契约，`just check-skill-drift` 断言全部投影动作有文档（排除 `{mcp, health}`）并接入 `just ci`；仓库经 `just skill-link` 以 junction/symlink 成为技能活源——复制方案保留 staging gate 但会静默分叉，故弃用 |
 | 2026-09-12 | M | [M008](./docs/adr/M008-mail-folder-key-canonicalization.md) | 邮件文件夹键归一化：解码器迁出为 `modules/imap_utf7.rs`（新增编码器 + `canonical_folder_key`，规范形 = raw modified-UTF-7、`INBOX` 大小写折叠）；7 个缓存入口在写入/查询前归一化 → `--folder` 中/英名写同一主键；`list`/`search` 输出按 (account, Message-ID) 去重（无 Message-ID 回退 (folder,uid)，绝不误并）；`query_envelopes` 兼容历史双拼写行；非破坏性 patch v0.18.2 |
 | 2026-08-21 | M | [M006](./docs/adr/M006-mail-search-cached.md) | `mail search --cached` 本地缓存搜索：显式 opt-in（默认仍走 IMAP `SEARCH TEXT` 保全 body 召回）；stale >15min 先同步再查本地；复用 `search_envelopes` token-OR GLOB；`--cached` 走 P6 类型化输出，默认路径保留历史纯字符串契约（v0.18.0 计划） |
