@@ -37,7 +37,7 @@ shell 做不到的事"。
 | `bookmark` | 书签：add / list（本地 SQLite） | [R019](./docs/adr/R019-remove-notion-provider.md)；前身 [B001](./docs/adr/B001-bookmark-dual-provider.md)（已废弃） |
 | `timeline` | 跨模块统一事件层（append-only log） | [L001](./docs/adr/L001-append-only-event-log.md) – [L013](./docs/adr/L013-from-explicit-error.md) |
 | `config` | 配置查看 / 修改；走 Executor trait | [R012](./docs/adr/R012-config-executor-trait.md) |
-| `memory` | Agent 结构化事实笔记本（append-only 三元组） | [K001](./docs/adr/K001-memory-module.md) – [K004](./docs/adr/K004-memory-single-instance.md) |
+| `memory` | Agent 结构化事实笔记本（append-only 三元组）；**已冻结并排期移除** | [K005](./docs/adr/K005-memory-module-deprecation.md)；前身 [K001](./docs/adr/K001-memory-module.md) – [K004](./docs/adr/K004-memory-single-instance.md) |
 | `search` | 跨模块统一搜索（聚合各模块 Searchable） | [S001](./docs/adr/S001-search-architecture.md) – [S007](./docs/adr/S007-mail-search-local-cache.md) |
 | `auth` | 凭据 / login 收拢到顶层 auth 模块 | [R013](./docs/adr/R013-auth-module-consolidation.md) – [R015](./docs/adr/R015-auth-credential-io.md) |
 | `sync` | WebDAV 跨设备文件级同步 | [D001](./docs/adr/D001-webdav-file-sync.md) – [D003](./docs/adr/D003-auto-sync-cli-boundary.md) |

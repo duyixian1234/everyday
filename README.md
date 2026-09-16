@@ -141,7 +141,7 @@ everyday mail list --unread --limit 10 --json
 | `auth` | credential lifecycle | `everyday auth` |
 | `timeline` | unified event timeline | `everyday timeline` |
 | `search` | cross-module unified search | `everyday search` |
-| `memory` | structured agent notebook | `everyday memory` |
+| `memory` | structured agent notebook (frozen — [K005](docs/adr/K005-memory-module-deprecation.md)) | `everyday memory` |
 | `health` | module health check | `everyday health` |
 | `sync` | WebDAV file sync | `everyday sync` |
 | `mcp` | expose everyday as an MCP server | `everyday mcp` |

@@ -118,7 +118,7 @@ everyday mail list --unread --limit 10 --json
 | `auth` | 凭证生命周期 | `everyday auth` |
 | `timeline` | 统一事件流 | `everyday timeline` |
 | `search` | 跨模块统一搜索 | `everyday search` |
-| `memory` | 结构化记忆笔记本 | `everyday memory` |
+| `memory` | 结构化记忆笔记本（已冻结 —— [K005](docs/adr/K005-memory-module-deprecation.md)） | `everyday memory` |
 | `health` | 模块健康检查 | `everyday health` |
 | `sync` | WebDAV 跨设备同步 | `everyday sync` |
 | `mcp` | 将 everyday 暴露为 MCP server | `everyday mcp` |

@@ -168,9 +168,10 @@ TimelineModule 实现 `Executor`，注册到 `ModuleRegistry`。`name()` = `"tim
 
 > Agent 的私人结构化事实笔记本。与 Timeline（时间戳事件）和 Note（自由文本）正交——本节定义"无时间点的稳定事实"领域。
 > 设计决策见 [`docs/adr/K001`](docs/adr/K001-memory-module.md) – [`K004`](docs/adr/K004-memory-single-instance.md)。
+> **本模块已冻结并排期移除（[K005](docs/adr/K005-memory-module-deprecation.md)）**：现有动作行为不变、继续可用，但不再演进；`everyday memory export` 是移除前的数据出口。本节术语描述的是**仍在运行的代码**，不是现行演进方向。
 
 ### Memory
-Memory 模块（`everyday memory <action>`）存储 agent 关于 user / project / world 的稳定结构化事实——偏好、关系、项目元数据、技术知识。本地 SQLite 单实例，无外部协议、无凭证、无网络；与 Timeline（"X 在 T 时刻发生"）和 Note（"以下是一段散文"）形成三分天下。
+Memory 模块（`everyday memory <action>`）存储 agent 关于 user / project / world 的稳定结构化事实——偏好、关系、项目元数据、技术知识。本地 SQLite 单实例，无外部协议、无凭证、无网络；与 Timeline（"X 在 T 时刻发生"）和 Note（"以下是一段散文"）形成三分天下。模块已冻结（[K005](docs/adr/K005-memory-module-deprecation.md)）。
 
 ### Triple（三元组）
 单个 memory 事实，形如 `(subject, predicate, object)`。例如 `(user, prefers, rust)`。三个 TEXT 字段；与 RDF / SPARQL 无关系。
@@ -236,8 +237,8 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 
 判定问题："这条信息有没有确定的时刻 T，过了 T 它就成历史？" 有 → timeline；没有 → memory。内容是不是给人读的散文？是 → note。
 
-### v1 命令集（7）
-`add` / `get` / `relation` / `list` / `delete` / `graph` / `history`。详见 [K001](docs/adr/K001-memory-module.md) §v1 commands。
+### v1 命令集（8）
+`add` / `get` / `relation` / `list` / `delete` / `graph` / `history` / `export`。详见 [K001](docs/adr/K001-memory-module.md) §v1 commands（前 7 个）与 [K005](docs/adr/K005-memory-module-deprecation.md)（`export`）。
 
 ### Semantic correctness
 程序**不**校验三元组的语义合法性（predicate 是否"事实形"、object 是否合理等）——这是 agent 的责任。规则写进 `skills/everyday-cli/references/MEMORY.md`，不在代码层强制。用户原话："memory 是由具体的 agent 发起的，不应在程序中限制"。
@@ -249,7 +250,13 @@ Memory 实现 `Searchable` trait，参与 `everyday search` 跨模块聚合。�
 - delete 不存在 / 已删除的当前态 → `InvalidArgument`
 - SQLite IO 失败 → `Io`
 
-### Deferred to v2（明确不在 v1 scope）
+`export` 不新增错误路径：空库是合法完整状态，返回 `count: 0`。
+
+### Export（导出信封）
+`everyday memory export` —— 把**整张 `memory` 表**（非 `current_state_view`）导出为单个 JSON 文档，因此历史版本与软删除行都在其中；这是唯一能取出视图所隐藏数据的动作。信封 `{export_version, exported_at, count, facts[]}`，`export_version` 是承重字段（没有它，未来读者无法判断归档文档的形状）。恒定输出 JSON、不受全局 `--json` 影响；按 `id` 排序（全序，可逐字节复现）。**无 `import`**。详见 [K005](docs/adr/K005-memory-module-deprecation.md)。
+
+### Deferred to v2（已取消）
+下列项**不会实现**——模块已冻结（[K005](docs/adr/K005-memory-module-deprecation.md)），"延后"实为取消：
 - `memory undelete-by-id <id>` — 按 row id 精确复活特定历史行（区别于"add 新版本"）
 - `memory search <query>` — embedding 语义检索
 - `memory merge <S> <P>` — 冲突事实合并
