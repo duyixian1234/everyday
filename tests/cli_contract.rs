@@ -107,8 +107,12 @@ fn verbose_flag_is_contract() {
 fn config_example_shape_is_contract() {
     let content = std::fs::read_to_string("config.example.toml")
         .expect("config.example.toml must exist at crate root");
-    let doc: toml::Value = content
-        .parse()
+    // `toml::from_str` is the supported entry point. `str::parse::<toml::Value>()`
+    // is NOT equivalent under toml 1.x: its `FromStr` impl rejects even a
+    // trivial `"a = 1"` document with "unexpected content, expected nothing",
+    // so using it here would fail on a perfectly valid example file. This
+    // mirrors what `Config::load_from` does in production.
+    let doc: toml::Value = toml::from_str(&content)
         .expect("config.example.toml must parse as TOML");
 
     // Sections whose removal would silently break user configs.
