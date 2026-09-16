@@ -306,7 +306,10 @@ pub mod test_support {
         use sha2::{Digest, Sha256};
         let mut h = Sha256::new();
         h.update(bytes);
-        format!("\"{}\"", crate::modules::sync::snapshot::hex_lower(&h.finalize()))
+        format!(
+            "\"{}\"",
+            crate::modules::sync::snapshot::hex_lower(&h.finalize())
+        )
     }
 
     #[async_trait]

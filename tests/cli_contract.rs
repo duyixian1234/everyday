@@ -112,8 +112,8 @@ fn config_example_shape_is_contract() {
     // trivial `"a = 1"` document with "unexpected content, expected nothing",
     // so using it here would fail on a perfectly valid example file. This
     // mirrors what `Config::load_from` does in production.
-    let doc: toml::Value = toml::from_str(&content)
-        .expect("config.example.toml must parse as TOML");
+    let doc: toml::Value =
+        toml::from_str(&content).expect("config.example.toml must parse as TOML");
 
     // Sections whose removal would silently break user configs.
     assert!(
