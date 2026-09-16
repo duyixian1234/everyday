@@ -49,6 +49,8 @@ The decision *not* to emit a runtime deprecation warning is deliberate. `memory`
 
 Removal is a **breaking change** — `tests/cli_contract.rs` states outright that removing a module requires a major bump, an ADR, and a contract-list update. It lands in a later major version via its own ADR; this one records the direction and the escape hatch, and deliberately commits to **no version number**.
 
+To be explicit, since the risk of misreading is real: **v0.19.0 is not that release.** It is the release that introduced this freeze and `export`, and it removes nothing — the module still works exactly as before. `0.x` to `1.0` is the natural place for the actual removal, so "a later major version" remains unclaimed.
+
 When removal happens, these are the known tripwires (identified during this change, so the removal ADR does not have to rediscover them):
 
 | Site | Why it breaks on removal |

@@ -1,3 +1,45 @@
+## [0.19.0] - 2026-09-16
+
+### 🚀 Features
+
+- *(memory)* Add `memory export` — lossless JSON dump (K005)
+
+### ⚙️ Miscellaneous Tasks
+
+- Modernize all dependencies to their latest stable versions: 15 major upgrades
+  (toml 1, reqwest 0.13, sqlx 0.9, toml_edit 0.25, async-imap 0.11, keyring 4,
+  libdav 0.11, thiserror 2, dirs 7, sha2 0.11, webpki-roots 1, tower-http 0.7,
+  mailparse 0.17, croner 4, windows-sys 0.61) plus a full lockfile refresh, and
+  remove three dependencies that were declared but never referenced (`tabled`,
+  `tokio-test`, `http-body-util`)
+
+### 🐛 Bug Fixes
+
+- *(scripts)* Allow underscore/dash in drift-check action names
+
+### 📚 Documentation
+
+- *(skill)* Fix stale skill docs and gate drift in CI (F018)
+- *(memory)* Add K005 — freeze the module, ship export, defer removal
+- *(memory)* Revise K001-K004 for the freeze (not superseded)
+- *(skill)* Document `memory export` and the freeze in everyday-cli
+- *(memory)* Document `memory export` and the freeze in commands.md
+- *(memory)* Announce the K005 freeze in the glossary and module lists
+- *(memory)* Record the K005 freeze in progress.md and task_plan.md
+- *(memory)* Correct the export ordering rationale and drop volatile numbers
+
+### 🎨 Styling
+
+- *(memory)* Fix fmt and a doc-link depth in the export code
+- Apply rustfmt to two lines from the earlier dependency commits
+
+### 🧪 Testing
+
+- *(memory)* Exercise export's real code path, not a replica of it
+
+### ⚙️ Miscellaneous Tasks
+
+- *(deny)* Drop two advisory ignores that no longer match
 ## [0.18.2] - 2026-09-12
 
 ### 🐛 Bug Fixes
