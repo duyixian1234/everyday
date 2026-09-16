@@ -178,7 +178,7 @@ pub async fn query_items(
          LIMIT ?{n}"
     ));
 
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for name in feed_names {
         query = query.bind(name);
     }
@@ -258,7 +258,7 @@ pub async fn search_for_search(q: &SearchQuery) -> Result<Vec<Hit>> {
     );
 
     let pool = open().await?;
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for p in &params {
         query = query.bind(p);
     }
@@ -688,7 +688,7 @@ mod tests {
             let where_clause = conds.join(" OR ");
             let sql =
                 format!("SELECT guid FROM rss_items WHERE {where_clause} ORDER BY published DESC");
-            let mut query = sqlx::query(&sql);
+            let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
             for p in &params {
                 query = query.bind(p);
             }

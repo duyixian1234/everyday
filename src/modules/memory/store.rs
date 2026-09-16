@@ -113,7 +113,9 @@ pub async fn open_at(path: &Path) -> Result<SqlitePool> {
         .await?;
     sqlx::query(CREATE_TABLE_SQL).execute(&pool).await?;
     for ddl in CREATE_INDEX_SQLS {
-        sqlx::query(ddl).execute(&pool).await?;
+        sqlx::query(sqlx::AssertSqlSafe(*ddl))
+            .execute(&pool)
+            .await?;
     }
     sqlx::query(CREATE_VIEW_SQL).execute(&pool).await?;
     Ok(pool)

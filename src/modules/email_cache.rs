@@ -392,7 +392,7 @@ pub async fn query_envelopes(
         // timeline/store.rs; bind placeholders are unstable for LIMIT in some sqlx versions).
         sql.push_str(&format!(" LIMIT {}", limit));
     }
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for b in &binds {
         query = query.bind(b);
     }
@@ -465,7 +465,7 @@ pub async fn search_envelopes(pool: &SqlitePool, tokens: &[&str]) -> Result<Vec<
          FROM envelopes WHERE {} ORDER BY date DESC",
         clauses.join(" OR ")
     );
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for b in &binds {
         query = query.bind(b);
     }
@@ -524,7 +524,7 @@ pub async fn search_envelopes_scoped(
     // The LIMIT is a literal integer (same handling as `query_envelopes` /
     // timeline store; bind placeholders for LIMIT are unstable in some sqlx versions).
     sql.push_str(&limit.to_string());
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for b in &binds {
         query = query.bind(b);
     }

@@ -229,7 +229,7 @@ pub async fn query_events(pool: &SqlitePool, params: &QueryParams) -> Result<Vec
         sql.push_str(&format!(" LIMIT {}", params.limit));
     }
 
-    let mut q = sqlx::query(&sql);
+    let mut q = sqlx::query(sqlx::AssertSqlSafe(sql));
     for b in &binds {
         q = q.bind(b);
     }

@@ -67,7 +67,7 @@ pub async fn snapshot_db(db_path: &Path, tmp_dir: &Path) -> Result<PathBuf> {
         .connect_with(sqlx::sqlite::SqliteConnectOptions::new().filename(db_path))
         .await
         .map_err(|e| AgentError::Other(format!("open source db for snapshot: {e}")))?;
-    sqlx::query(&sql)
+    sqlx::query(sqlx::AssertSqlSafe(sql))
         .execute(&pool)
         .await
         .map_err(|e| AgentError::Other(format!("VACUUM INTO snapshot failed: {e}")))?;

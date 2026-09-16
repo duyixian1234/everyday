@@ -296,7 +296,7 @@ pub async fn search_for_search(account: &TodoAccount, q: &SearchQuery) -> Result
     );
 
     let pool = open(account).await?;
-    let mut query = sqlx::query(&sql);
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
     for p in &params {
         query = query.bind(p);
     }

@@ -173,10 +173,10 @@ pub async fn add(
 /// `memory get <SUBJECT>`: current state of all triples with this subject.
 pub async fn get(subject: &str) -> Result<QueryResult> {
     let pool = open().await?;
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT id, subject, predicate, object, confidence, source, created_at \
          FROM {VIEW_CURRENT} WHERE subject = ?1 ORDER BY created_at DESC"
-    ))
+    )))
     .bind(subject)
     .fetch_all(&pool)
     .await?;
@@ -188,11 +188,11 @@ pub async fn get(subject: &str) -> Result<QueryResult> {
 /// matching `(subject, predicate)`.
 pub async fn relation(subject: &str, predicate: &str) -> Result<QueryResult> {
     let pool = open().await?;
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT id, subject, predicate, object, confidence, source, created_at \
          FROM {VIEW_CURRENT} WHERE subject = ?1 AND predicate = ?2 \
          ORDER BY created_at DESC"
-    ))
+    )))
     .bind(subject)
     .bind(predicate)
     .fetch_all(&pool)
@@ -205,10 +205,10 @@ pub async fn relation(subject: &str, predicate: &str) -> Result<QueryResult> {
 pub async fn list(limit: Option<usize>) -> Result<QueryResult> {
     let pool = open().await?;
     let cap = limit.unwrap_or(LIST_DEFAULT_LIMIT).min(LIST_DEFAULT_LIMIT) as i64;
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT id, subject, predicate, object, confidence, source, created_at \
          FROM {VIEW_CURRENT} ORDER BY created_at DESC LIMIT ?1"
-    ))
+    )))
     .bind(cap)
     .fetch_all(&pool)
     .await?;
@@ -232,9 +232,9 @@ pub async fn delete(subject: &str, predicate: &str, object: &str) -> Result<Dele
     let now = chrono::Utc::now().to_rfc3339();
 
     // Locate the current-state row for the triple.
-    let row = sqlx::query(&format!(
+    let row = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT id FROM {VIEW_CURRENT} WHERE subject = ?1 AND predicate = ?2 AND object = ?3 LIMIT 1"
-    ))
+    )))
     .bind(subject)
     .bind(predicate)
     .bind(object)
@@ -250,9 +250,9 @@ pub async fn delete(subject: &str, predicate: &str, object: &str) -> Result<Dele
         }
     };
 
-    sqlx::query(&format!(
+    sqlx::query(sqlx::AssertSqlSafe(format!(
         "UPDATE {TABLE} SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL"
-    ))
+    )))
     .bind(&now)
     .bind(&id)
     .execute(&pool)
@@ -311,10 +311,10 @@ fn build_node<'a>(
             .fetch_all(pool)
             .await?
         } else {
-            sqlx::query(&format!(
+            sqlx::query(sqlx::AssertSqlSafe(format!(
                 "SELECT predicate, object FROM {VIEW_CURRENT} WHERE subject = ?1 \
                  ORDER BY created_at DESC"
-            ))
+            )))
             .bind(subject)
             .fetch_all(pool)
             .await?
@@ -435,10 +435,10 @@ pub async fn export() -> Result<ExportResult> {
 /// must not touch; without this seam the only coverage would be a replica
 /// of the SQL, which would pass even if `export` drifted from it.
 async fn export_from(pool: &SqlitePool) -> Result<ExportResult> {
-    let rows = sqlx::query(&format!(
+    let rows = sqlx::query(sqlx::AssertSqlSafe(format!(
         "SELECT id, subject, predicate, object, confidence, source, created_at, deleted_at \
          FROM {TABLE} ORDER BY id"
-    ))
+    )))
     .fetch_all(pool)
     .await?;
     let facts: Vec<MemoryFact> = rows.iter().map(row_to_fact_with_deleted).collect();
@@ -526,9 +526,9 @@ mod tests {
         .await
         .unwrap();
 
-        let row: (String, String, String) = sqlx::query_as(&format!(
+        let row: (String, String, String) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT id, predicate, object FROM {VIEW_CURRENT} WHERE subject = 'user'"
-        ))
+        )))
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -559,9 +559,9 @@ mod tests {
 
         // View: only the latest (one row, since both inserts target the
         // same triple partition).
-        let n: (i64,) = sqlx::query_as(&format!(
+        let n: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {VIEW_CURRENT} WHERE subject = 'user'"
-        ))
+        )))
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -597,9 +597,9 @@ mod tests {
             .await
             .unwrap();
 
-        let n: (i64,) = sqlx::query_as(&format!(
+        let n: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
             "SELECT COUNT(*) FROM {VIEW_CURRENT} WHERE subject = 'user'"
-        ))
+        )))
         .fetch_one(&pool)
         .await
         .unwrap();
@@ -678,10 +678,12 @@ mod tests {
         assert_eq!(out.export_version, EXPORT_VERSION);
 
         // The current-state view would have shown only two of them.
-        let current: (i64,) = sqlx::query_as(&format!("SELECT COUNT(*) FROM {VIEW_CURRENT}"))
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+        let current: (i64,) = sqlx::query_as(sqlx::AssertSqlSafe(format!(
+            "SELECT COUNT(*) FROM {VIEW_CURRENT}"
+        )))
+        .fetch_one(&pool)
+        .await
+        .unwrap();
         assert_eq!(current.0, 2, "view hides the soft-deleted row");
 
         // `deleted_at` is populated for the soft-deleted row only.

@@ -82,7 +82,7 @@ impl Searchable for MemorySearchProvider {
         );
 
         let pool = open().await?;
-        let mut query = sqlx::query(&sql);
+        let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
         for p in &patterns {
             query = query.bind(p);
         }
