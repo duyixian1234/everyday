@@ -111,10 +111,10 @@ cal 的窗口刷新模式窗口 = `[last_sync, now + 7天]`（前看 7 天）。
 
 ### 本地 provider 的事件粒度
 本地 provider 从"当前态快照"拉取，非完整转移历史。降级语义：
-- **todo**：`created`（`created_at`）+ 当前状态映射的事件（`updated_at` 变化时生成，如 `completed`）。多次转移合并为一条最新态事件（Todo→In Progress→Done 间只生成 `completed`）。需给 `todos` 表加 `updated_at` 列。
+- **todo**：`created`（`created_at`）+ 当前状态映射的事件（`updated_at` 变化时生成，如 `completed`）+ `deleted`（`deleted_at` 非空时）。多次转移合并为一条最新态事件（Todo→In Progress→Done 间只生成 `completed`）。
 - **note**：`created`（`created_at`）+ `updated`（`updated_at`）。多次更新合并为一条。
 - **bookmark**：`added`（`created_at`）。
-- **删除**：当前无 delete action，暂不支持。将来加 delete 时改为软删除（`deleted_at` 列），provider 查 `WHERE deleted_at > last_sync`。
+- **删除的可见性**：`todo delete` 为软删除（`deleted_at` 列），已删行对全部读路径不可见（读走 `active_todos` 视图）。bookmark 目前无 delete action；将来加 delete 时沿用同一软删除语义。详见 [R024](docs/adr/R024-local-provider-soft-delete.md)。
 
 ### Sync 执行模型
 - **Best-effort + 逐 provider 水位**：每个 provider 独立 try/catch。成功的更新 `sync_state` 水位，失败的跳过（水位不变，下次 sync 重试该窗口）。一个坏源不阻塞其他源。sync 整体返回成功，输出标注失败项。
