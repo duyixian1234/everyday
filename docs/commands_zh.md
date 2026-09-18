@@ -71,9 +71,13 @@ everyday config set default_account.mail personal
 
 | 命令 | 说明 | 状态 | 用法 |
 |------|------|------|------|
-| `list` | 列出日程 | ✅ 可用 | `everyday cal list [--today\|--date YYYY-MM-DD]` |
+| `list` | 列出日程（读本地缓存；陈旧时才拉取） | ✅ 可用 | `everyday cal list [--today\|--date YYYY-MM-DD]` |
 | `add` | 添加日程 | ✅ 可用 | `everyday cal add --title T --start ISO --end ISO` |
 | `delete` | 删除日程 | ✅ 可用 | `everyday cal delete --id ID` |
+
+`cal list` 输出含 **`UID`** 列：iCalendar 的事件身份。它跨编辑稳定，而 `路径` 不稳定——`add` 时的资源文件名由时间戳派生，重新保存即改变。服务端未提供 `UID` 的事件回退为 `href`。
+
+**缓存行为**：事件镜像进 `~/.config/everyday/cal-cache.db`，由 `cal list`、`cal` 的 search provider 与 timeline 共用。新鲜缓存（< 15 分钟）不触网；陈旧则先惰性刷新，**刷新失败时沿用旧快照**。每次刷新整体替换该日历的行，因此被取消 / 改期的日程会消失而非残留。缓存是设备本地的，不经 WebDAV 同步，可随时删除。没有 `cal cache gc`——整体替换不产生幽灵行。见 [C004](../docs/adr/C004-cal-event-cache.md)。
 
 ### rss — RSS/Atom 订阅
 
@@ -141,6 +145,7 @@ everyday config set default_account.mail personal
 |------|------|------|
 | `list` | 列出书签（`--tag` 按单个标签过滤） | `everyday bookmark list [--tag TAG]` |
 | `add` | 新增书签 | `everyday bookmark add --url U --title T [--tags a,b]` |
+| `search` | GLOB 搜索 title / url / 标签（`<query>` 必填，多词 OR） | `everyday bookmark search QUERY [--limit N]` |
 
 **选项说明**：
 
@@ -151,6 +156,9 @@ everyday config set default_account.mail personal
 | `--url U` | `add` | 书签 URL（必填） |
 | `--title T` | `add` | 书签标题（必填） |
 | `--tags a,b` | `add` | 逗号分隔的标签（可选，如 `rust,cli`） |
+| `--limit N` | `search` | 结果条数上限（默认 50） |
+
+`bookmark search` 与跨模块 `everyday search` 共用同一 matcher，因此 `bookmark search Q` 与 `everyday search query Q --module bookmark` 不会给出不同结果。输出形状与 `list` 相同；无匹配返回空数组而非报错。
 
 **标签解析**：`--tags "rust, cli , web"` 按逗号拆分、去空白、丢弃空项 → `["rust", "cli", "web"]`。
 

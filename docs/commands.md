@@ -72,9 +72,13 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 
 | Command | Description | Status | Usage |
 |------|------|------|------|
-| `list` | List events | ✅ Available | `everyday cal list [--today\|--date YYYY-MM-DD]` |
+| `list` | List events (served from the local cache; pulls only when stale) | ✅ Available | `everyday cal list [--today\|--date YYYY-MM-DD]` |
 | `add` | Add an event | ✅ Available | `everyday cal add --title T --start ISO --end ISO` |
 | `delete` | Delete an event | ✅ Available | `everyday cal delete --id ID` |
+
+`cal list` output includes a **`UID`** column: the iCalendar event identity. It is stable across edits, unlike `路径` — the href is derived from a timestamp when an event is added, so re-saving changes it. Events whose server omits `UID` fall back to the href.
+
+**Cache behaviour**: events are mirrored into `~/.config/everyday/cal-cache.db`, which `cal list`, the `cal` search provider and the timeline share. A fresh cache (< 15 min) answers without touching the network; a stale one refreshes first, lazily, and **falls back to the stale snapshot if the refresh fails**. Each refresh replaces a calendar's rows wholesale, so cancelled and rescheduled events disappear rather than lingering. The cache is device-local, never synced via WebDAV, and safe to delete. There is no `cal cache gc` — replacement leaves no ghosts. See [C004](../docs/adr/C004-cal-event-cache.md).
 
 ### rss — RSS/Atom feeds
 
@@ -142,6 +146,7 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 |------|------|------|
 | `list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list [--tag TAG]` |
 | `add` | Add a bookmark | `everyday bookmark add --url U --title T [--tags a,b]` |
+| `search` | GLOB-search title / url / tags (`<query>` required, OR-of-tokens) | `everyday bookmark search QUERY [--limit N]` |
 
 **Option details**:
 
@@ -152,6 +157,9 @@ Based on IMAP (receiving) and SMTP (sending); credentials go through the system 
 | `--url U` | `add` | Bookmark URL (required) |
 | `--title T` | `add` | Bookmark title (required) |
 | `--tags a,b` | `add` | Comma-separated tags (optional; e.g. `rust,cli`) |
+| `--limit N` | `search` | Cap the result count (default 50) |
+
+`bookmark search` shares its matcher with the cross-module `everyday search`, so `bookmark search Q` and `everyday search query Q --module bookmark` cannot disagree. Results render in the same shape as `list`; no matches is an empty array, not an error.
 
 **Tag parsing**: `--tags "rust, cli , web"` is split on commas, trimmed, and empty entries dropped → `["rust", "cli", "web"]`.
 

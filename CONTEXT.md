@@ -420,6 +420,44 @@ mail_cache.db **独立**于 timeline.db，不跨数据库 JOIN。Timeline 的 ma
 
 ---
 
+## Cal Cache
+
+> `cal` 模块的本地事件缓存层。独立于 Timeline.db。
+> 决策见 ADR [C004](docs/adr/C004-cal-event-cache.md)。
+
+### Cal Cache
+
+`cal` 模块的本地事件缓存层。位置 `~/.config/everyday/cal-cache.db`。目的：让 `cal list` 与 `cal` 的 search provider 默认查本地，与其余六个 search provider 的"本地优先"语义一致。此前 `cal` 是唯一每次调用都实拉 CalDAV 的远程重模块。
+
+### 快照替换
+
+缓存按日历**整体替换**（delete-then-insert），而非追加。理由：日历事件是**可变状态**——会被改期、取消、重命名，因此一条陈旧行不是噪音而是**错误信息**（它显示一个已不存在的会议）。这与 mail 缓存的 K1 追加策略**语义相反**，与 Timeline 对日历采用的 window-refresh 模式同构。
+
+### 事件身份
+
+`(account, calendar_href, uid)` 复合主键。用 iCalendar 的 `UID` 而非 `href`：`cal add` 生成的资源文件名带纳秒时间戳，同一事件重新 PUT 会换 `href`，而 `UID` 稳定。以 `href` 为主键会在每次编辑时产生幽灵行。服务端未提供 `UID` 时回退到 `href`。
+
+### Staleness
+
+`cal_state.last_sync_at` 距今的时长。超过 **15 分钟**（写死，不进配置，沿用 mail 的纪律）即视为陈旧，触发一次**惰性**刷新。取该账户**最旧**日历的水位作为判定。从未同步过的账户恒为陈旧。
+
+刷新失败时**沿用旧快照**而非报错——日历场景下，陈旧数据优于无数据。
+
+### 缓存可见性（`stale`）
+
+由于 `cal` 命中可能来自陈旧快照，`everyday search --json` 的每条命中带 `stale` 字段（见 [F020](docs/adr/F020-hit-staleness.md)）。该字段描述**快照**而非实体自身的时间。
+
+### 无 gc
+
+mail 需要 `gc` 是因为追加策略会产生幽灵行；快照替换结构上不产生幽灵行，因此没有 gc 的对象。将来若改为 ETag / sync-token 增量更新，幽灵行才可能出现，届时需补 gc。
+
+### 与 Timeline / Sync 的边界
+
+- **与 Timeline**：`cal` 的 timeline provider 经由同一缓存读取，因此缓存陈旧时 timeline 也可能滞后，直到下次刷新。
+- **与 WebDAV Sync**：`cal-cache.db` **不同步**。它是设备本地的可再生派生物，与其他派生缓存（mail_cache / rss-items / timeline）同一处理。
+
+---
+
 ## RSS（订阅聚合）
 
 > RSS/Atom 订阅模块。设计决策见 [`docs/adr/F008`](docs/adr/F008-rss-module.md)（2026-08-19 amendment：digest 摘要列 + `--since`、fetch 双入口、订阅存储纠正）。
