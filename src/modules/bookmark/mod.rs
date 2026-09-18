@@ -49,7 +49,7 @@ impl BookmarkModule {
 #[async_trait]
 impl Executor for BookmarkModule {
     fn description(&self) -> &'static str {
-        "Bookmarks (local sqlite): add, list."
+        "Bookmarks (local sqlite): add, list, search."
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
