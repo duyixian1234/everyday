@@ -101,27 +101,20 @@ impl BookmarkBackend for LocalBookmarkBackend {
             sqlx::query(sql).fetch_all(&pool).await?
         };
 
-        // Load tags per row and assemble BookmarkItem.
-        let mut items: Vec<BookmarkItem> = Vec::with_capacity(rows.len());
-        for r in &rows {
-            let id: String = r.get("id");
-            let tag_rows =
-                sqlx::query("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?1 ORDER BY tag")
-                    .bind(&id)
-                    .fetch_all(&pool)
-                    .await?;
-            let tags: Vec<String> = tag_rows
-                .iter()
-                .map(|tr| tr.get::<String, _>("tag"))
-                .collect();
-            items.push(BookmarkItem {
-                id,
-                url: r.get("url"),
-                title: r.get("title"),
-                tags,
-            });
-        }
-        Ok(items)
+        let ids: Vec<String> = rows.iter().map(|r| r.get("id")).collect();
+        let tags_by_id = load_tags(&pool, &ids).await?;
+        Ok(rows
+            .iter()
+            .map(|r| {
+                let id: String = r.get("id");
+                BookmarkItem {
+                    tags: tags_by_id.get(&id).cloned().unwrap_or_default(),
+                    id,
+                    url: r.get("url"),
+                    title: r.get("title"),
+                }
+            })
+            .collect())
     }
 
     /// `search <query> [--limit N]` (local): GLOB-match title / url / tags.
@@ -134,26 +127,53 @@ impl BookmarkBackend for LocalBookmarkBackend {
         let hits = search_for_search(&self.account, &q).await?;
         // Hydrate tags for the module-facing view; `Hit` carries none.
         let pool = open(&self.account).await?;
-        let mut items = Vec::with_capacity(hits.len());
-        for h in hits {
-            let tag_rows =
-                sqlx::query("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?1 ORDER BY tag")
-                    .bind(&h.id)
-                    .fetch_all(&pool)
-                    .await?;
-            let tags: Vec<String> = tag_rows
-                .iter()
-                .map(|tr| tr.get::<String, _>("tag"))
-                .collect();
-            items.push(BookmarkItem {
+        let ids: Vec<String> = hits.iter().map(|h| h.id.clone()).collect();
+        let tags_by_id = load_tags(&pool, &ids).await?;
+        Ok(hits
+            .into_iter()
+            .map(|h| BookmarkItem {
+                tags: tags_by_id.get(&h.id).cloned().unwrap_or_default(),
                 id: h.id,
                 url: h.url.unwrap_or_default(),
                 title: h.title,
-                tags,
-            });
-        }
-        Ok(items)
+            })
+            .collect())
     }
+}
+
+/// Load the tags of several bookmarks in **one** query, keyed by bookmark id.
+///
+/// One `IN (...)` query rather than one per row: `list` and `search` both
+/// hydrate tags, and the per-row form made a 50-hit search issue 51 queries.
+/// A bookmark with no tags simply has no entry, so callers default to empty.
+async fn load_tags(
+    pool: &sqlx::SqlitePool,
+    ids: &[String],
+) -> Result<std::collections::HashMap<String, Vec<String>>> {
+    let mut by_id: std::collections::HashMap<String, Vec<String>> =
+        std::collections::HashMap::new();
+    if ids.is_empty() {
+        return Ok(by_id);
+    }
+    let placeholders = (1..=ids.len())
+        .map(|i| format!("?{i}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    let sql = format!(
+        "SELECT bookmark_id, tag FROM bookmark_tags \
+         WHERE bookmark_id IN ({placeholders}) ORDER BY bookmark_id, tag"
+    );
+    let mut query = sqlx::query(sqlx::AssertSqlSafe(sql));
+    for id in ids {
+        query = query.bind(id);
+    }
+    for row in query.fetch_all(pool).await? {
+        by_id
+            .entry(row.get::<String, _>("bookmark_id"))
+            .or_default()
+            .push(row.get::<String, _>("tag"));
+    }
+    Ok(by_id)
 }
 
 // ============ Timeline data ingestion ============

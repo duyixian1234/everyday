@@ -60,6 +60,32 @@ pub fn for_account(account: &BookmarkAccount) -> Result<Box<dyn BookmarkBackend>
     Ok(Box::new(LocalBookmarkBackend::new(account.clone())))
 }
 
+/// The OR-of-tokens, case-insensitive substring rule that `bookmark search`
+/// applies, in Rust.
+///
+/// The live implementation expresses this as SQL (`lower(col) GLOB '*token*'`
+/// over title / url / tag); this is the same rule stated once for the in-memory
+/// test backend. It exists so the mock does not hand-copy the predicate and
+/// drift from it — the failure mode that motivated reusing
+/// `search_for_search`'s matcher in the first place.
+#[cfg(test)]
+pub fn matches_query(item: &BookmarkItem, query: &str) -> bool {
+    let tokens: Vec<String> = query
+        .split_whitespace()
+        .map(|t| t.to_ascii_lowercase())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.is_empty() {
+        return false;
+    }
+    let title = item.title.to_ascii_lowercase();
+    let url = item.url.to_ascii_lowercase();
+    let tags: Vec<String> = item.tags.iter().map(|t| t.to_ascii_lowercase()).collect();
+    tokens
+        .iter()
+        .any(|t| title.contains(t) || url.contains(t) || tags.iter().any(|tag| tag.contains(t)))
+}
+
 /// Test-only in-memory backend. Lives behind `#[cfg(test)]` so it never ships in the
 /// binary. It holds pre-seeded domain data and returns it verbatim, letting the action
 /// layer be exercised without SQLite — the DI acceptance guard for
@@ -90,31 +116,14 @@ pub mod testkit {
             Ok(self.items.clone())
         }
 
-        /// Matches against the seed `items` with the same OR-of-tokens rule the
-        /// real backend uses, so the action layer can be driven without SQLite.
+        /// Matches against the seed `items` using [`matches_query`], the same
+        /// rule the SQL predicate encodes, so the action layer can be driven
+        /// without SQLite and the two cannot silently diverge.
         async fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<BookmarkItem>> {
-            let tokens: Vec<String> = query
-                .split_whitespace()
-                .map(|t| t.to_ascii_lowercase())
-                .filter(|t| !t.is_empty())
-                .collect();
-            if tokens.is_empty() {
-                return Ok(Vec::new());
-            }
             let mut out: Vec<BookmarkItem> = self
                 .items
                 .iter()
-                .filter(|it| {
-                    let title = it.title.to_ascii_lowercase();
-                    let url = it.url.to_ascii_lowercase();
-                    let tags: Vec<String> =
-                        it.tags.iter().map(|t| t.to_ascii_lowercase()).collect();
-                    tokens.iter().any(|t| {
-                        title.contains(t)
-                            || url.contains(t)
-                            || tags.iter().any(|tag| tag.contains(t))
-                    })
-                })
+                .filter(|it| matches_query(it, query))
                 .cloned()
                 .collect();
             if let Some(n) = limit {

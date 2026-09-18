@@ -114,7 +114,6 @@ pub async fn open_at(path: &Path) -> Result<SqlitePool> {
 }
 
 /// Open the default cal cache (`~/.config/everyday/cal-cache.db`).
-#[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
 pub async fn open() -> Result<SqlitePool> {
     open_at(&cal_cache_db_path()?).await
 }
@@ -128,7 +127,6 @@ pub async fn open() -> Result<SqlitePool> {
 /// leaves the previous snapshot intact rather than an empty calendar
 /// ([M004](../../docs/adr/M004-uid-watermark-sync.md) writes rows and advances
 /// the watermark together for the same reason).
-#[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
 pub async fn replace_calendar(
     pool: &SqlitePool,
     account: &str,
@@ -177,7 +175,6 @@ pub async fn replace_calendar(
 }
 
 /// Read every cached event for an account, across all its calendars.
-#[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
 pub async fn query_events(pool: &SqlitePool, account: &str) -> Result<Vec<CachedEvent>> {
     let rows = sqlx::query(
         "SELECT calendar_href, uid, href, summary, location, start, end \
@@ -201,26 +198,10 @@ pub async fn query_events(pool: &SqlitePool, account: &str) -> Result<Vec<Cached
         .collect())
 }
 
-/// Every calendar href the cache has recorded state for, for one account.
-///
-/// Used on refresh to also stamp calendars that returned no events, so an empty
-/// calendar is not re-pulled on every query.
-pub async fn known_calendars(pool: &SqlitePool, account: &str) -> Result<Vec<String>> {
-    let rows = sqlx::query("SELECT calendar_href FROM cal_state WHERE account = ?1")
-        .bind(account)
-        .fetch_all(pool)
-        .await?;
-    Ok(rows
-        .into_iter()
-        .map(|r| r.get::<String, _>("calendar_href"))
-        .collect())
-}
-
 /// The oldest `last_sync_at` across an account's calendars.
 ///
 /// `None` when the account has never been synced — which is always stale, so a
 /// fresh user gets a refresh on first query.
-#[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
 pub async fn oldest_sync(pool: &SqlitePool, account: &str) -> Result<Option<DateTime<Utc>>> {
     let row = sqlx::query("SELECT MIN(last_sync_at) AS oldest FROM cal_state WHERE account = ?1")
         .bind(account)
@@ -239,7 +220,6 @@ pub async fn oldest_sync(pool: &SqlitePool, account: &str) -> Result<Option<Date
 /// `None` (never synced) is always stale. Otherwise the cache is stale once the
 /// oldest calendar's watermark is older than
 /// [`STALENESS_THRESHOLD_SECS`].
-#[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
 pub async fn is_stale(pool: &SqlitePool, account: &str, now: DateTime<Utc>) -> Result<bool> {
     match oldest_sync(pool, account).await? {
         None => Ok(true),

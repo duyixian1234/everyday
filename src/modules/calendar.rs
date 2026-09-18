@@ -6,7 +6,7 @@
 //! `everyday cal calendars/list/add/delete` auto-reads it to connect to CalDAV.
 //! The password never touches config.toml.
 //!
-//! Stack: libdav 0.10 (CalDAV protocol, request API) + icalendar 0.17 (iCalendar
+//! Stack: libdav 0.11 (CalDAV protocol, request API) + icalendar 0.17 (iCalendar
 //! parse/generate) + hyper 1.x (HTTP, body=String to satisfy libdav's HttpClient trait)
 //! + hyper-rustls (ring TLS, webpki roots) + tower-http (Basic Auth middleware that
 //!   overwrites the Authorization header).
@@ -132,7 +132,6 @@ pub trait CalBackend: Send + Sync {
     /// timeline rows. Cal uses the window-refresh model
     /// ([C003](../../docs/adr/C003-cal-provider-window-filter.md)); the
     /// orchestrator deletes old rows inside the window and re-inserts.
-    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
     async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>>;
 
     /// Cross-module search (Phase 11).
@@ -143,7 +142,6 @@ pub trait CalBackend: Send + Sync {
     /// only alternative is each implementation (including the test mock)
     /// re-deriving the GLOB filter, which is how the previous test ended up
     /// asserting a *copy* of the matcher instead of the matcher itself.
-    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
     async fn search(&self, q: &SearchQuery) -> Result<Vec<Hit>> {
         // Refresh first: the staleness verdict must describe the snapshot that
         // is actually served, not the one that was there before the refresh.
@@ -163,14 +161,12 @@ pub trait CalBackend: Send + Sync {
     /// `false` by default: a backend reading straight from the source has no
     /// staleness to report. `CachedCalBackend` overrides it with the cache's own
     /// freshness check.
-    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
     async fn snapshot_is_stale(&self) -> bool {
         false
     }
 
     /// Account name stamped onto every [`Hit`]; `None` for backends with no
     /// account (the test mock, so hits render without an account qualifier).
-    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
     fn account_name(&self) -> Option<String> {
         None
     }
@@ -1035,8 +1031,20 @@ async fn pull_timeline_entries(
                         .unwrap_or_default();
                     let summary = event.get_summary().unwrap_or("").to_string();
                     let location = event.get_location().unwrap_or("").to_string();
-                    // VEVENT UID is used as ref_id (per the iCalendar standard).
+                    // VEVENT UID is the event's stable identity and is what
+                    // downstream event ids key on. A server that omits it leaves
+                    // only the href, which `cal add` derives from a timestamp —
+                    // so the fallback identity changes on every re-PUT. That is
+                    // a real degradation, made **visible** (the value is
+                    // surfaced as `CalEvent.uid` / the `cal list` UID column)
+                    // rather than silently papered over (C-7, F020).
                     let uid = event.get_uid().unwrap_or(&res.href).to_string();
+                    if event.get_uid().is_none() {
+                        tracing::debug!(
+                            href = %res.href,
+                            "VEVENT has no UID; falling back to the (unstable) href"
+                        );
+                    }
                     entries.push(CalTimelineEntry {
                         href: res.href.clone(),
                         uid,
@@ -1110,13 +1118,18 @@ impl CachedCalBackend {
                 });
         }
 
-        // A calendar that returned nothing must still be marked synced, or it
-        // would be pulled on every single query. Record one empty replacement
-        // per calendar we know about plus any we just saw.
-        let known = crate::modules::cal_cache::known_calendars(&self.pool, &self.account).await?;
-        for cal in known.iter().chain(by_cal.keys()) {
-            let rows = by_cal.get(cal).cloned().unwrap_or_default();
-            crate::modules::cal_cache::replace_calendar(&self.pool, &self.account, cal, &rows, now)
+        // Replace only the calendars this pull actually reported on.
+        //
+        // A calendar absent from `entries` is ambiguous: it may be genuinely
+        // empty, or its fetch may have failed (the pull treats one calendar's
+        // failure as non-fatal and skips it). Both look like "no rows", so
+        // replacing every known calendar would let a transient error silently
+        // delete that calendar's cached history. Only calendars present in the
+        // pull are replaced, which means an emptied calendar keeps its old rows
+        // until a pull actually reports it as empty — stale rows we can detect,
+        // versus data loss we cannot undo.
+        for (cal, rows) in &by_cal {
+            crate::modules::cal_cache::replace_calendar(&self.pool, &self.account, cal, rows, now)
                 .await?;
         }
         Ok(())
@@ -1905,6 +1918,73 @@ mod tests {
         assert!(!mock.snapshot_is_stale().await);
         let hits = mock.search(&SearchQuery::new("rust")).await.unwrap();
         assert!(!hits[0].stale);
+    }
+
+    /// A refresh that fails for **one** calendar must not wipe that calendar's
+    /// cached rows.
+    ///
+    /// `pull_timeline_entries` treats a single calendar's fetch failure as
+    /// non-fatal (`Err(_) => continue`), so a failed calendar and an empty one
+    /// both yield zero rows. Replacement cannot tell them apart, so without an
+    /// explicit signal a transient network error would silently delete the
+    /// calendar's entire cached history.
+    #[tokio::test]
+    async fn partial_pull_failure_does_not_wipe_the_failed_calendar() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let stale_at = Utc::now() - chrono::Duration::hours(2);
+
+        // Two calendars cached; only one will come back in the refresh.
+        let mut work = cached_event("w1", "工作事件");
+        work.calendar_href = "/cal/work/".into();
+        work.href = "/cal/work/w1.ics".into();
+        let mut personal = cached_event("p1", "个人事件");
+        personal.calendar_href = "/cal/personal/".into();
+        personal.href = "/cal/personal/p1.ics".into();
+        crate::modules::cal_cache::replace_calendar(&pool, "work", "/cal/work/", &[work], stale_at)
+            .await
+            .unwrap();
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/personal/",
+            &[personal],
+            stale_at,
+        )
+        .await
+        .unwrap();
+
+        // The pull returns only the work calendar: `/cal/personal/` failed and
+        // was skipped, which is indistinguishable from "personal is empty".
+        let (backend, spy) = cached_backend(
+            &pool,
+            vec![CalTimelineEntry {
+                href: "/cal/work/w1.ics".into(),
+                uid: "w1".into(),
+                summary: "工作事件".into(),
+                location: "A 座".into(),
+                start: "2099-01-01 10:00".into(),
+                end: "2099-01-01 11:00".into(),
+            }],
+            false,
+        );
+        let opts = CalListOptions {
+            limit: 50,
+            ..Default::default()
+        };
+        let events = backend.list(&opts).await.unwrap();
+        assert!(spy.pulled());
+
+        let uids: Vec<&str> = events.iter().map(|e| e.uid.as_str()).collect();
+        assert!(
+            uids.contains(&"w1"),
+            "the calendar that answered must be refreshed"
+        );
+        assert!(
+            uids.contains(&"p1"),
+            "a calendar missing from the pull must keep its cached rows, \
+             not be silently emptied; got {uids:?}"
+        );
+        std::fs::remove_file(path).ok();
     }
 
     #[tokio::test]
