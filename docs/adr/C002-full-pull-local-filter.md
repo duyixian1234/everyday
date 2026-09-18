@@ -39,7 +39,11 @@ No `chrono-tz` dependency is introduced; `chrono::Local` (already a project dep 
 ### Cache events locally and filter against the cache
 
 - Could be combined with the mail cache approach ([M003](M003-envelope-cache.md)).
-- Considered for future work, not part of this ADR.
+- **Implemented** in [C004](C004-cal-event-cache.md) (Phase 27, v0.20.0). Note
+  that C004 deliberately does **not** copy M003's append-only retention: calendar
+  events are mutable state, so the cache replaces a calendar's rows wholesale.
+  The full-pull described above remains the network strategy — the cache sits
+  *behind* the pull and does not introduce a server-side time window.
 
 ## Consequences
 
@@ -47,7 +51,9 @@ No `chrono-tz` dependency is introduced; `chrono::Local` (already a project dep 
 - A typical personal calendar (hundreds of events per year) is small enough that the network cost is dominated by the CalDAV round-trips, not by the payload size.
 - No new dependency (`chrono-tz` is unnecessary).
 - The local-filter pipeline is unit-testable without an actual CalDAV server — important because the CI gate is hermetic.
-- Future enhancement: a local cache (similar to `mail_cache.db`) would make repeat `cal list` calls network-free. Out of scope for this ADR.
+- A local cache now makes repeat `cal list` calls network-free, and makes the
+  `cal` search provider local-first like the other six —
+  see [C004](C004-cal-event-cache.md).
 
 ## Cross-references
 

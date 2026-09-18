@@ -434,6 +434,7 @@ impl ModuleRegistry {
 // `local.rs` (Local*Backend, was `*_local.rs`).
 pub mod auth;
 pub mod bookmark;
+pub mod cal_cache;
 pub mod calendar;
 pub mod config;
 pub mod daemon;

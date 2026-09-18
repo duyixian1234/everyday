@@ -138,7 +138,11 @@ pub trait CalBackend: Send + Sync {
     #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
     async fn search(&self, q: &SearchQuery) -> Result<Vec<Hit>> {
         let entries = self.fetch_for_timeline().await?;
-        Ok(rank_entries_for_search(&entries, q, self.account_name().as_deref()))
+        Ok(rank_entries_for_search(
+            &entries,
+            q,
+            self.account_name().as_deref(),
+        ))
     }
 
     /// Account name stamped onto every [`Hit`]; `None` for backends with no
@@ -367,10 +371,19 @@ impl Executor for CalendarModule {
         dispatch(backend.as_ref(), action, &flags).await
     }
 
-    /// P3 health: default account's keyring credential present (no CalDAV
-    /// network probe — `everyday health` must stay local & fast).
+    /// P3 health: cache DB openable + default account's keyring credential
+    /// present (no CalDAV network probe — `everyday health` must stay local &
+    /// fast). Mirrors the mail module's cache-db-then-keyring shape.
     async fn health_check(&self) -> Result<crate::modules::HealthStatus> {
         use crate::modules::HealthStatus;
+        // Cache DB must open.
+        let pool = match crate::modules::cal_cache::open().await {
+            Ok(p) => p,
+            Err(e) => {
+                return Ok(HealthStatus::degraded(format!("cache db: {}", e.message())));
+            }
+        };
+        pool.close().await;
         match self.config.resolve_account(None) {
             Ok(account) => {
                 if crate::modules::auth::get_credential_with_user(

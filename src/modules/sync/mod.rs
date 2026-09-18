@@ -98,6 +98,12 @@ pub fn build_file_manifest(config: &Config) -> Result<Vec<SyncFile>> {
 /// locally; otherwise the default `<config_dir>/everyday/<module>-<account>.db`
 /// convention applies (the same default `resolve_db_path` uses).
 /// Names outside the sync namespace return `None`.
+///
+/// **Derived caches are excluded on purpose**: `mail_cache.db`, `rss-items.db`,
+/// `timeline.db` and `cal-cache.db` are device-local and rebuildable from their
+/// source, so syncing them would only spread stale rows across devices. Only
+/// user-owned data (`bookmark`/`note`/`todo` DBs, `memory.db`) and
+/// `config.toml` travel.
 pub(crate) fn resolve_remote_target(config: &Config, remote_name: &str) -> Option<SyncFile> {
     match remote_name {
         "memory.db" => data_dir().ok().map(|d| SyncFile {
@@ -591,6 +597,11 @@ name = "personal"
         assert!(resolve_remote_target(&cfg, "notes.txt").is_none());
         assert!(resolve_remote_target(&cfg, "timeline.db").is_none());
         assert!(resolve_remote_target(&cfg, "other-personal.db").is_none());
+        // Derived caches never sync — they are device-local and rebuildable.
+        // `cal-cache.db` (C004) joins mail_cache / rss-items / timeline here.
+        assert!(resolve_remote_target(&cfg, "cal-cache.db").is_none());
+        assert!(resolve_remote_target(&cfg, "mail_cache.db").is_none());
+        assert!(resolve_remote_target(&cfg, "rss-items.db").is_none());
     }
 
     #[test]
