@@ -1,3 +1,30 @@
+## [0.20.0] - 2026-09-18
+
+### 🚀 Features
+
+- *(cal)* Add snapshot-replace event cache (C004)
+- *(todo)* Soft-delete instead of physical DELETE (R024)
+- *(bookmark)* Add `bookmark search` (GLOB over title/url/tags)
+- *(cal)* Cache-first list + expose event UID
+- *(search)* Per-hit `stale` flag + ADR F020
+- *(timeline)* Emit `deleted` events for soft-deleted todos
+
+### 🐛 Bug Fixes
+
+- *(cal)* Do not wipe a calendar's cache on a partial pull failure
+- *(bookmark)* List `search` in the module description
+
+### 🚜 Refactor
+
+- *(cal)* Move timeline fetch + search onto the CalBackend trait
+
+### 📚 Documentation
+
+- Replace progress.md/task_plan.md with GitHub Issues tracking
+- *(deps)* Record why the 27 duplicate transitive versions are accepted
+- Fix two stale tracker/glossary entries
+- Finish the Phase 27 documentation sweep
+
 ## [0.19.0] - 2026-09-16
 
 ### 🚀 Features
