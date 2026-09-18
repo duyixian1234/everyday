@@ -18,7 +18,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 |--------|--------|-------|
 | `config` | ✅ Complete | path / list / get / set / init |
 | `mail` | ✅ Complete (v0.6.1) | IMAP receive + SMTP send + keyring credentials + local envelope cache (`mail list` reads from `~/.config/everyday/mail_cache.db`, auto-syncs if stale > 15min, `--sync` to force) |
-| `cal` | ✅ Complete | CalDAV calendars / list / add / delete |
+| `cal` | ✅ Complete | CalDAV calendars / list / add / delete; local event cache (snapshot-replace, 15-min staleness) |
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Complete | Local SQLite: search / list / create / read / append / update |
 | `todo` | ✅ Complete | Local SQLite tasks: list / add / start / complete / **delete** |
@@ -277,8 +277,26 @@ Credentials: config holds account metadata (`caldav_url`, `username`) → creden
 ### cal list — JSON output (array of objects)
 
 ```json
-[{"路径":"/calendar/.../ev.ics","开始":"2026-07-09 15:00","结束":"2026-07-09 16:00","主题":"meeting","地点":"Room A"}]
+[{"路径":"/calendar/.../ev.ics","UID":"ev-uid@example.com","开始":"2026-07-09 15:00","结束":"2026-07-09 16:00","主题":"meeting","地点":"Room A"}]
 ```
+
+`UID` is the iCalendar event identity and is **stable** across edits, unlike `路径`
+(the href is derived from a timestamp on `add`, so a re-PUT changes it). Servers
+that omit `UID` fall back to the href.
+
+### cal list is served from a local cache
+
+`cal list`, the `cal` search provider and the timeline share a local event cache
+at `~/.config/everyday/cal-cache.db`. A **fresh** cache (< 15 min) answers
+without touching the network; a stale one refreshes first, lazily. If the refresh
+fails, the **stale snapshot is served** rather than an error — stale data beats
+no data for a calendar.
+
+The cache is a full mirror of what the server returns and is **replaced** per
+calendar on each refresh, so cancelled and rescheduled events disappear rather
+than lingering. It is device-local and **never synced** via WebDAV, and it can be
+deleted at any time (the next query rebuilds it). There is no `cal cache gc`:
+replacement leaves no ghosts to collect.
 
 ### cal calendars — JSON output
 

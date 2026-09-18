@@ -66,6 +66,14 @@ pub struct CalCalendar {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalEvent {
     pub href: String,
+    /// iCalendar `UID` — the event's **stable identity**.
+    ///
+    /// Exposed because `href` is not stable: `cal add` derives the resource
+    /// filename from a nanosecond timestamp, so a re-PUT changes the href while
+    /// the UID stays put. Falls back to the href when a server omits the UID
+    /// (see `pull_timeline_entries`); that fallback is a visible value here
+    /// rather than a silent substitution.
+    pub uid: String,
     pub start: String,
     pub end: String,
     pub summary: String,
@@ -279,12 +287,22 @@ fn render_calendars(calendars: Vec<CalCalendar>) -> Output {
 /// Render `cal list` rows: 路径 / 开始 / 结束 / 主题 / 地点.
 fn render_list(events: Vec<CalEvent>) -> Output {
     let rows = events
-        .into_iter()
-        .map(|e| vec![e.href, e.start, e.end, e.summary, e.location])
+        .iter()
+        .map(|e| {
+            vec![
+                e.href.clone(),
+                e.uid.clone(),
+                e.start.clone(),
+                e.end.clone(),
+                e.summary.clone(),
+                e.location.clone(),
+            ]
+        })
         .collect();
     Output::records(
         vec![
             "路径".into(),
+            "UID".into(),
             "开始".into(),
             "结束".into(),
             "主题".into(),
@@ -368,6 +386,18 @@ impl Executor for CalendarModule {
         // parses CLI args and calls service methods. Tests inject a
         // `MockCalBackend` and drive `dispatch` directly — no CalDAV.
         let backend = for_account(account)?;
+        // Wrap in the cache-first layer ([C004](../../docs/adr/C004-cal-event-cache.md)).
+        // Read actions then serve locally and pull only when stale; `add`/`delete`
+        // pass straight through. A cache that cannot be opened degrades to the
+        // live backend rather than failing the command.
+        let backend = match crate::modules::cal_cache::open().await {
+            Ok(pool) => Box::new(CachedCalBackend::new(
+                backend,
+                pool,
+                account.name.clone(),
+            )) as Box<dyn CalBackend>,
+            Err(_) => backend,
+        };
         dispatch(backend.as_ref(), action, &flags).await
     }
 
@@ -733,6 +763,7 @@ impl CalBackend for CalDavBackend {
 /// A single event's display row + sort key.
 struct EventRow {
     href: String,
+    uid: String,
     start: String,
     end: String,
     summary: String,
@@ -744,6 +775,7 @@ impl From<EventRow> for CalEvent {
     fn from(r: EventRow) -> Self {
         Self {
             href: r.href,
+            uid: r.uid,
             start: r.start,
             end: r.end,
             summary: r.summary,
@@ -762,8 +794,12 @@ fn build_event_row(href: &str, event: &Event) -> Option<EventRow> {
         .as_ref()
         .map(format_date_perhaps_time)
         .unwrap_or_default();
+    // UID fallback to href mirrors `pull_timeline_entries`: a server that omits
+    // UID leaves the event addressable only by its (unstable) href.
+    let uid = event.get_uid().unwrap_or(href).to_string();
     Some(EventRow {
         href: href.to_string(),
+        uid,
         start: format_date_perhaps_time(&start_dpt),
         end: end_str,
         summary: event.get_summary().unwrap_or("").to_string(),
@@ -822,6 +858,20 @@ fn parse_date(s: &str) -> Result<chrono::NaiveDate> {
     chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").map_err(|e| {
         AgentError::InvalidArgument(format!("invalid date '{s}' (expected YYYY-MM-DD): {e}"))
     })
+}
+
+/// Parse a cached event's start into a naive local date-time for sorting and
+/// date filtering. Accepts the display formats the cache stores.
+fn parse_naive_dt(s: &str) -> Option<chrono::NaiveDateTime> {
+    let formats = ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M"];
+    for fmt in &formats {
+        if let Ok(ndt) = chrono::NaiveDateTime::parse_from_str(s, fmt) {
+            return Some(ndt);
+        }
+    }
+    chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d")
+        .ok()
+        .and_then(|d| d.and_hms_opt(0, 0, 0))
 }
 
 /// Parse a date-time, accepting three forms:
@@ -922,9 +972,22 @@ pub async fn fetch_for_timeline(
     account: &CalendarAccount,
     ignored: &[String],
 ) -> Result<Vec<CalTimelineEntry>> {
-    let password = crate::modules::auth::get_credential(config, "cal", &account.name)?;
-    let caldav = build_client(account, &password).await?;
-    pull_timeline_entries(&caldav, ignored).await
+    let backend = for_account(account)?;
+    // Route through the cache when it opens, so the timeline and the search
+    // provider read the same local snapshot as `cal list`
+    // ([C004](../../docs/adr/C004-cal-event-cache.md)). Falls back to a live
+    // pull if the cache is unavailable.
+    match crate::modules::cal_cache::open().await {
+        Ok(pool) => {
+            let cached = CachedCalBackend::new(backend, pool, account.name.clone());
+            cached.fetch_for_timeline().await
+        }
+        Err(_) => {
+            let password = crate::modules::auth::get_credential(config, "cal", &account.name)?;
+            let caldav = build_client(account, &password).await?;
+            pull_timeline_entries(&caldav, ignored).await
+        }
+    }
 }
 
 /// The single CalDAV → timeline-row pull. Both [`fetch_for_timeline`] and
@@ -975,6 +1038,210 @@ async fn pull_timeline_entries(
         }
     }
     Ok(entries)
+}
+
+/// Cache-first wrapper over any [`CalBackend`].
+///
+/// `list` reads the local cache ([C004](../../docs/adr/C004-cal-event-cache.md))
+/// and only performs a pull when the cache is **stale**. The refresh is lazy —
+/// the same shape [M005](../../docs/adr/M005-staleness-auto-sync.md) gave mail —
+/// because a query path may sync lazily without violating
+/// [L005](../../docs/adr/L005-no-auto-sync.md) (the daemon remains the only role
+/// allowed to pull on a schedule).
+///
+/// A failed refresh is **not** fatal: the stale snapshot is served instead.
+/// Losing a local answer because the network blipped would make the cache a
+/// liability exactly when it is most useful.
+pub struct CachedCalBackend {
+    inner: Box<dyn CalBackend>,
+    pool: sqlx::SqlitePool,
+    account: String,
+}
+
+impl CachedCalBackend {
+    /// Wrap `inner`, caching into `pool` under `account`.
+    pub fn new(inner: Box<dyn CalBackend>, pool: sqlx::SqlitePool, account: String) -> Self {
+        Self {
+            inner,
+            pool,
+            account,
+        }
+    }
+
+    /// Pull from the source and rewrite the cache for every calendar the pull
+    /// returned rows for. Failures propagate to the caller, which decides
+    /// whether to fall back.
+    async fn refresh(&self) -> Result<()> {
+        let entries = self.inner.fetch_for_timeline().await?;
+        let now = chrono::Utc::now();
+
+        // Group by calendar; `CalTimelineEntry` carries only the event href, so
+        // derive the calendar prefix from it (the collection path precedes the
+        // resource filename).
+        let mut by_cal: std::collections::BTreeMap<String, Vec<crate::modules::cal_cache::CachedEvent>> =
+            std::collections::BTreeMap::new();
+        for e in &entries {
+            let calendar_href = calendar_prefix_of(&e.href);
+            by_cal.entry(calendar_href).or_default().push(
+                crate::modules::cal_cache::CachedEvent {
+                    calendar_href: calendar_prefix_of(&e.href),
+                    uid: e.uid.clone(),
+                    href: e.href.clone(),
+                    summary: e.summary.clone(),
+                    location: e.location.clone(),
+                    start: e.start.clone(),
+                    end: e.end.clone(),
+                },
+            );
+        }
+
+        // A calendar that returned nothing must still be marked synced, or it
+        // would be pulled on every single query. Record one empty replacement
+        // per calendar we know about plus any we just saw.
+        let known = crate::modules::cal_cache::known_calendars(&self.pool, &self.account).await?;
+        for cal in known.iter().chain(by_cal.keys()) {
+            let rows = by_cal.get(cal).cloned().unwrap_or_default();
+            crate::modules::cal_cache::replace_calendar(
+                &self.pool,
+                &self.account,
+                cal,
+                &rows,
+                now,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    /// Pull when stale, swallowing a refresh failure so the caller can fall back
+    /// to the cached snapshot.
+    async fn refresh_if_stale(&self) {
+        match crate::modules::cal_cache::is_stale(&self.pool, &self.account, chrono::Utc::now())
+            .await
+        {
+            Ok(false) => {}
+            Ok(true) => {
+                if let Err(e) = self.refresh().await {
+                    tracing::warn!(
+                        error = %e.message(),
+                        account = %self.account,
+                        "cal cache refresh failed; serving the cached snapshot"
+                    );
+                }
+            }
+            Err(e) => {
+                tracing::warn!(
+                    error = %e.message(),
+                    account = %self.account,
+                    "cal cache staleness check failed; serving the cached snapshot"
+                );
+            }
+        }
+    }
+}
+
+/// The calendar collection path an event href sits under.
+///
+/// `href` values look like `/calendars/user/work/1726….ics`; the collection is
+/// everything up to the last `/`. Used to attribute a pulled event to a
+/// calendar for cache replacement.
+fn calendar_prefix_of(href: &str) -> String {
+    match href.rfind('/') {
+        Some(idx) if idx > 0 => href[..=idx].to_string(),
+        _ => href.to_string(),
+    }
+}
+
+#[async_trait]
+impl CalBackend for CachedCalBackend {
+    async fn calendars(&self) -> Result<Vec<CalCalendar>> {
+        self.inner.calendars().await
+    }
+
+    /// Cache-first list: refresh only when stale, then filter/sort/limit the
+    /// cached rows exactly as the live path does.
+    async fn list(&self, opts: &CalListOptions) -> Result<Vec<CalEvent>> {
+        self.refresh_if_stale().await;
+
+        let rows = crate::modules::cal_cache::query_events(&self.pool, &self.account).await?;
+        let mut out: Vec<EventRow> = rows
+            .iter()
+            .filter_map(|c| {
+                let sort_key = parse_naive_dt(&c.start)?;
+                Some(EventRow {
+                    href: c.href.clone(),
+                    uid: c.uid.clone(),
+                    start: c.start.clone(),
+                    end: c.end.clone(),
+                    summary: c.summary.clone(),
+                    location: c.location.clone(),
+                    sort_key,
+                })
+            })
+            .collect();
+
+        // Same filtering/sorting/limit as the live path (C002: no server window).
+        out = apply_list_options(out, opts);
+        Ok(out.into_iter().map(CalEvent::from).collect())
+    }
+
+    async fn add(&self, req: &CalAddRequest) -> Result<CalAddReceipt> {
+        self.inner.add(req).await
+    }
+
+    async fn delete(&self, href: &str) -> Result<CalDeleteReceipt> {
+        self.inner.delete(href).await
+    }
+
+    async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>> {
+        self.refresh_if_stale().await;
+        let rows = crate::modules::cal_cache::query_events(&self.pool, &self.account).await?;
+        Ok(rows
+            .into_iter()
+            .map(|c| CalTimelineEntry {
+                href: c.href,
+                uid: c.uid,
+                summary: c.summary,
+                location: c.location,
+                start: c.start,
+                end: c.end,
+            })
+            .collect())
+    }
+
+    fn account_name(&self) -> Option<String> {
+        Some(self.account.clone())
+    }
+}
+
+/// Filter + sort + limit, shared by the live and cached list paths so the two
+/// cannot drift.
+fn apply_list_options(rows: Vec<EventRow>, opts: &CalListOptions) -> Vec<EventRow> {
+    let today = chrono::Local::now().date_naive();
+    let mut out: Vec<EventRow> = rows
+        .into_iter()
+        .filter(|r| {
+            let d = r.sort_key.date();
+            if let Some(exact) = opts.exact_date {
+                return d == exact;
+            }
+            if let Some(min) = opts.min_date {
+                return d >= min;
+            }
+            // Default: today and future.
+            d >= today
+        })
+        .collect();
+
+    out.sort_by(|a, b| {
+        a.sort_key
+            .cmp(&b.sort_key)
+            .then_with(|| a.summary.cmp(&b.summary))
+    });
+    if opts.limit > 0 && out.len() > opts.limit {
+        out.truncate(opts.limit);
+    }
+    out
 }
 
 // ============ Cross-module search (Phase 11) ============
@@ -1148,6 +1415,106 @@ mod tests {
         timeline: Vec<CalTimelineEntry>,
     }
 
+    /// A cached row with a fixed future start, for cache-path tests.
+    fn cached_event(uid: &str, summary: &str) -> crate::modules::cal_cache::CachedEvent {
+        crate::modules::cal_cache::CachedEvent {
+            calendar_href: "/cal/work/".into(),
+            uid: uid.into(),
+            href: format!("/cal/work/{uid}.ics"),
+            summary: summary.into(),
+            location: "A 座".into(),
+            start: "2099-01-01 10:00".into(),
+            end: "2099-01-01 11:00".into(),
+        }
+    }
+
+    /// A timeline row for the same far-future day.
+    fn timeline_entry(uid: &str, summary: &str) -> CalTimelineEntry {
+        CalTimelineEntry {
+            href: format!("/cal/work/{uid}.ics"),
+            uid: uid.into(),
+            summary: summary.into(),
+            location: "A 座".into(),
+            start: "2099-01-01 10:00".into(),
+            end: "2099-01-01 11:00".into(),
+        }
+    }
+
+    /// Counts pulls and can be made to fail, so cache behaviour is observable.
+    #[derive(Default)]
+    struct PullSpy {
+        rows: Vec<CalTimelineEntry>,
+        fail: bool,
+        pulls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl PullSpy {
+        /// How many times `fetch_for_timeline` was called.
+        fn pulled(&self) -> bool {
+            self.pulls.load(std::sync::atomic::Ordering::SeqCst) > 0
+        }
+    }
+
+    #[async_trait]
+    impl CalBackend for PullSpy {
+        async fn calendars(&self) -> Result<Vec<CalCalendar>> {
+            Ok(Vec::new())
+        }
+        async fn list(&self, _opts: &CalListOptions) -> Result<Vec<CalEvent>> {
+            Ok(Vec::new())
+        }
+        async fn add(&self, _req: &CalAddRequest) -> Result<CalAddReceipt> {
+            Err(AgentError::Other("unused".into()))
+        }
+        async fn delete(&self, _href: &str) -> Result<CalDeleteReceipt> {
+            Err(AgentError::Other("unused".into()))
+        }
+        async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>> {
+            self.pulls
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if self.fail {
+                return Err(AgentError::Network("pull failed".into()));
+            }
+            Ok(self.rows.clone())
+        }
+    }
+
+    /// Build a cache-first backend over a `PullSpy`.
+    fn cached_backend(
+        pool: &sqlx::SqlitePool,
+        rows: Vec<CalTimelineEntry>,
+        fail: bool,
+    ) -> (CachedCalBackend, std::sync::Arc<PullSpy>) {
+        let spy = std::sync::Arc::new(PullSpy {
+            rows,
+            fail,
+            pulls: std::sync::atomic::AtomicUsize::new(0),
+        });
+        /// Forwards to the shared spy so the test keeps a handle to inspect.
+        struct Shared(std::sync::Arc<PullSpy>);
+        #[async_trait]
+        impl CalBackend for Shared {
+            async fn calendars(&self) -> Result<Vec<CalCalendar>> {
+                self.0.calendars().await
+            }
+            async fn list(&self, opts: &CalListOptions) -> Result<Vec<CalEvent>> {
+                self.0.list(opts).await
+            }
+            async fn add(&self, req: &CalAddRequest) -> Result<CalAddReceipt> {
+                self.0.add(req).await
+            }
+            async fn delete(&self, href: &str) -> Result<CalDeleteReceipt> {
+                self.0.delete(href).await
+            }
+            async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>> {
+                self.0.fetch_for_timeline().await
+            }
+        }
+        let backend =
+            CachedCalBackend::new(Box::new(Shared(spy.clone())), pool.clone(), "work".into());
+        (backend, spy)
+    }
+
     #[async_trait]
     impl CalBackend for MockCalBackend {
         async fn calendars(&self) -> Result<Vec<CalCalendar>> {
@@ -1170,6 +1537,230 @@ mod tests {
         async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>> {
             Ok(self.timeline.clone())
         }
+    }
+
+    /// `cal list` must serve from the cache when it is fresh: no CalDAV pull.
+    /// The spy's pull counter is what proves the pull did or did not happen.
+    #[tokio::test]
+    async fn list_serves_from_cache_when_fresh() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("uid-a", "晨会")],
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        let (backend, spy) = cached_backend(&pool, vec![], false);
+        let opts = CalListOptions {
+            limit: 50,
+            ..Default::default()
+        };
+        let events = backend.list(&opts).await.unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].uid, "uid-a");
+        assert_eq!(events[0].summary, "晨会");
+        assert!(
+            !spy.pulled(),
+            "a fresh cache must not trigger a network pull"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    /// A stale cache pulls once, then serves the refreshed rows.
+    #[tokio::test]
+    async fn list_refreshes_when_stale() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let stale_at = Utc::now() - chrono::Duration::hours(2);
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("old", "旧事件")],
+            stale_at,
+        )
+        .await
+        .unwrap();
+
+        let (backend, spy) = cached_backend(&pool, vec![timeline_entry("new", "新事件")], false);
+        let opts = CalListOptions {
+            limit: 50,
+            ..Default::default()
+        };
+        let events = backend.list(&opts).await.unwrap();
+
+        assert!(spy.pulled(), "a stale cache must trigger a pull");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].uid, "new", "the refreshed rows must be served");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// A never-synced cache is stale by definition, so the first `list` pulls.
+    #[tokio::test]
+    async fn list_pulls_when_never_synced() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+
+        let (backend, spy) = cached_backend(&pool, vec![timeline_entry("first", "首个事件")], false);
+        let opts = CalListOptions {
+            limit: 50,
+            ..Default::default()
+        };
+        let events = backend.list(&opts).await.unwrap();
+
+        assert!(spy.pulled());
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].uid, "first");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// Date filter and limit still apply on the cached path.
+    #[tokio::test]
+    async fn cached_list_still_filters_by_date_and_limit() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let mut early = cached_event("early", "早会");
+        early.start = "2099-08-05 10:00".into();
+        let mut late = cached_event("late", "晚会");
+        late.start = "2099-08-06 10:00".into();
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[early, late],
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        let (backend, _spy) = cached_backend(&pool, vec![], false);
+
+        let opts = CalListOptions {
+            limit: 50,
+            exact_date: Some(chrono::NaiveDate::from_ymd_opt(2099, 8, 5).unwrap()),
+            min_date: None,
+        };
+        let events = backend.list(&opts).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].uid, "early");
+
+        let opts_all = CalListOptions {
+            limit: 1,
+            exact_date: None,
+            min_date: None,
+        };
+        let events = backend.list(&opts_all).await.unwrap();
+        assert_eq!(events.len(), 1, "limit must still cap the cached path");
+
+        // Default window is today-and-future, so far-future rows survive it.
+        let opts_default = CalListOptions {
+            limit: 50,
+            exact_date: None,
+            min_date: None,
+        };
+        assert_eq!(backend.list(&opts_default).await.unwrap().len(), 2);
+        std::fs::remove_file(path).ok();
+    }
+
+    /// Default filtering drops past events even though they are cached.
+    #[tokio::test]
+    async fn cached_list_default_window_excludes_the_past() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let mut past = cached_event("past", "已过去");
+        past.start = "2000-01-01 10:00".into();
+        crate::modules::cal_cache::replace_calendar(&pool, "work", "/cal/work/", &[past], Utc::now())
+            .await
+            .unwrap();
+
+        let (backend, _spy) = cached_backend(&pool, vec![], false);
+        let opts = CalListOptions {
+            limit: 50,
+            ..Default::default()
+        };
+        assert!(
+            backend.list(&opts).await.unwrap().is_empty(),
+            "the default window is today-and-future"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    /// A refresh failure must not wipe the cache: `list` still serves the old
+    /// snapshot rather than erroring or returning nothing.
+    #[tokio::test]
+    async fn list_serves_stale_cache_when_refresh_fails() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let stale_at = Utc::now() - chrono::Duration::hours(2);
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("kept", "保留的事件")],
+            stale_at,
+        )
+        .await
+        .unwrap();
+
+        let (backend, spy) = cached_backend(&pool, vec![], /*fail:*/ true);
+        let opts = CalListOptions {
+            limit: 50,
+            ..Default::default()
+        };
+        let events = backend.list(&opts).await.unwrap();
+
+        assert!(spy.pulled());
+        assert_eq!(events.len(), 1, "stale data beats no data");
+        assert_eq!(events[0].uid, "kept");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// The cached timeline path refreshes the same way and yields rows.
+    #[tokio::test]
+    async fn cached_fetch_for_timeline_returns_cached_rows() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("t1", "时间线事件")],
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        let (backend, spy) = cached_backend(&pool, vec![], false);
+        let entries = backend.fetch_for_timeline().await.unwrap();
+
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].uid, "t1");
+        assert!(!spy.pulled());
+        std::fs::remove_file(path).ok();
+    }
+
+    /// `search` on the cached backend goes through the shared matcher and the
+    /// declared account name, with no pull when fresh.
+    #[tokio::test]
+    async fn cached_search_uses_matcher_and_account_name() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("hit", "Rust 聚会")],
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        let (backend, spy) = cached_backend(&pool, vec![], false);
+        let hits = backend.search(&SearchQuery::new("rust")).await.unwrap();
+
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "hit");
+        assert_eq!(hits[0].account.as_deref(), Some("work"));
+        assert!(!spy.pulled());
+        std::fs::remove_file(path).ok();
     }
 
     #[tokio::test]
@@ -1197,6 +1788,7 @@ mod tests {
         let mock = MockCalBackend {
             events: vec![CalEvent {
                 href: "/cal/e1.ics".into(),
+                uid: "e1@example.com".into(),
                 start: "2026-08-05 10:00".into(),
                 end: "2026-08-05 11:00".into(),
                 summary: "晨会".into(),
@@ -1209,11 +1801,15 @@ mod tests {
         let out = dispatch(&mock, "list", &flags).await.unwrap();
         match out {
             Output::Records { headers, rows } => {
-                assert_eq!(headers, vec!["路径", "开始", "结束", "主题", "地点"]);
+                assert_eq!(
+                    headers,
+                    vec!["路径", "UID", "开始", "结束", "主题", "地点"]
+                );
                 assert_eq!(
                     rows,
                     vec![vec![
                         "/cal/e1.ics",
+                        "e1@example.com",
                         "2026-08-05 10:00",
                         "2026-08-05 11:00",
                         "晨会",

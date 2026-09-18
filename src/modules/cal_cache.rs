@@ -201,6 +201,21 @@ pub async fn query_events(pool: &SqlitePool, account: &str) -> Result<Vec<Cached
         .collect())
 }
 
+/// Every calendar href the cache has recorded state for, for one account.
+///
+/// Used on refresh to also stamp calendars that returned no events, so an empty
+/// calendar is not re-pulled on every query.
+pub async fn known_calendars(pool: &SqlitePool, account: &str) -> Result<Vec<String>> {
+    let rows = sqlx::query("SELECT calendar_href FROM cal_state WHERE account = ?1")
+        .bind(account)
+        .fetch_all(pool)
+        .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| r.get::<String, _>("calendar_href"))
+        .collect())
+}
+
 /// The oldest `last_sync_at` across an account's calendars.
 ///
 /// `None` when the account has never been synced — which is always stale, so a
@@ -233,12 +248,13 @@ pub async fn is_stale(pool: &SqlitePool, account: &str, now: DateTime<Utc>) -> R
 }
 
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use chrono::TimeZone;
 
     /// Build a fresh test pool pointed at a temp db. Returns (pool, db_path).
-    async fn tmp_pool() -> (SqlitePool, PathBuf) {
+    /// `pub` so the calendar module's cache-path tests reuse it.
+    pub async fn tmp_pool() -> (SqlitePool, PathBuf) {
         let file = std::env::temp_dir().join(format!(
             "everyday-cal-cache-test-{}.db",
             crate::util::id::gen_id("cc")
