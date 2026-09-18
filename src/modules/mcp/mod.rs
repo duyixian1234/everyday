@@ -10,8 +10,9 @@ use std::sync::{Arc, OnceLock};
 use async_trait::async_trait;
 
 use rmcp::model::{
-    CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, ListToolsResult,
-    PaginatedRequestParams, Tool,
+    CacheScope, CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock,
+    Implementation, ListToolsResult, PaginatedRequestParams, ServerCapabilities, ServerConfig,
+    Tool,
 };
 use rmcp::service::RequestContext as McpRequestContext;
 use rmcp::transport::stdio;
@@ -201,20 +202,54 @@ impl McpServer {
 }
 
 impl ServerHandler for McpServer {
+    /// Declare the `tools` capability.
+    ///
+    /// This override is **load-bearing**, not decoration. rmcp's default
+    /// `get_info` returns `ServerConfig::default()`, whose capabilities object
+    /// is empty — and a conformant client may then skip `tools/list` entirely,
+    /// seeing a server with no tools even though [`Self::list_tools`] would
+    /// answer correctly. Found in practice: `mcporter list everyday` reported
+    /// "server does not advertise tools capability" while the same binary
+    /// answered a raw `tools/list` with all 60 tools.
+    ///
+    /// The MCP spec makes capability declaration the client's signal that
+    /// `tools/list` / `tools/call` are available, so omitting it makes the
+    /// whole module invisible to strict clients.
+    ///
+    /// Note the negotiated revision is intentionally left to rmcp: a client
+    /// offering `2026-07-28` is negotiated *down* to `2025-11-25`, because
+    /// rmcp only agrees to versions it classifies as legacy and
+    /// `2026-07-28` uses a different handshake. That fallback is correct — see
+    /// the note on `result_type` in `list_tools`.
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
+        info.server_info = Implementation::new("everyday", env!("CARGO_PKG_VERSION"));
+        info
+    }
+
     async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _context: McpRequestContext<RoleServer>,
     ) -> std::result::Result<ListToolsResult, McpError> {
         // Unpaginated: return the full tool list in one response.
-        Ok(ListToolsResult {
-            result_type: None,
-            meta: None,
-            next_cursor: None,
-            ttl_ms: None,
-            cache_scope: None,
-            tools: (*self.tools).clone(),
-        })
+        //
+        // The three SEP-2322/SEP-2549 fields are populated because a client
+        // validating against 2026-07-28 rejects a response that omits them, even
+        // when the *negotiated* revision is older — rmcp negotiates a 2026-07-28
+        // request down to 2025-11-25 (2026-07-28 is not a "legacy" version it
+        // will agree to) and then clears these fields on the way out, but
+        // mcporter validates the payload against 2026-07-28 regardless. Setting
+        // them costs nothing for older peers — rmcp strips them — and makes the
+        // response valid under the newest rules too.
+        //
+        // `ttl_ms: 0` — the projection is rebuilt from the live module registry
+        // on every serve, so it is never worth caching.
+        // `CacheScope::Private` — this server exposes the user's mail, calendar
+        // and notes; a shared intermediary must not cache tool listings.
+        Ok(ListToolsResult::with_all_items((*self.tools).clone())
+            .with_ttl_ms(0)
+            .with_cache_scope(CacheScope::Private))
     }
 
     async fn call_tool(

@@ -96,6 +96,15 @@ fn initialize_handshake(s: &mut Server) {
         resp["result"]["protocolVersion"].is_string(),
         "initialize must negotiate a protocol version: {resp}"
     );
+    // The `tools` capability must be advertised. Without it a conformant client
+    // may skip `tools/list` entirely and see a server with no tools, even
+    // though the call would succeed — observed with mcporter, which reported
+    // "server does not advertise tools capability" against an earlier build
+    // whose `tools/list` answered correctly.
+    assert!(
+        resp["result"]["capabilities"]["tools"].is_object(),
+        "initialize must declare capabilities.tools, or clients skip tools/list: {resp}"
+    );
     s.send_notification("notifications/initialized");
 }
 
