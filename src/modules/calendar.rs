@@ -120,6 +120,33 @@ pub trait CalBackend: Send + Sync {
     async fn add(&self, req: &CalAddRequest) -> Result<CalAddReceipt>;
     /// Delete an event by href.
     async fn delete(&self, href: &str) -> Result<CalDeleteReceipt>;
+    /// Timeline ingestion: the current event snapshot, already flattened to
+    /// timeline rows. Cal uses the window-refresh model
+    /// ([C003](../../docs/adr/C003-cal-provider-window-filter.md)); the
+    /// orchestrator deletes old rows inside the window and re-inserts.
+    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
+    async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>>;
+
+    /// Cross-module search (Phase 11).
+    ///
+    /// A **default method**: implementations only supply the event snapshot via
+    /// [`CalBackend::fetch_for_timeline`], and the matcher, `ts` derivation,
+    /// ordering and per-module cap stay in one place. That is deliberate — the
+    /// only alternative is each implementation (including the test mock)
+    /// re-deriving the GLOB filter, which is how the previous test ended up
+    /// asserting a *copy* of the matcher instead of the matcher itself.
+    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
+    async fn search(&self, q: &SearchQuery) -> Result<Vec<Hit>> {
+        let entries = self.fetch_for_timeline().await?;
+        Ok(rank_entries_for_search(&entries, q, self.account_name().as_deref()))
+    }
+
+    /// Account name stamped onto every [`Hit`]; `None` for backends with no
+    /// account (the test mock, so hits render without an account qualifier).
+    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
+    fn account_name(&self) -> Option<String> {
+        None
+    }
 }
 
 /// Real CalDAV backend. Holds the resolved account + credential + ignored
@@ -674,6 +701,18 @@ impl CalBackend for CalDavBackend {
             href: href.to_string(),
         })
     }
+
+    /// Timeline ingestion against the live CalDAV server. Shares its body with
+    /// the free [`fetch_for_timeline`] (which stays for the config-based
+    /// callers), so there is exactly one pull implementation.
+    async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>> {
+        let caldav = build_client(&self.account, &self.password).await?;
+        pull_timeline_entries(&caldav, &self.ignored).await
+    }
+
+    fn account_name(&self) -> Option<String> {
+        Some(self.account.name.clone())
+    }
 }
 
 // ============ Helper functions ============
@@ -851,6 +890,7 @@ fn event_filename() -> String {
 // ============ Timeline data fetching ============
 
 /// Raw calendar event data for Timeline ingestion.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CalTimelineEntry {
     pub href: String,
     pub uid: String,
@@ -871,7 +911,16 @@ pub async fn fetch_for_timeline(
 ) -> Result<Vec<CalTimelineEntry>> {
     let password = crate::modules::auth::get_credential(config, "cal", &account.name)?;
     let caldav = build_client(account, &password).await?;
-    let calendars = list_all_calendars(&caldav, ignored).await?;
+    pull_timeline_entries(&caldav, ignored).await
+}
+
+/// The single CalDAV → timeline-row pull. Both [`fetch_for_timeline`] and
+/// `CalDavBackend::fetch_for_timeline` route through here.
+async fn pull_timeline_entries(
+    caldav: &CalDav,
+    ignored: &[String],
+) -> Result<Vec<CalTimelineEntry>> {
+    let calendars = list_all_calendars(caldav, ignored).await?;
 
     let mut entries = Vec::new();
     for cal in &calendars {
@@ -940,77 +989,8 @@ pub async fn search_for_search(
     ignored: &[String],
     q: &SearchQuery,
 ) -> Result<Vec<Hit>> {
-    let tokens: Vec<&str> = q.tokens();
-    if tokens.is_empty() {
-        return Ok(Vec::new());
-    }
-
     let entries = fetch_for_timeline(config, account, ignored).await?;
-
-    // Build the local GLOB filter (no SQL; iterate in memory).
-    let mut conds: Vec<String> = Vec::new();
-    let mut params: Vec<String> = Vec::new();
-    for t in &tokens {
-        if t.is_empty() {
-            continue;
-        }
-        let lower = t.to_ascii_lowercase();
-        for col in ["summary", "location", "start"] {
-            params.push(format!("*{lower}*"));
-            conds.push(col.to_string());
-        }
-    }
-    if conds.is_empty() {
-        return Ok(Vec::new());
-    }
-
-    // Per-row GLOB match over summary / location / start (description is
-    // not stored in CalTimelineEntry, so use summary+location+start).
-    let mut hits = Vec::new();
-    for e in &entries {
-        let summary_lc = e.summary.to_ascii_lowercase();
-        let location_lc = e.location.to_ascii_lowercase();
-        let start_lc = e.start.to_ascii_lowercase();
-        let matches_any = tokens.iter().any(|t| {
-            let lower = t.to_ascii_lowercase();
-            summary_lc.contains(&lower) || location_lc.contains(&lower) || start_lc.contains(&lower)
-        });
-        if !matches_any {
-            continue;
-        }
-        // ts = event start time ([S005](../../docs/adr/S005-time-semantics-scope.md)).
-        let ts = parse_naive_dt_to_utc(&e.start);
-        // snippet = "<start> @ <location>" — short, contextual.
-        let snippet = if e.location.is_empty() {
-            e.start.clone()
-        } else {
-            format!("{} @ {}", e.start, e.location)
-        };
-        hits.push(Hit {
-            module: "cal",
-            account: Some(account.name.clone()),
-            id: e.uid.clone(),
-            title: e.summary.clone(),
-            snippet,
-            url: None,
-            ts,
-            kind: "event",
-        });
-    }
-
-    // Sort: ts desc (None last), then stable id asc.
-    hits.sort_by(|a, b| match (a.ts, b.ts) {
-        (Some(x), Some(y)) => y.cmp(&x),
-        (Some(_), None) => std::cmp::Ordering::Less,
-        (None, Some(_)) => std::cmp::Ordering::Greater,
-        (None, None) => std::cmp::Ordering::Equal,
-    });
-    if hits.len() > SEARCH_PER_MODULE_CAP {
-        hits.truncate(SEARCH_PER_MODULE_CAP);
-    }
-    let _ = conds;
-    let _ = params;
-    Ok(hits)
+    Ok(rank_entries_for_search(&entries, q, Some(&account.name)))
 }
 
 /// Convert a calendar date string to a UTC DateTime. Mirrors the helper
@@ -1041,6 +1021,69 @@ fn parse_naive_dt_to_utc(s: &str) -> Option<DateTime<Utc>> {
         }
     }
     None
+}
+
+/// The single GLOB matcher + ranking used by every `CalBackend::search`.
+///
+/// Extracted from `search_for_search` so the trait's default method and any
+/// future cache-backed path share one implementation ([M006](../../docs/adr/M006-mail-search-cached.md)'s
+/// rule: a local search path must reuse the existing matcher, never re-derive
+/// it).
+pub fn rank_entries_for_search(
+    entries: &[CalTimelineEntry],
+    q: &SearchQuery,
+    account: Option<&str>,
+) -> Vec<Hit> {
+    let tokens: Vec<&str> = q.tokens();
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+
+    // Per-row GLOB match over summary / location / start (description is
+    // not stored in CalTimelineEntry, so use summary+location+start).
+    let mut hits = Vec::new();
+    for e in entries {
+        let summary_lc = e.summary.to_ascii_lowercase();
+        let location_lc = e.location.to_ascii_lowercase();
+        let start_lc = e.start.to_ascii_lowercase();
+        let matches_any = tokens.iter().any(|t| {
+            let lower = t.to_ascii_lowercase();
+            summary_lc.contains(&lower) || location_lc.contains(&lower) || start_lc.contains(&lower)
+        });
+        if !matches_any {
+            continue;
+        }
+        // ts = event start time ([S005](../../docs/adr/S005-time-semantics-scope.md)).
+        let ts = parse_naive_dt_to_utc(&e.start);
+        // snippet = "<start> @ <location>" — short, contextual.
+        let snippet = if e.location.is_empty() {
+            e.start.clone()
+        } else {
+            format!("{} @ {}", e.start, e.location)
+        };
+        hits.push(Hit {
+            module: "cal",
+            account: account.map(str::to_string),
+            id: e.uid.clone(),
+            title: e.summary.clone(),
+            snippet,
+            url: None,
+            ts,
+            kind: "event",
+        });
+    }
+
+    // Sort: ts desc (None last), then stable id asc.
+    hits.sort_by(|a, b| match (a.ts, b.ts) {
+        (Some(x), Some(y)) => y.cmp(&x),
+        (Some(_), None) => std::cmp::Ordering::Less,
+        (None, Some(_)) => std::cmp::Ordering::Greater,
+        (None, None) => std::cmp::Ordering::Equal,
+    });
+    if hits.len() > SEARCH_PER_MODULE_CAP {
+        hits.truncate(SEARCH_PER_MODULE_CAP);
+    }
+    hits
 }
 
 /// Provider adapter: implements [`Searchable`] for one calendar account.
@@ -1087,6 +1130,9 @@ mod tests {
     struct MockCalBackend {
         calendars: Vec<CalCalendar>,
         events: Vec<CalEvent>,
+        /// Rows served to `fetch_for_timeline`; `search` consumes these via the
+        /// trait's default method, so the production matcher is under test.
+        timeline: Vec<CalTimelineEntry>,
     }
 
     #[async_trait]
@@ -1107,6 +1153,9 @@ mod tests {
             Ok(CalDeleteReceipt {
                 href: href.to_string(),
             })
+        }
+        async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>> {
+            Ok(self.timeline.clone())
         }
     }
 
@@ -1370,28 +1419,27 @@ mod tests {
         assert!(parse_naive_dt_to_utc("not a date").is_none());
     }
 
-    /// Local GLOB filter behavior — verified with hand-built CalTimelineEntry
-    /// samples (no network). The full-pull path is exercised end-to-end by
-    /// `fetch_for_timeline` tests; here we focus on the in-memory GLOB.
-    #[test]
-    fn cal_search_glob_matches_summary_location_start() {
-        // Replicate the in-memory GLOB filter from `search_for_search`.
-        fn glob_match(entries: &[CalTimelineEntry], tokens: &[&str]) -> Vec<String> {
-            entries
-                .iter()
-                .filter(|e| {
-                    let summary_lc = e.summary.to_ascii_lowercase();
-                    let location_lc = e.location.to_ascii_lowercase();
-                    let start_lc = e.start.to_ascii_lowercase();
-                    tokens.iter().any(|t| {
-                        let lower = t.to_ascii_lowercase();
-                        summary_lc.contains(&lower)
-                            || location_lc.contains(&lower)
-                            || start_lc.contains(&lower)
-                    })
-                })
-                .map(|e| e.uid.clone())
-                .collect()
+    /// Local GLOB filter behavior, driven through the real `CalBackend::search`
+    /// default method. The mock supplies only the event rows; the matcher,
+    /// ranking and cap under test are the production ones — this test no longer
+    /// replicates the filter, so it cannot silently agree with a broken matcher.
+    #[tokio::test]
+    async fn cal_search_glob_matches_summary_location_start() {
+        async fn glob_match(entries: &[CalTimelineEntry], tokens: &[&str]) -> Vec<String> {
+            let mock = MockCalBackend {
+                timeline: entries.to_vec(),
+                ..Default::default()
+            };
+            let q = SearchQuery::new(tokens.join(" "));
+            let mut hits: Vec<String> = mock
+                .search(&q)
+                .await
+                .unwrap()
+                .into_iter()
+                .map(|h| h.id)
+                .collect();
+            hits.sort();
+            hits
         }
 
         let entries = vec![
@@ -1422,19 +1470,21 @@ mod tests {
         ];
 
         // Single token "rust" -> only event a (summary).
-        assert_eq!(glob_match(&entries, &["rust"]), vec!["a".to_string()]);
+        assert_eq!(glob_match(&entries, &["rust"]).await, vec!["a".to_string()]);
 
         // OR-of-tokens "rust sync" -> a (rust) + b (sync).
-        let mut hits = glob_match(&entries, &["rust", "sync"]);
-        hits.sort();
-        assert_eq!(hits, vec!["a".to_string(), "b".to_string()]);
+        assert_eq!(
+            glob_match(&entries, &["rust", "sync"]).await,
+            vec!["a".to_string(), "b".to_string()]
+        );
 
         // Location match: "office" -> b + c.
-        let mut hits = glob_match(&entries, &["office"]);
-        hits.sort();
-        assert_eq!(hits, vec!["b".to_string(), "c".to_string()]);
+        assert_eq!(
+            glob_match(&entries, &["office"]).await,
+            vec!["b".to_string(), "c".to_string()]
+        );
 
         // Case-insensitive: "RUST" matches a.
-        assert_eq!(glob_match(&entries, &["RUST"]), vec!["a".to_string()]);
+        assert_eq!(glob_match(&entries, &["RUST"]).await, vec!["a".to_string()]);
     }
 }
