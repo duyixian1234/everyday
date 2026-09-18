@@ -1,3 +1,9 @@
+## [0.20.1] - 2026-09-18
+
+### 🐛 Bug Fixes
+
+- *(mcp)* Advertise the tools capability so strict clients can see any tool
+
 ## [0.20.0] - 2026-09-18
 
 ### 🚀 Features
