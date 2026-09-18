@@ -30,9 +30,11 @@ This creates a fundamental tension: the append-log wants one event per transitio
    - `created` for new notes (`created_at > last_sync`).
    - `updated` when `updated_at > last_sync` (one event per sync, even if multiple updates occurred).
 
-4. **Deletions:** the `todo delete` action ([T002](T002-todo-delete-action.md)) does a physical `DELETE` in the local provider. There is no `deleted_at` column yet; soft-delete is deferred.
+4. **Deletions:** **implemented** in [R024](R024-local-provider-soft-delete.md). `todo delete` now stamps `deleted_at` instead of physically removing the row, and the provider derives a `deleted` event so the timeline does not freeze the todo at its last pre-deletion state. No `deleted_at`-column work remains outstanding.
 
 5. **Notion accounts are unaffected** — ops-log ([L007](L007-notion-ops-log.md)) records every CLI-initiated transition at execution time, so full granularity is preserved for notion accounts.
+
+> **Correction (2026-09-18):** point 5 describes a mechanism that no longer exists. `src/ops_log.rs` was deleted wholesale along with the Notion provider ([R019](R019-remove-notion-provider.md)), which also superseded [L007](L007-notion-ops-log.md) and [L010](L010-ops-log-provider.md). Under the pull model a `deleted` event can only be derived by the provider from table state — which is what [R024](R024-local-provider-soft-delete.md) does.
 
 ## Alternatives considered
 

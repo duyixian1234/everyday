@@ -25,9 +25,13 @@ The design has to handle both providers symmetrically while keeping the title in
 2. `DELETE FROM todos WHERE id = ?` — physical delete.
 3. Emit `deleted todo '<title>' (id=<id>)`.
 
+> **Superseded in part (2026-09-18, [R024](R024-local-provider-soft-delete.md)):** step 2 is no longer a physical `DELETE`. It stamps `deleted_at` (soft delete), and the local provider derives a `deleted` timeline event from that column. The title-fetch step below is unchanged and still required, for the same reason. The trigger-condition question raised under "Soft-delete only" below is settled there.
+
 ### Why fetch the title before deleting?
 
 The ops-log AOP hook ([L007](L007-notion-ops-log.md), [L011](L011-aop-handles-output-text.md)) records the deletion as a `deleted` event. The hook extracts `ref_id` and `title` from the module's `Output`. If the title is missing, the timeline row shows `todo ''` — useless for a Review or digest.
+
+> **Correction (2026-09-18):** the ops-log AOP hook no longer exists — `src/ops_log.rs` was deleted with the Notion provider ([R019](R019-remove-notion-provider.md)), which superseded L007 and L011. The `deleted` event is now derived by the local provider from `deleted_at` ([R024](R024-local-provider-soft-delete.md)). **The title-fetch requirement stands regardless**: the delete receipt still carries the title, so the timeline row is still readable.
 
 Fetching the title first is one extra `GET` (Notion) or `SELECT` (SQLite). Both are fast.
 
@@ -38,6 +42,8 @@ Fetching the title first is one extra `GET` (Notion) or `SELECT` (SQLite). Both 
 - Reversible.
 - The local schema gains a `deleted_at` column; queries must filter it everywhere.
 - A future option once `todo add` gets a recovery workflow. Not now.
+
+> **Settled (2026-09-18, [R024](R024-local-provider-soft-delete.md)):** the trigger condition above was ambiguous — it can be read as "do not soft-delete until a recovery workflow exists" or as "soft delete is the prerequisite for one". R024 adopts the second reading and **this option is now implemented**: retention is what makes recovery possible, and deleting irreversibly while waiting for a recovery feature destroys what that feature needs. A `todo restore` action is *not* part of it and remains a separate proposal. The "queries must filter it everywhere" cost was addressed with a current-state view rather than by hand-editing every query.
 
 ### Hard delete on both providers
 

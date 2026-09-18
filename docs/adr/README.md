@@ -135,6 +135,7 @@ Refactoring patterns and structural decisions — caveman-review fixes from 2026
 | [R021](R021-date-sequence-id.md) | Date-sequence IDs — `{prefix}{YYYYMMDD}-{seq}` replaces the nanosecond-hex ID format (v0.17.1) | Accepted | 2026-08-14 |
 | [R022](R022-config-editor.md) | Unified comment-preserving `ConfigEditor` — config module as the single writer of `config.toml` (closes F017's config-set lossy divergence) | Accepted | 2026-08-18 |
 | [R023](R023-exit-code-on-request-context.md) | Exit code is a host concern on `RequestContext`, not an `Output` variant (removes `Output::ExitCode`) | Accepted | 2026-08-18 |
+| [R024](R024-local-provider-soft-delete.md) | Local provider soft delete — `deleted_at` + a current-state view for reads, explicit guards for writes; sync semantics unchanged | Accepted | 2026-09-18 |
 
 ## Search (S-series)
 
@@ -195,6 +196,7 @@ one line, never a substitute for the ADR.
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-09-18 | R | [R024](R024-local-provider-soft-delete.md) | 本地 provider 软删除：`todo delete` 由物理 `DELETE` 改为 `deleted_at` 标记（row 保留，可恢复）；读路径统一走 `active_todos` 视图（`deleted_at IS NULL` 单一定义）使泄漏**结构性不可能**，写路径（`set_status`/`delete`）自带 `AND deleted_at IS NULL` 守卫；列迁移用 `pragma_table_info` + 条件 ALTER（**不重复 `memory/store.rs` 只在 CREATE TABLE 声明、旧库永不加列的错误**）；判掉 T002 触发条件歧义——软删除**先于**恢复工作流落地、`todo restore` 另行提案；覆盖 `todo` 并为 Phase 28 的 `bookmark delete` 复用，`note` 不动；**WebDAV 文件级 LWW 语义显式不变**，`deleted_at` 不是 tombstone，拒绝行级仲裁（D001 已拒绝）；同时修正 T002/L008 关于 ops-log AOP hook 产生 `deleted` 事件的**事实性腐化**（`src/ops_log.rs` 已随 R019 删除） |
 | 2026-09-18 | C | [C004](C004-cal-event-cache.md) | cal 本地事件缓存：**快照替换**而非 append-only（M003 的 K1 对 cal 语义错误——邮件 ghost 是噪音、日历 ghost 是错误信息；L002 已独立论证 cal 必须 delete-then-insert）；主键 `(account, calendar_href, uid)`，用 UID 而非 href（`cal add` 的 href 是纳秒时间戳文件名，re-PUT 即变）；存全量镜像 + `last_sync_at`（不存时间窗，否则会删掉用户正在看的事件）； staleness 15 分钟硬编码不进 config（沿用 M005），取最旧日历水位；惰性刷新、**不动 daemon**、**不进 WebDAV sync**；因替换不产生幽灵行故**不做 gc**（未来转 ETag/sync-token 增量时需补）；修订 C002 的「future work」 |
 | 2026-09-16 | F | [F019](F019-github-issues-as-plan-tracker.md) | GitHub Issues 成为唯一规划与进度追踪器：删除 `progress.md` / `task_plan.md`；Phase → milestone、任务 → 带 assignee 的 issue、设计决策 → ADR、约定 → `.rules`；发版流水移到 `docs/releases.md`（gh release 无法承载「主相关 ADR」列）、ADR 时间序索引与本文件合并；Errors 表并入 `.rules/07-dependency-pitfalls.md`；禁止在仓库根新增规划文件 |
 | 2026-09-16 | K | [K005](K005-memory-module-deprecation.md) | memory 模块冻结：现有 7 动作不变、不再演进，排期后续大版本移除（不承诺版本号）；新增 `memory export` 读基表导出全量（含历史版本 + 软删除行，唯一能取出视图隐藏数据的动作），`{export_version, exported_at, count, facts[]}` 信封、恒定 JSON 不受 `--json` 影响、`ORDER BY id` 顺序稳定可复现但**非时间序**、空库 `count:0`；只读故 MCP 不带 `[WRITE]`；K001–K004 改 `Accepted (revised)` 而非 Superseded；无 `import`（非破坏性） |

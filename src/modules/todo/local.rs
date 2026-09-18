@@ -24,26 +24,52 @@ const CREATE_SQL: &str = "CREATE TABLE IF NOT EXISTS todos (\
     due TEXT, \
     priority TEXT, \
     created_at TEXT NOT NULL, \
-    updated_at TEXT NOT NULL DEFAULT '')";
+    updated_at TEXT NOT NULL DEFAULT '', \
+    deleted_at TEXT)";
 
-/// Open a connection and ensure the table exists (including the `updated_at` column migration).
+/// The current-state view: every live row, `deleted_at IS NULL`.
+///
+/// Read paths query this instead of the base table, so a forgotten guard cannot
+/// leak a deleted row. Writes still need their own `deleted_at IS NULL`
+/// condition (a view cannot protect an UPDATE), but reads are the leak-prone
+/// majority and are now structurally safe. Same shape as `memory`'s
+/// `current_state_view` ([R024](../../../docs/adr/R024-local-provider-soft-delete.md)).
+const CREATE_VIEW_SQL: &str = "CREATE VIEW IF NOT EXISTS active_todos AS \
+    SELECT id, title, status, due, priority, created_at, updated_at \
+    FROM todos WHERE deleted_at IS NULL";
+
+/// Open a connection and ensure the table, the `deleted_at` column, and the
+/// current-state view exist.
 async fn open(account: &TodoAccount) -> Result<sqlx::SqlitePool> {
     let path = resolve_db_path("todo", &account.name, account.db_path.as_deref())?;
     let pool = connect(&path).await?;
     sqlx::query(CREATE_SQL).execute(&pool).await?;
-    // Migration: older tables lack the `updated_at` column; add it idempotently.
-    let has_col: Option<(i64,)> =
-        sqlx::query_as("SELECT COUNT(*) FROM pragma_table_info('todos') WHERE name='updated_at'")
-            .fetch_optional(&pool)
-            .await?;
-    if let Some((count,)) = has_col
+    // Migrations: older tables lack these columns; add them idempotently.
+    // `deleted_at` is added here rather than only in CREATE TABLE so existing
+    // databases gain it — `memory/store.rs` skips this and its old DBs
+    // therefore never got the column.
+    add_column_if_missing(&pool, "updated_at", "TEXT NOT NULL DEFAULT ''").await?;
+    add_column_if_missing(&pool, "deleted_at", "TEXT").await?;
+    sqlx::query(CREATE_VIEW_SQL).execute(&pool).await?;
+    Ok(pool)
+}
+
+/// Add `column` to `todos` when absent. SQLite has no
+/// `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, so this checks `pragma_table_info`
+/// first.
+async fn add_column_if_missing(pool: &sqlx::SqlitePool, column: &str, decl: &str) -> Result<()> {
+    // `column`/`decl` are compile-time literals at both call sites; audited.
+    let probe = sqlx::AssertSqlSafe(format!(
+        "SELECT COUNT(*) FROM pragma_table_info('todos') WHERE name='{column}'"
+    ));
+    let row: Option<(i64,)> = sqlx::query_as(probe).fetch_optional(pool).await?;
+    if let Some((count,)) = row
         && count == 0
     {
-        sqlx::query("ALTER TABLE todos ADD COLUMN updated_at TEXT NOT NULL DEFAULT ''")
-            .execute(&pool)
-            .await?;
+        let alter = sqlx::AssertSqlSafe(format!("ALTER TABLE todos ADD COLUMN {column} {decl}"));
+        sqlx::query(alter).execute(pool).await?;
     }
-    Ok(pool)
+    Ok(())
 }
 
 /// Generate a short unique ID (todo prefix `t`; see [`crate::util::id::gen_id`]).
@@ -71,10 +97,10 @@ impl TodoBackend for LocalTodoBackend {
         let pool = open(&self.account).await?;
 
         let sql = if all {
-            "SELECT id, title, status, due, priority FROM todos \
+            "SELECT id, title, status, due, priority FROM active_todos \
              ORDER BY (due IS NULL), due ASC, created_at ASC"
         } else {
-            "SELECT id, title, status, due, priority FROM todos \
+            "SELECT id, title, status, due, priority FROM active_todos \
              WHERE status <> ?1 ORDER BY (due IS NULL), due ASC, created_at ASC"
         };
 
@@ -130,15 +156,21 @@ impl TodoBackend for LocalTodoBackend {
     }
 
     /// `start` / `complete <id>` (local): update the task status.
+    ///
+    /// Guarded on `deleted_at IS NULL`: a soft-deleted todo is not addressable,
+    /// and a view cannot protect an UPDATE.
     async fn set_status(&self, id: &str, status: &str) -> Result<TodoStatusSet> {
         let pool = open(&self.account).await?;
         let now = chrono::Utc::now().to_rfc3339();
-        let res = sqlx::query("UPDATE todos SET status = ?1, updated_at = ?2 WHERE id = ?3")
-            .bind(status)
-            .bind(&now)
-            .bind(id)
-            .execute(&pool)
-            .await?;
+        let res = sqlx::query(
+            "UPDATE todos SET status = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND deleted_at IS NULL",
+        )
+        .bind(status)
+        .bind(&now)
+        .bind(id)
+        .execute(&pool)
+        .await?;
         if res.rows_affected() == 0 {
             return Err(AgentError::InvalidArgument(format!(
                 "no todo with id '{id}' in local database"
@@ -150,14 +182,20 @@ impl TodoBackend for LocalTodoBackend {
         })
     }
 
-    /// `delete <id>` (local): physically delete a task.
+    /// `delete <id>` (local): **soft**-delete a task by stamping `deleted_at`.
     ///
-    /// SELECT the title first, then DELETE; `rows_affected == 0` is treated as
-    /// "id not found" and reported as an error. The extra read lets the delete
-    /// event carry the title.
+    /// The row is retained so the deletion is recoverable in principle and so
+    /// the timeline can report it ([R024](../../../docs/adr/R024-local-provider-soft-delete.md)).
+    /// Visible through no read path: they all query `active_todos`, which
+    /// filters `deleted_at IS NULL`.
+    ///
+    /// SELECT the title first, then UPDATE; the read both lets the delete
+    /// receipt carry the title and makes "already deleted" indistinguishable
+    /// from "never existed" — both are `InvalidArgument`, because a
+    /// soft-deleted row is not addressable.
     async fn delete(&self, id: &str) -> Result<TodoDeleted> {
         let pool = open(&self.account).await?;
-        let row = sqlx::query("SELECT title FROM todos WHERE id = ?1")
+        let row = sqlx::query("SELECT title FROM todos WHERE id = ?1 AND deleted_at IS NULL")
             .bind(id)
             .fetch_optional(&pool)
             .await?;
@@ -170,10 +208,13 @@ impl TodoBackend for LocalTodoBackend {
         } else {
             title
         };
-        let res = sqlx::query("DELETE FROM todos WHERE id = ?1")
-            .bind(id)
-            .execute(&pool)
-            .await?;
+        let now = chrono::Utc::now().to_rfc3339();
+        let res =
+            sqlx::query("UPDATE todos SET deleted_at = ?1 WHERE id = ?2 AND deleted_at IS NULL")
+                .bind(&now)
+                .bind(id)
+                .execute(&pool)
+                .await?;
         if res.rows_affected() == 0 {
             return Err(AgentError::InvalidArgument(format!(
                 "no todo with id '{id}' in local database"
@@ -217,7 +258,7 @@ pub async fn fetch_for_timeline(
     let to_str = to.to_rfc3339();
     // created_at in window (newly created) or updated_at in window (status changed).
     let rows = sqlx::query(
-        "SELECT id, title, status, due, priority, created_at, updated_at FROM todos \
+        "SELECT id, title, status, due, priority, created_at, updated_at FROM active_todos \
          WHERE (created_at >= ?1 AND created_at <= ?2) \
             OR (updated_at >= ?1 AND updated_at <= ?2 AND updated_at != '') \
          ORDER BY created_at ASC",
@@ -289,7 +330,7 @@ pub async fn search_for_search(account: &TodoAccount, q: &SearchQuery) -> Result
     // SQLite's CASE expression compares two columns and picks the larger
     // (lexicographic RFC3339 = chronological).
     let sql = format!(
-        "SELECT id, title, status, created_at, updated_at FROM todos \
+        "SELECT id, title, status, created_at, updated_at FROM active_todos \
          WHERE {where_clause} \
          ORDER BY (CASE WHEN updated_at = '' THEN created_at ELSE updated_at END) DESC, id ASC \
          LIMIT ?{cap_idx}"
@@ -452,5 +493,154 @@ mod tests {
         assert!(hits.is_empty());
 
         let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    // ---- Soft delete (R024) ----
+
+    /// Count rows directly in the table, bypassing every read guard. Used to
+    /// assert the "row is retained" half of soft delete — the half a view
+    /// cannot show.
+    async fn raw_row_count(acc: &TodoAccount) -> i64 {
+        let pool = open(acc).await.unwrap();
+        sqlx::query("SELECT COUNT(*) AS n FROM todos")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("n")
+    }
+
+    /// The delete path had no test at all before this change (`todo delete` was
+    /// never exercised), so this is also the regression net for it.
+    #[tokio::test]
+    async fn delete_hides_from_every_read_path_but_retains_the_row() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let added = backend.add("要删掉的", None, None).await.unwrap();
+        backend.add("保留的", None, None).await.unwrap();
+
+        backend.delete(&added.id).await.unwrap();
+
+        // Visible through no read path.
+        let listed = backend.list(true).await.unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].title, "保留的");
+
+        let q = SearchQuery::new("要删掉的");
+        assert!(
+            search_for_search(&acc, &q).await.unwrap().is_empty(),
+            "deleted todo must not be searchable"
+        );
+
+        let from = chrono::Utc::now() - chrono::Duration::hours(1);
+        let to = chrono::Utc::now() + chrono::Duration::hours(1);
+        let entries = fetch_for_timeline(&acc, from, to).await.unwrap();
+        assert!(
+            entries.iter().all(|e| e.id != added.id),
+            "deleted todo must not reach the timeline"
+        );
+
+        // ...but the row is still there.
+        assert_eq!(
+            raw_row_count(&acc).await,
+            2,
+            "soft delete retains the row; a hard DELETE would leave 1"
+        );
+
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    #[tokio::test]
+    async fn deleted_todo_cannot_be_modified() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let added = backend.add("任务", None, None).await.unwrap();
+        backend.delete(&added.id).await.unwrap();
+
+        let err = backend
+            .set_status(&added.id, STATUS_DONE)
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    /// Deleting twice behaves like deleting a nonexistent id: the row is
+    /// hidden, so it is "not found" rather than silently re-deleted.
+    #[tokio::test]
+    async fn deleting_twice_errors_like_a_missing_id() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let added = backend.add("任务", None, None).await.unwrap();
+        backend.delete(&added.id).await.unwrap();
+
+        let err = backend.delete(&added.id).await.unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    #[tokio::test]
+    async fn delete_missing_id_errors() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let err = backend.delete("ghost").await.unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    #[tokio::test]
+    async fn delete_returns_title_for_the_event() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let added = backend.add("带标题的任务", None, None).await.unwrap();
+        let deleted = backend.delete(&added.id).await.unwrap();
+        assert_eq!(deleted.title, "带标题的任务");
+        assert_eq!(deleted.id, added.id);
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    /// Migration: a table created before `deleted_at` existed must gain the
+    /// column on open. `memory/store.rs` is the counter-example — it declares
+    /// the column only in CREATE TABLE and never migrates, so old databases
+    /// silently lack it.
+    #[tokio::test]
+    async fn legacy_table_gains_deleted_at_column() {
+        let acc = tmp_account();
+        let path = acc.db_path.clone().unwrap();
+        // Build the pre-soft-delete schema by hand.
+        {
+            let pool = connect(std::path::Path::new(&path)).await.unwrap();
+            sqlx::query(
+                "CREATE TABLE todos (\
+                 id TEXT PRIMARY KEY, title TEXT NOT NULL, status TEXT NOT NULL, \
+                 due TEXT, priority TEXT, created_at TEXT NOT NULL, \
+                 updated_at TEXT NOT NULL DEFAULT '')",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            sqlx::query(
+                "INSERT INTO todos (id, title, status, created_at, updated_at) \
+                 VALUES ('legacy', '老任务', 'Todo', '2026-01-01T00:00:00Z', '')",
+            )
+            .execute(&pool)
+            .await
+            .unwrap();
+            pool.close().await;
+        }
+
+        // Opening through the backend migrates, and the legacy row is visible.
+        let backend = LocalTodoBackend::new(acc.clone());
+        let listed = backend.list(true).await.unwrap();
+        assert_eq!(listed.len(), 1, "legacy row must survive the migration");
+        assert_eq!(listed[0].title, "老任务");
+
+        // And it can now be soft-deleted.
+        backend.delete("legacy").await.unwrap();
+        assert!(backend.list(true).await.unwrap().is_empty());
+        assert_eq!(raw_row_count(&acc).await, 1);
+
+        let _ = std::fs::remove_file(path);
     }
 }
