@@ -22,7 +22,7 @@ Verify with `everyday --version`. Per-platform extraction steps are in the repo 
 | `rss` | ✅ Complete | follow / list / unfollow / digest / fetch |
 | `note` | ✅ Complete | Local SQLite: search / list / create / read / append / update |
 | `todo` | ✅ Complete | Local SQLite tasks: list / add / start / complete / **delete** |
-| `bookmark` | ✅ Complete | Local SQLite bookmarks: add / list |
+| `bookmark` | ✅ Complete | Local SQLite bookmarks: add / list / search |
 | `auth` | ✅ Complete (v0.8.0) | login / logout / verify / list — consolidated credential lifecycle for all modules |
 | `timeline` | ✅ Complete (v0.5.0) | Unified event log aggregating mail / cal / rss + local note / todo / bookmark activity. Preset windows (`today` / `yesterday` / `week` / `month`) plus `--from` / `--to` absolute windows and `--since` sliding-window start (date or `30m` / `2h` / `1d` / `7d`). v0.6.1 修复 `--from` 单独给定被静默回退 preset 的问题 |
 | `memory` | ✅ Complete (v0.10.0) | Single-instance append-only `(subject, predicate, object)` triple notebook with `--confidence` / `--source` metadata; soft delete + full version history; forward-only BFS graph (depth 1..=5); participates in `everyday search`. No `account` column, no `auth` module touch. Storage at `~/.config/everyday/memory.db` |
@@ -409,6 +409,7 @@ Bookmarks are stored in a local SQLite database per account (`~/.config/everyday
 |---------|-------------|---------|
 | `bookmark list` | List bookmarks (`--tag` filters by a single tag) | `everyday bookmark list --tag rust --json` |
 | `bookmark add` | Add a bookmark (`--url` and `--title` required; `--tags` optional, comma-separated) | `everyday bookmark add --url "https://..." --title "Rust" --tags "rust,cli" --json` |
+| `bookmark search` | GLOB-search title / url / tags (`<query>` required, OR-of-tokens); same matcher as `everyday search` | `everyday bookmark search rust --json` |
 
 ### bookmark options
 
@@ -419,6 +420,11 @@ Bookmarks are stored in a local SQLite database per account (`~/.config/everyday
 | `--url U` | `add` | Bookmark URL (required) |
 | `--title T` | `add` | Bookmark title (required) |
 | `--tags a,b` | `add` | Comma-separated tags (optional, e.g. `rust,cli`); trimmed, empty entries dropped |
+| `--limit N` | `search` | Cap result count (default 50) |
+
+`bookmark search` shares one matcher with the cross-module `everyday search`, so
+the two can never disagree; results render in the same shape as `bookmark list`.
+An empty result is an empty array, not an error.
 
 ### bookmark list — JSON output (array of BookmarkItem)
 

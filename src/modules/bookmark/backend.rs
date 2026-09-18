@@ -42,6 +42,13 @@ pub struct BookmarkAdded {
 pub trait BookmarkBackend: Send + Sync {
     async fn add(&self, url: &str, title: &str, tags: &[String]) -> Result<BookmarkAdded>;
     async fn list(&self, tag: Option<&str>) -> Result<Vec<BookmarkItem>>;
+    /// `search <query>`: GLOB-match title / url / tags (OR-of-tokens).
+    ///
+    /// Deliberately the **same predicate** the cross-module
+    /// `BookmarkSearchProvider` uses — one matcher, not two. Two implementations
+    /// would drift, and `bookmark search Q` disagreeing with `everyday search Q`
+    /// is a bug a user cannot explain.
+    async fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<BookmarkItem>>;
 }
 
 /// Factory: single construction seam ([R016](../../../docs/adr/R016-action-backend-di.md)).
@@ -81,6 +88,39 @@ pub mod testkit {
 
         async fn list(&self, _tag: Option<&str>) -> Result<Vec<BookmarkItem>> {
             Ok(self.items.clone())
+        }
+
+        /// Matches against the seed `items` with the same OR-of-tokens rule the
+        /// real backend uses, so the action layer can be driven without SQLite.
+        async fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<BookmarkItem>> {
+            let tokens: Vec<String> = query
+                .split_whitespace()
+                .map(|t| t.to_ascii_lowercase())
+                .filter(|t| !t.is_empty())
+                .collect();
+            if tokens.is_empty() {
+                return Ok(Vec::new());
+            }
+            let mut out: Vec<BookmarkItem> = self
+                .items
+                .iter()
+                .filter(|it| {
+                    let title = it.title.to_ascii_lowercase();
+                    let url = it.url.to_ascii_lowercase();
+                    let tags: Vec<String> =
+                        it.tags.iter().map(|t| t.to_ascii_lowercase()).collect();
+                    tokens.iter().any(|t| {
+                        title.contains(t)
+                            || url.contains(t)
+                            || tags.iter().any(|tag| tag.contains(t))
+                    })
+                })
+                .cloned()
+                .collect();
+            if let Some(n) = limit {
+                out.truncate(n);
+            }
+            Ok(out)
         }
     }
 }

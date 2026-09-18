@@ -9,6 +9,7 @@
 //! Supported `action`s:
 //! - `add`      collect a bookmark (`--url` required, `--title` required, `--tags` optional comma-separated)
 //! - `list`     list bookmarks, `--tag <TAG>` filters by tag
+//! - `search`   GLOB-search title / url / tags (`<query>` required, `--limit` optional)
 
 pub mod backend;
 pub mod local;
@@ -52,7 +53,7 @@ impl Executor for BookmarkModule {
     }
 
     fn module_arg_spec(&self) -> crate::modules::ModuleArgSpec {
-        use crate::modules::{ActionArgSpec, ModuleArgSpec};
+        use crate::modules::{ActionArgSpec, ModuleArgSpec, Positional};
         static ACTIONS: &[ActionArgSpec] = &[
             cli_action!(
                 "add",
@@ -70,6 +71,13 @@ impl Executor for BookmarkModule {
                 "everyday bookmark list [--tag TAG] [--account NAME]",
                 &[flag!("tag", "按标签精确过滤"),]
             ),
+            cli_action!(
+                "search",
+                "搜索书签",
+                "everyday bookmark search <query> [--limit N] [--account NAME]",
+                &[flag!("limit", "最多返回条数（默认 50）"),],
+                Positional::OneOrMore
+            ),
         ];
         ModuleArgSpec {
             name: "bookmark",
@@ -84,7 +92,7 @@ impl Executor for BookmarkModule {
         args: &[String],
         _ctx: &crate::shared::request_context::RequestContext,
     ) -> Result<Output> {
-        let (flags, _positional) = parse_simple_args(args);
+        let (flags, positional) = parse_simple_args(args);
         let account = self
             .config
             .resolve_account(flags.get("account").map(|s| s.as_str()))?;
@@ -92,7 +100,7 @@ impl Executor for BookmarkModule {
         // DI seam: the module never branches on provider or touches the keyring —
         // all of that lives in `for_account`.
         let backend = for_account(account)?;
-        dispatch(&*backend, action, &flags).await
+        dispatch(&*backend, action, &flags, &positional).await
     }
 
     /// P3 health: local-only since v0.13.0 — no credentials to check.
@@ -107,6 +115,7 @@ pub(crate) async fn dispatch(
     backend: &dyn BookmarkBackend,
     action: &str,
     flags: &HashMap<String, String>,
+    positional: &[String],
 ) -> Result<Output> {
     match action {
         "add" => {
@@ -123,6 +132,20 @@ pub(crate) async fn dispatch(
         "list" => {
             let tag = flags.get("tag").map(|s| s.as_str());
             let items = backend.list(tag).await?;
+            Ok(render_list(items))
+        }
+        "search" => {
+            let query = positional
+                .first()
+                .map(|s| s.as_str())
+                .ok_or_else(|| AgentError::InvalidArgument("search requires <query>".into()))?;
+            let limit = match flags.get("limit") {
+                Some(raw) => Some(raw.parse::<usize>().map_err(|_| {
+                    AgentError::InvalidArgument(format!("--limit must be a number, got '{raw}'"))
+                })?),
+                None => None,
+            };
+            let items = backend.search(query, limit).await?;
             Ok(render_list(items))
         }
         other => Err(AgentError::UnknownAction(format!("bookmark {other}"))),
@@ -211,7 +234,7 @@ mod tests {
         };
         let flags = HashMap::new();
 
-        let out = dispatch(&backend, "list", &flags).await.unwrap();
+        let out = dispatch(&backend, "list", &flags, &[]).await.unwrap();
         match out {
             Output::Records { headers, rows } => {
                 assert_eq!(headers, vec!["id", "title", "url", "tags"]);
@@ -224,7 +247,7 @@ mod tests {
         }
     }
 
-    /// (b) The render layer is provider-agnostic: the same domain data renders identically
+    /// The render layer is provider-agnostic: the same domain data renders identically
     /// regardless of the source backend. We render directly with
     /// MockBookmarkBackend-supplied data and assert both text (Records) and JSON shapes.
     #[test]
@@ -255,5 +278,73 @@ mod tests {
         } else {
             panic!("expected JSON array, got {json_out:?}");
         }
+    }
+
+    /// `search` reaches the backend with the positional query and renders like
+    /// `list`.
+    #[tokio::test]
+    async fn dispatch_search_passes_query_and_renders() {
+        let backend = MockBookmarkBackend {
+            items: vec![sample_item()],
+            ..Default::default()
+        };
+
+        let out = dispatch(&backend, "search", &HashMap::new(), &["示例".to_string()])
+            .await
+            .unwrap();
+        match out {
+            Output::Records { headers, rows } => {
+                assert_eq!(headers, vec!["id", "title", "url", "tags"]);
+                assert_eq!(rows.len(), 1);
+                assert_eq!(rows[0][0], "b1");
+            }
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    /// Matching a tag also finds the bookmark, and a miss returns an empty set
+    /// rather than an error.
+    #[tokio::test]
+    async fn dispatch_search_matches_tag_and_empty_on_miss() {
+        let backend = MockBookmarkBackend {
+            items: vec![sample_item()],
+            ..Default::default()
+        };
+
+        let hit = dispatch(&backend, "search", &HashMap::new(), &["rust".to_string()])
+            .await
+            .unwrap();
+        match hit {
+            Output::Records { rows, .. } => assert_eq!(rows.len(), 1),
+            other => panic!("expected Records, got {other:?}"),
+        }
+
+        let miss = dispatch(&backend, "search", &HashMap::new(), &["nope".to_string()])
+            .await
+            .unwrap();
+        match miss {
+            Output::Records { rows, .. } => assert!(rows.is_empty()),
+            other => panic!("expected Records, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_search_without_query_errors() {
+        let backend = MockBookmarkBackend::default();
+        let err = dispatch(&backend, "search", &HashMap::new(), &[])
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
+    }
+
+    #[tokio::test]
+    async fn dispatch_search_rejects_non_numeric_limit() {
+        let backend = MockBookmarkBackend::default();
+        let mut flags = HashMap::new();
+        flags.insert("limit".into(), "abc".into());
+        let err = dispatch(&backend, "search", &flags, &["x".to_string()])
+            .await
+            .unwrap_err();
+        assert_eq!(err.type_name(), "InvalidArgument");
     }
 }

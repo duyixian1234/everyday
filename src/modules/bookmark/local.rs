@@ -123,6 +123,37 @@ impl BookmarkBackend for LocalBookmarkBackend {
         }
         Ok(items)
     }
+
+    /// `search <query> [--limit N]` (local): GLOB-match title / url / tags.
+    ///
+    /// Shares [`search_for_search`]'s predicate so the module action and the
+    /// cross-module `everyday search` can never disagree.
+    async fn search(&self, query: &str, limit: Option<usize>) -> Result<Vec<BookmarkItem>> {
+        let mut q = SearchQuery::new(query);
+        q.limit = limit;
+        let hits = search_for_search(&self.account, &q).await?;
+        // Hydrate tags for the module-facing view; `Hit` carries none.
+        let pool = open(&self.account).await?;
+        let mut items = Vec::with_capacity(hits.len());
+        for h in hits {
+            let tag_rows =
+                sqlx::query("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?1 ORDER BY tag")
+                    .bind(&h.id)
+                    .fetch_all(&pool)
+                    .await?;
+            let tags: Vec<String> = tag_rows
+                .iter()
+                .map(|tr| tr.get::<String, _>("tag"))
+                .collect();
+            items.push(BookmarkItem {
+                id: h.id,
+                url: h.url.unwrap_or_default(),
+                title: h.title,
+                tags,
+            });
+        }
+        Ok(items)
+    }
 }
 
 // ============ Timeline data ingestion ============

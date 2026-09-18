@@ -30,7 +30,7 @@ const MODULE_ACTIONS: &[(&str, &[&str])] = &[
         &["search", "create", "read", "append", "update", "list"],
     ),
     ("todo", &["list", "add", "start", "complete", "delete"]),
-    ("bookmark", &["add", "list"]),
+    ("bookmark", &["add", "list", "search"]),
     ("timeline", &["today", "yesterday", "week", "month", "sync"]),
     (
         "memory",
