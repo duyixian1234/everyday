@@ -529,6 +529,7 @@ Append-only event log aggregating `mail` / `cal` / `rss` + local `note` / `todo`
 `source` values:
 - `mail` / `cal` / `rss` — pulled from the network providers during `sync`.
 - `todo` / `note` / `bookmark` — projected from their local SQLite tables (current-state projection).
+- A soft-deleted `todo` is hidden from every read path, so it is reported by a separate deletion query rather than the current-state projection. Without that, the timeline would freeze the todo at its last pre-deletion state — showing `In Progress` for a task that was deleted. Its event type is `deleted` and its timestamp is the deletion time.
 - `*_local` suffix is **not** produced; local providers are projected under their module name (`todo`, `note`, `bookmark`).
 
 `timestamp` is RFC3339 UTC. Display formatting is the consumer's job (the CLI's Text renderer formats it in the user's local timezone).

@@ -241,6 +241,19 @@ pub struct TodoTimelineEntry {
     pub updated_at: String,
 }
 
+/// A soft-deleted todo, reported so the timeline can emit a `deleted` event
+/// ([R024](../../../docs/adr/R024-local-provider-soft-delete.md)).
+///
+/// Kept separate from [`TodoTimelineEntry`] because the two come from opposite
+/// sides of the soft-delete boundary: live rows come from `active_todos`, deleted
+/// rows are precisely the ones that view excludes. One query returning both
+/// would have to un-apply the filter it is built on.
+pub struct TodoDeletedEntry {
+    pub id: String,
+    pub title: String,
+    pub deleted_at: String,
+}
+
 /// Timeline incremental pull: return todos whose `created_at` or `updated_at`
 /// falls within the window.
 ///
@@ -281,6 +294,40 @@ pub async fn fetch_for_timeline(
         })
         .collect();
     Ok(entries)
+}
+
+/// Deletions whose `deleted_at` falls inside the window.
+///
+/// Reads the **base table**, not `active_todos`: a deleted row is exactly what
+/// the current-state view hides. This is the only query that deliberately looks
+/// past the view, and it does so to report the deletion rather than to expose
+/// the row
+/// ([R024](../../../docs/adr/R024-local-provider-soft-delete.md), t6 of #35).
+pub async fn fetch_deletions_for_timeline(
+    account: &TodoAccount,
+    from: chrono::DateTime<chrono::Utc>,
+    to: chrono::DateTime<chrono::Utc>,
+) -> Result<Vec<TodoDeletedEntry>> {
+    let pool = open(account).await?;
+    let rows = sqlx::query(
+        "SELECT id, title, deleted_at FROM todos \
+         WHERE deleted_at IS NOT NULL AND deleted_at != '' \
+           AND deleted_at >= ?1 AND deleted_at <= ?2 \
+         ORDER BY deleted_at ASC",
+    )
+    .bind(from.to_rfc3339())
+    .bind(to.to_rfc3339())
+    .fetch_all(&pool)
+    .await?;
+
+    Ok(rows
+        .into_iter()
+        .map(|r| TodoDeletedEntry {
+            id: r.get("id"),
+            title: r.get("title"),
+            deleted_at: r.get("deleted_at"),
+        })
+        .collect())
 }
 
 // ============ Cross-module search (Phase 11) ============
@@ -644,5 +691,85 @@ mod tests {
         assert_eq!(raw_row_count(&acc).await, 1);
 
         let _ = std::fs::remove_file(path);
+    }
+
+    // ---- Deletions reported to the timeline (t6) ----
+
+    /// A deleted todo must surface through the deletion query even though
+    /// `fetch_for_timeline` hides it — that asymmetry is the whole point.
+    #[tokio::test]
+    async fn deletions_are_reported_though_the_row_is_hidden() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let added = backend.add("要删的", None, None).await.unwrap();
+        backend.add("留着的", None, None).await.unwrap();
+
+        let from = chrono::Utc::now() - chrono::Duration::hours(1);
+        let to = chrono::Utc::now() + chrono::Duration::hours(1);
+
+        // Before deletion: nothing to report.
+        assert!(
+            fetch_deletions_for_timeline(&acc, from, to)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        backend.delete(&added.id).await.unwrap();
+
+        // The live query no longer sees it...
+        let live = fetch_for_timeline(&acc, from, to).await.unwrap();
+        assert!(live.iter().all(|e| e.id != added.id));
+
+        // ...but the deletion query does, with the title and the stamp.
+        let deleted = fetch_deletions_for_timeline(&acc, from, to).await.unwrap();
+        assert_eq!(deleted.len(), 1);
+        assert_eq!(deleted[0].id, added.id);
+        assert_eq!(deleted[0].title, "要删的");
+        assert!(!deleted[0].deleted_at.is_empty());
+
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    /// A deletion outside the window is not reported — the timeline pulls
+    /// windows, it does not re-scan history.
+    #[tokio::test]
+    async fn deletions_outside_the_window_are_not_reported() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let added = backend.add("旧的", None, None).await.unwrap();
+        backend.delete(&added.id).await.unwrap();
+
+        let past_from = chrono::Utc::now() - chrono::Duration::days(30);
+        let past_to = chrono::Utc::now() - chrono::Duration::days(20);
+        assert!(
+            fetch_deletions_for_timeline(&acc, past_from, past_to)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
+    }
+
+    /// Deleting several todos reports each one.
+    #[tokio::test]
+    async fn multiple_deletions_are_all_reported() {
+        let acc = tmp_account();
+        let backend = LocalTodoBackend::new(acc.clone());
+        let a = backend.add("甲", None, None).await.unwrap();
+        let b = backend.add("乙", None, None).await.unwrap();
+        backend.delete(&a.id).await.unwrap();
+        backend.delete(&b.id).await.unwrap();
+
+        let from = chrono::Utc::now() - chrono::Duration::hours(1);
+        let to = chrono::Utc::now() + chrono::Duration::hours(1);
+        let deleted = fetch_deletions_for_timeline(&acc, from, to).await.unwrap();
+        assert_eq!(deleted.len(), 2);
+        let titles: Vec<&str> = deleted.iter().map(|d| d.title.as_str()).collect();
+        assert!(titles.contains(&"甲"));
+        assert!(titles.contains(&"乙"));
+
+        let _ = std::fs::remove_file(acc.db_path.unwrap());
     }
 }

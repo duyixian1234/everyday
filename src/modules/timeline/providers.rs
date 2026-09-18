@@ -307,6 +307,28 @@ impl TimelineProvider for TodoProvider {
                 ));
             }
         }
+
+        // Deletions (R024): a soft-deleted todo is hidden from every read path,
+        // including `fetch_for_timeline`, so without its own event the timeline
+        // would freeze it at its last pre-deletion state — showing `In Progress`
+        // for a task the user deleted. That is wrong information, not missing
+        // data. `TodoDeletedEntry` reads past the current-state view to report
+        // it.
+        let deletions =
+            todo_local::fetch_deletions_for_timeline(&self.account, window.from, window.to).await?;
+        for d in &deletions {
+            let deleted_ts = parse_rfc3339(&d.deleted_at).unwrap_or_else(Utc::now);
+            events.push(TimelineEvent::new(
+                "todo",
+                Some(&self.account.name),
+                "deleted",
+                deleted_ts,
+                &d.title,
+                "",
+                &d.id,
+                json!({}),
+            ));
+        }
         Ok((events, SyncMode::Append))
     }
 }
@@ -486,6 +508,7 @@ pub fn filter_providers(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::todo::backend::TodoBackend;
 
     #[test]
     fn parse_rfc3339_valid() {
@@ -546,5 +569,92 @@ mod tests {
 
         let filtered = filter_providers(providers, &["mail".to_string()]);
         assert!(filtered.is_empty());
+    }
+    /// End-to-end against a **real** SQLite DB, which no test did before: the
+    /// three local `fetch_for_timeline` functions had zero coverage, so the
+    /// `deleted` branch had no baseline to be written against.
+    #[tokio::test]
+    async fn todo_provider_emits_created_and_deleted_events() {
+        let path = std::env::temp_dir().join(format!(
+            "everyday-todo-provider-test-{}.db",
+            crate::util::id::gen_id("t")
+        ));
+        let account = crate::config::TodoAccount {
+            name: "test".into(),
+            provider: "local".into(),
+            db_path: Some(path.to_string_lossy().to_string()),
+        };
+
+        // Seed through the real backend so the schema/migration path runs.
+        let backend = crate::modules::todo::local::LocalTodoBackend::new(account.clone());
+        let keep = backend.add("保留的任务", None, None).await.unwrap();
+        let doomed = backend.add("要删的任务", None, None).await.unwrap();
+        backend.delete(&doomed.id).await.unwrap();
+
+        let provider = TodoProvider {
+            account: account.clone(),
+        };
+        let window = TimeWindow {
+            from: Utc::now() - chrono::Duration::hours(1),
+            to: Utc::now() + chrono::Duration::hours(1),
+        };
+        let (events, mode) = provider.sync(&window).await.unwrap();
+
+        assert!(matches!(mode, SyncMode::Append));
+
+        // The live todo yields `created`.
+        assert!(
+            events
+                .iter()
+                .any(|e| e.event_type == "created" && e.ref_id == keep.id),
+            "a live todo must produce a created event"
+        );
+
+        // The deleted one yields `deleted`, and **not** a stale live event.
+        let deleted: Vec<_> = events
+            .iter()
+            .filter(|e| e.ref_id == doomed.id && e.event_type == "deleted")
+            .collect();
+        assert_eq!(deleted.len(), 1, "the deletion must be reported");
+        assert_eq!(deleted[0].title, "要删的任务");
+        assert!(
+            !events
+                .iter()
+                .any(|e| e.ref_id == doomed.id && e.event_type != "deleted"),
+            "a soft-deleted todo must not still look live"
+        );
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    /// With nothing deleted, no `deleted` event is invented.
+    #[tokio::test]
+    async fn todo_provider_emits_no_deleted_event_without_a_deletion() {
+        let path = std::env::temp_dir().join(format!(
+            "everyday-todo-provider-test-{}.db",
+            crate::util::id::gen_id("t")
+        ));
+        let account = crate::config::TodoAccount {
+            name: "test".into(),
+            provider: "local".into(),
+            db_path: Some(path.to_string_lossy().to_string()),
+        };
+        let backend = crate::modules::todo::local::LocalTodoBackend::new(account.clone());
+        backend.add("正常任务", None, None).await.unwrap();
+
+        let provider = TodoProvider {
+            account: account.clone(),
+        };
+        let window = TimeWindow {
+            from: Utc::now() - chrono::Duration::hours(1),
+            to: Utc::now() + chrono::Duration::hours(1),
+        };
+        let (events, _mode) = provider.sync(&window).await.unwrap();
+
+        assert!(
+            events.iter().all(|e| e.event_type != "deleted"),
+            "no deletion means no deleted event"
+        );
+        let _ = std::fs::remove_file(path);
     }
 }
