@@ -145,12 +145,27 @@ pub trait CalBackend: Send + Sync {
     /// asserting a *copy* of the matcher instead of the matcher itself.
     #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
     async fn search(&self, q: &SearchQuery) -> Result<Vec<Hit>> {
+        // Refresh first: the staleness verdict must describe the snapshot that
+        // is actually served, not the one that was there before the refresh.
         let entries = self.fetch_for_timeline().await?;
+        let stale = self.snapshot_is_stale().await;
         Ok(rank_entries_for_search(
             &entries,
             q,
             self.account_name().as_deref(),
+            stale,
         ))
+    }
+
+    /// Whether the snapshot `fetch_for_timeline` serves is known to be older
+    /// than its refresh threshold ([F020](../../docs/adr/F020-hit-staleness.md)).
+    ///
+    /// `false` by default: a backend reading straight from the source has no
+    /// staleness to report. `CachedCalBackend` overrides it with the cache's own
+    /// freshness check.
+    #[allow(dead_code)] // wired into the cached path in a later commit (t3/t4).
+    async fn snapshot_is_stale(&self) -> bool {
+        false
     }
 
     /// Account name stamped onto every [`Hit`]; `None` for backends with no
@@ -391,11 +406,8 @@ impl Executor for CalendarModule {
         // pass straight through. A cache that cannot be opened degrades to the
         // live backend rather than failing the command.
         let backend = match crate::modules::cal_cache::open().await {
-            Ok(pool) => Box::new(CachedCalBackend::new(
-                backend,
-                pool,
-                account.name.clone(),
-            )) as Box<dyn CalBackend>,
+            Ok(pool) => Box::new(CachedCalBackend::new(backend, pool, account.name.clone()))
+                as Box<dyn CalBackend>,
             Err(_) => backend,
         };
         dispatch(backend.as_ref(), action, &flags).await
@@ -1078,12 +1090,16 @@ impl CachedCalBackend {
         // Group by calendar; `CalTimelineEntry` carries only the event href, so
         // derive the calendar prefix from it (the collection path precedes the
         // resource filename).
-        let mut by_cal: std::collections::BTreeMap<String, Vec<crate::modules::cal_cache::CachedEvent>> =
-            std::collections::BTreeMap::new();
+        let mut by_cal: std::collections::BTreeMap<
+            String,
+            Vec<crate::modules::cal_cache::CachedEvent>,
+        > = std::collections::BTreeMap::new();
         for e in &entries {
             let calendar_href = calendar_prefix_of(&e.href);
-            by_cal.entry(calendar_href).or_default().push(
-                crate::modules::cal_cache::CachedEvent {
+            by_cal
+                .entry(calendar_href)
+                .or_default()
+                .push(crate::modules::cal_cache::CachedEvent {
                     calendar_href: calendar_prefix_of(&e.href),
                     uid: e.uid.clone(),
                     href: e.href.clone(),
@@ -1091,8 +1107,7 @@ impl CachedCalBackend {
                     location: e.location.clone(),
                     start: e.start.clone(),
                     end: e.end.clone(),
-                },
-            );
+                });
         }
 
         // A calendar that returned nothing must still be marked synced, or it
@@ -1101,14 +1116,8 @@ impl CachedCalBackend {
         let known = crate::modules::cal_cache::known_calendars(&self.pool, &self.account).await?;
         for cal in known.iter().chain(by_cal.keys()) {
             let rows = by_cal.get(cal).cloned().unwrap_or_default();
-            crate::modules::cal_cache::replace_calendar(
-                &self.pool,
-                &self.account,
-                cal,
-                &rows,
-                now,
-            )
-            .await?;
+            crate::modules::cal_cache::replace_calendar(&self.pool, &self.account, cal, &rows, now)
+                .await?;
         }
         Ok(())
     }
@@ -1212,6 +1221,17 @@ impl CalBackend for CachedCalBackend {
     fn account_name(&self) -> Option<String> {
         Some(self.account.clone())
     }
+
+    /// The cache's own freshness verdict ([F020](../../docs/adr/F020-hit-staleness.md)).
+    ///
+    /// Re-evaluated against the cache after any refresh attempt, so a refresh
+    /// that failed and left the old snapshot behind reports `true` — which is
+    /// exactly the case a consumer must not mistake for "no results".
+    async fn snapshot_is_stale(&self) -> bool {
+        crate::modules::cal_cache::is_stale(&self.pool, &self.account, chrono::Utc::now())
+            .await
+            .unwrap_or(true) // unknown freshness is not fresh
+    }
 }
 
 /// Filter + sort + limit, shared by the live and cached list paths so the two
@@ -1269,8 +1289,25 @@ pub async fn search_for_search(
     ignored: &[String],
     q: &SearchQuery,
 ) -> Result<Vec<Hit>> {
-    let entries = fetch_for_timeline(config, account, ignored).await?;
-    Ok(rank_entries_for_search(&entries, q, Some(&account.name)))
+    let backend = for_account(account)?;
+    // Route through the cache the same way `fetch_for_timeline` does, so the
+    // staleness flag reflects the snapshot actually being searched
+    // ([F020](../../docs/adr/F020-hit-staleness.md)).
+    match crate::modules::cal_cache::open().await {
+        Ok(pool) => {
+            let cached = CachedCalBackend::new(backend, pool, account.name.clone());
+            cached.search(q).await
+        }
+        Err(_) => {
+            let entries = fetch_for_timeline(config, account, ignored).await?;
+            Ok(rank_entries_for_search(
+                &entries,
+                q,
+                Some(&account.name),
+                false,
+            ))
+        }
+    }
 }
 
 /// Convert a calendar date string to a UTC DateTime. Mirrors the helper
@@ -1313,6 +1350,7 @@ pub fn rank_entries_for_search(
     entries: &[CalTimelineEntry],
     q: &SearchQuery,
     account: Option<&str>,
+    stale: bool,
 ) -> Vec<Hit> {
     let tokens: Vec<&str> = q.tokens();
     if tokens.is_empty() {
@@ -1350,6 +1388,7 @@ pub fn rank_entries_for_search(
             url: None,
             ts,
             kind: "event",
+            stale,
         });
     }
 
@@ -1470,8 +1509,7 @@ mod tests {
             Err(AgentError::Other("unused".into()))
         }
         async fn fetch_for_timeline(&self) -> Result<Vec<CalTimelineEntry>> {
-            self.pulls
-                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.pulls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             if self.fail {
                 return Err(AgentError::Network("pull failed".into()));
             }
@@ -1604,7 +1642,8 @@ mod tests {
     async fn list_pulls_when_never_synced() {
         let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
 
-        let (backend, spy) = cached_backend(&pool, vec![timeline_entry("first", "首个事件")], false);
+        let (backend, spy) =
+            cached_backend(&pool, vec![timeline_entry("first", "首个事件")], false);
         let opts = CalListOptions {
             limit: 50,
             ..Default::default()
@@ -1670,9 +1709,15 @@ mod tests {
         let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
         let mut past = cached_event("past", "已过去");
         past.start = "2000-01-01 10:00".into();
-        crate::modules::cal_cache::replace_calendar(&pool, "work", "/cal/work/", &[past], Utc::now())
-            .await
-            .unwrap();
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[past],
+            Utc::now(),
+        )
+        .await
+        .unwrap();
 
         let (backend, _spy) = cached_backend(&pool, vec![], false);
         let opts = CalListOptions {
@@ -1763,6 +1808,105 @@ mod tests {
         std::fs::remove_file(path).ok();
     }
 
+    /// A fresh cache reports non-stale hits (F020).
+    #[tokio::test]
+    async fn fresh_cache_hits_are_not_stale() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("hit", "Rust 聚会")],
+            Utc::now(),
+        )
+        .await
+        .unwrap();
+
+        let (backend, _spy) = cached_backend(&pool, vec![], false);
+        let hits = backend.search(&SearchQuery::new("rust")).await.unwrap();
+        assert!(!hits[0].stale, "a fresh snapshot is not stale");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// The case F020 exists for: a refresh that **fails** leaves an old
+    /// snapshot, and those hits must be flagged stale — otherwise a consumer
+    /// cannot tell "no such event" from "the cache is behind".
+    #[tokio::test]
+    async fn hits_are_flagged_stale_when_refresh_fails() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let stale_at = Utc::now() - chrono::Duration::hours(2);
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("hit", "Rust 聚会")],
+            stale_at,
+        )
+        .await
+        .unwrap();
+
+        let (backend, spy) = cached_backend(&pool, vec![], /*fail:*/ true);
+        let hits = backend.search(&SearchQuery::new("rust")).await.unwrap();
+
+        assert!(spy.pulled(), "a stale cache must attempt a refresh");
+        assert_eq!(hits.len(), 1, "the old snapshot is still served");
+        assert!(
+            hits[0].stale,
+            "a hit from an unrefreshed snapshot must be flagged stale"
+        );
+        std::fs::remove_file(path).ok();
+    }
+
+    /// A successful refresh of a stale cache yields fresh hits.
+    #[tokio::test]
+    async fn hits_are_fresh_after_a_successful_refresh() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let stale_at = Utc::now() - chrono::Duration::hours(2);
+        crate::modules::cal_cache::replace_calendar(
+            &pool,
+            "work",
+            "/cal/work/",
+            &[cached_event("old", "旧")],
+            stale_at,
+        )
+        .await
+        .unwrap();
+
+        let (backend, spy) = cached_backend(&pool, vec![timeline_entry("new", "Rust 聚会")], false);
+        let hits = backend.search(&SearchQuery::new("rust")).await.unwrap();
+
+        assert!(spy.pulled());
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "new");
+        assert!(!hits[0].stale, "a refreshed snapshot is current");
+        std::fs::remove_file(path).ok();
+    }
+
+    /// A never-synced cache pulls, and the resulting hits are fresh.
+    #[tokio::test]
+    async fn never_synced_cache_pulls_and_reports_fresh() {
+        let (pool, path) = crate::modules::cal_cache::tests::tmp_pool().await;
+        let (backend, spy) = cached_backend(&pool, vec![timeline_entry("a", "Rust 聚会")], false);
+        let hits = backend.search(&SearchQuery::new("rust")).await.unwrap();
+
+        assert!(spy.pulled());
+        assert_eq!(hits.len(), 1);
+        assert!(!hits[0].stale);
+        std::fs::remove_file(path).ok();
+    }
+
+    /// The live backend has no cached tier, so it never claims staleness.
+    #[tokio::test]
+    async fn live_backend_hits_are_never_stale() {
+        let mock = MockCalBackend {
+            timeline: vec![timeline_entry("a", "Rust 聚会")],
+            ..Default::default()
+        };
+        assert!(!mock.snapshot_is_stale().await);
+        let hits = mock.search(&SearchQuery::new("rust")).await.unwrap();
+        assert!(!hits[0].stale);
+    }
+
     #[tokio::test]
     async fn dispatch_calendars_uses_mock_backend() {
         let mock = MockCalBackend {
@@ -1801,10 +1945,7 @@ mod tests {
         let out = dispatch(&mock, "list", &flags).await.unwrap();
         match out {
             Output::Records { headers, rows } => {
-                assert_eq!(
-                    headers,
-                    vec!["路径", "UID", "开始", "结束", "主题", "地点"]
-                );
+                assert_eq!(headers, vec!["路径", "UID", "开始", "结束", "主题", "地点"]);
                 assert_eq!(
                     rows,
                     vec![vec![

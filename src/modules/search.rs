@@ -270,6 +270,7 @@ fn render_search(outcome: &SearchOutcome, q: &SearchQuery, json_mode: bool) -> R
                     "url": h.url,
                     "ts": h.ts.map(|t| t.to_rfc3339()),
                     "kind": h.kind,
+                    "stale": h.stale,
                 })
             })
             .collect();

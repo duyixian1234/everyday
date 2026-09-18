@@ -1840,6 +1840,10 @@ impl Searchable for MailSearchProvider {
                 url: None,
                 ts: crate::util::datetime::parse_rfc3339(&e.date),
                 kind: "mail",
+                // The envelope cache is authoritative for search (S007); the
+                // live IMAP path is only reached when the cache must refresh,
+                // and search never waits on it (F020).
+                stale: false,
             })
             .collect();
         Ok(hits)

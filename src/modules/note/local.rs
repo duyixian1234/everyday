@@ -441,6 +441,8 @@ pub async fn search_for_search(account: &NoteAccount, q: &SearchQuery) -> Result
                 url: None,
                 ts,
                 kind: "page",
+                // This module's own SQLite DB is the source of truth (F020).
+                stale: false,
             }
         })
         .collect();

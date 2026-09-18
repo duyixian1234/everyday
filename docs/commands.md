@@ -218,9 +218,13 @@ One query, all modules. A single `everyday search` call fans out concurrently to
 |------|------|------|
 | `query` | Run a free-text query across every searchable module | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
 
-**Module scope**: `note` / `todo` / `bookmark` (local SQLite, GLOB over title + content/url/tag), `rss` (a local item cache table at `~/.config/everyday/rss-items.db` populated by `rss digest` / `rss fetch`), `cal` (full-pull + in-memory GLOB over summary / location / start), `mail` (local envelope cache via [S007], since v0.9.0), `memory` (current-state view GLOB over subject/predicate/object, since v0.10.0).
+**Module scope**: `note` / `todo` / `bookmark` (local SQLite, GLOB over title + content/url/tag), `rss` (a local item cache table at `~/.config/everyday/rss-items.db` populated by `rss digest` / `rss fetch`), `cal` (local event cache at `~/.config/everyday/cal-cache.db`, refreshed lazily), `mail` (local envelope cache via [S007], since v0.9.0), `memory` (current-state view GLOB over subject/predicate/object, since v0.10.0).
 
 **Query semantics**: whitespace-tokenized, OR over tokens, case-insensitive GLOB substring (`lower(col) GLOB '*token*'`). Per-module hard cap = 50; global cap = 20 (default). `ts desc` ordering; each module's primary time is its `ts` (note: updated_at; todo: updated_at; bookmark: created_at; rss: published; cal: event start).
+
+**`stale` (per hit, since F020)**: `true` when the hit came from a local snapshot known to be older than its refresh threshold — currently only `cal`, whose cache refreshes lazily and may serve a snapshot up to 15 minutes old (and does serve an old one when a refresh fails). The other six providers read stores that *are* their source of truth, so they always report `false` (see [F020](../docs/adr/F020-hit-staleness.md)).
+
+This is a property of the **snapshot**, not of the entity: an event that started an hour ago is not "stale" if the cache that produced it is current. Use it to distinguish "the calendar has no such event" from "the cache has not caught up" — the first is an answer, the second is a reason to re-query.
 
 **Example**:
 

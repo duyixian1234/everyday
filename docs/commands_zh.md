@@ -225,9 +225,13 @@ everyday timeline today --source todo --json
 |------|------|------|
 | `query` | 在所有可搜索模块上跑自由文本查询 | `everyday search query "<q>" [--module a,b,c] [--since 7d] [--limit N] [--json]` |
 
-**模块范围**：`note` / `todo` / `bookmark`（本地 SQLite，GLOB 命中 title + content/url/tag），`rss`（本地条目缓存表 `~/.config/everyday/rss-items.db`，由 `rss digest` / `rss fetch` 同步写入），`cal`（全量拉取 + 内存 GLOB 命中 summary / location / start），`mail`（本地 envelope 缓存，[S007]，v0.9.0 起），`memory`（当前态视图上 subject/predicate/object 三字段 GLOB，[K003]，v0.10.0 起）。
+**模块范围**：`note` / `todo` / `bookmark`（本地 SQLite，GLOB 命中 title + content/url/tag），`rss`（本地条目缓存表 `~/.config/everyday/rss-items.db`，由 `rss digest` / `rss fetch` 同步写入），`cal`（本地事件缓存 `~/.config/everyday/cal-cache.db`，惰性刷新），`mail`（本地 envelope 缓存，[S007]，v0.9.0 起），`memory`（当前态视图上 subject/predicate/object 三字段 GLOB，[K003]，v0.10.0 起）。
 
 **查询语义**：空白切 token、多词 **OR**、大小写不敏感 GLOB 子串（`lower(col) GLOB '*token*'`）。每模块硬上限 50；全局默认 20（可由 `--limit` 覆盖）。全局 `ts desc` 排序；各模块的主时间即 `ts`（note: updated_at，todo: updated_at，bookmark: created_at，rss: published，cal: event_start，mail: envelope date，memory: created_at）。
+
+**`stale`（逐命中字段，F020 起）**：当该命中来自**已知超过刷新阈值**的本地快照时为 `true`——目前只有 `cal` 会出现：它的缓存惰性刷新，可能提供最多旧 15 分钟的快照（刷新失败时更会直接沿用旧快照）。其余六个 provider 读的本地存储**本身就是数据源**，故恒为 `false`（见 [F020](../docs/adr/F020-hit-staleness.md)）。
+
+该字段描述的是**快照**而非实体本身：一小时前开始的会议，只要产出它的缓存是新的，就不算 stale。用它区分「日历里没有这个事件」与「缓存还没跟上」——前者是答案，后者是重查的理由。
 
 **示例**：
 

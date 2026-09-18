@@ -368,6 +368,8 @@ pub async fn search_for_search(account: &TodoAccount, q: &SearchQuery) -> Result
                 url: None,
                 ts,
                 kind: "task",
+                // This module's own SQLite DB is the source of truth (F020).
+                stale: false,
             }
         })
         .collect();

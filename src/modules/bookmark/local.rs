@@ -295,6 +295,8 @@ pub async fn search_for_search(account: &BookmarkAccount, q: &SearchQuery) -> Re
                 url: if url.is_empty() { None } else { Some(url) },
                 ts,
                 kind: "bookmark",
+                // This module's own SQLite DB is the source of truth (F020).
+                stale: false,
             }
         })
         .collect();

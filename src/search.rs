@@ -84,6 +84,15 @@ pub struct Hit {
     pub url: Option<String>,
     pub ts: Option<DateTime<Utc>>,
     pub kind: &'static str,
+    /// True when this hit came from a local snapshot known to be older than its
+    /// refresh threshold ([F020](../docs/adr/F020-hit-staleness.md)).
+    ///
+    /// `false` for providers whose local store **is** the source of truth
+    /// (note / todo / bookmark / rss / mail / memory) and for `cal` hits served
+    /// from a fresh cache. Note this is about the **snapshot**, not the entity's
+    /// own age: an event that started an hour ago is not stale if the cache that
+    /// produced it is current.
+    pub stale: bool,
 }
 
 /// Per-module warning surfaced when a provider's `search` returns `Err`
@@ -413,6 +422,7 @@ mod tests {
             url: None,
             ts: DateTime::<Utc>::from_timestamp(ts_secs, 0),
             kind: "item",
+            stale: false,
         }
     }
 

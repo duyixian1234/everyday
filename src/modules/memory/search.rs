@@ -112,6 +112,9 @@ impl Searchable for MemorySearchProvider {
                     // prose page or message. Use "fact" so downstream UIs
                     // can distinguish.
                     kind: "fact",
+                    // Reads the current-state view of the module's own DB, so
+                    // it is the source of truth (F020).
+                    stale: false,
                 }
             })
             .collect();

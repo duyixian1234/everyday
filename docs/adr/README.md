@@ -184,6 +184,7 @@ Engineering-stack decisions: what tooling guards the release/CI pipeline and why
 | # | Title | Status | Date |
 |---|-------|--------|------|
 | [F019](F019-github-issues-as-plan-tracker.md) | GitHub Issues as the plan and progress tracker — `progress.md` / `task_plan.md` deleted; phases become milestones, work becomes issues, release log moves to `docs/releases.md` | Accepted | 2026-09-16 |
+| [F020](F020-hit-staleness.md) | Per-hit staleness — `Hit.stale` instead of a provider-level `_warning`; a flag rather than a timestamp | Accepted | 2026-09-18 |
 
 ---
 
@@ -196,6 +197,7 @@ one line, never a substitute for the ADR.
 
 | 日期 | 系列 | ADR | 摘要 |
 | --- | --- | --- | --- |
+| 2026-09-18 | F | [F020](F020-hit-staleness.md) | 逐命中陈旧标记：`Hit` 新增 `stale: bool`，`everyday search --json` 每条命中带该字段。**拒绝复用 `_warning` 通道**（那是 per-failure 且 per-provider：陈旧命中是"贡献了但旧"，不是"失败"；且同一查询跨账户/日历，新鲜度是 per-hit 的，provider 级无法表达；警告又在结果数组之外易被忽略）。**是 bool 而非时间戳/age**：provider 拥有阈值（C004 固定 15 分钟、不可配），故应发布判定而非让消费者自行推导出第二套策略。六个权威 provider（note/todo/bookmark/rss/mail/memory）恒为 `false`——它们读的本地 DB **就是**数据源；只有 `cal` 镜像远端故有时间界。加性变更（不删不改字段），`Hit` 无 `Default` 故漏填即编译失败 |
 | 2026-09-18 | R | [R024](R024-local-provider-soft-delete.md) | 本地 provider 软删除：`todo delete` 由物理 `DELETE` 改为 `deleted_at` 标记（row 保留，可恢复）；读路径统一走 `active_todos` 视图（`deleted_at IS NULL` 单一定义）使泄漏**结构性不可能**，写路径（`set_status`/`delete`）自带 `AND deleted_at IS NULL` 守卫；列迁移用 `pragma_table_info` + 条件 ALTER（**不重复 `memory/store.rs` 只在 CREATE TABLE 声明、旧库永不加列的错误**）；判掉 T002 触发条件歧义——软删除**先于**恢复工作流落地、`todo restore` 另行提案；覆盖 `todo` 并为 Phase 28 的 `bookmark delete` 复用，`note` 不动；**WebDAV 文件级 LWW 语义显式不变**，`deleted_at` 不是 tombstone，拒绝行级仲裁（D001 已拒绝）；同时修正 T002/L008 关于 ops-log AOP hook 产生 `deleted` 事件的**事实性腐化**（`src/ops_log.rs` 已随 R019 删除） |
 | 2026-09-18 | C | [C004](C004-cal-event-cache.md) | cal 本地事件缓存：**快照替换**而非 append-only（M003 的 K1 对 cal 语义错误——邮件 ghost 是噪音、日历 ghost 是错误信息；L002 已独立论证 cal 必须 delete-then-insert）；主键 `(account, calendar_href, uid)`，用 UID 而非 href（`cal add` 的 href 是纳秒时间戳文件名，re-PUT 即变）；存全量镜像 + `last_sync_at`（不存时间窗，否则会删掉用户正在看的事件）； staleness 15 分钟硬编码不进 config（沿用 M005），取最旧日历水位；惰性刷新、**不动 daemon**、**不进 WebDAV sync**；因替换不产生幽灵行故**不做 gc**（未来转 ETag/sync-token 增量时需补）；修订 C002 的「future work」 |
 | 2026-09-16 | F | [F019](F019-github-issues-as-plan-tracker.md) | GitHub Issues 成为唯一规划与进度追踪器：删除 `progress.md` / `task_plan.md`；Phase → milestone、任务 → 带 assignee 的 issue、设计决策 → ADR、约定 → `.rules`；发版流水移到 `docs/releases.md`（gh release 无法承载「主相关 ADR」列）、ADR 时间序索引与本文件合并；Errors 表并入 `.rules/07-dependency-pitfalls.md`；禁止在仓库根新增规划文件 |

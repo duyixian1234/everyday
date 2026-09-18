@@ -290,6 +290,9 @@ pub async fn search_for_search(q: &SearchQuery) -> Result<Vec<Hit>> {
                 url: if link.is_empty() { None } else { Some(link) },
                 ts,
                 kind: "item",
+                // The item cache is authoritative for search (S005); only the
+                // fetch path consults the network (F020).
+                stale: false,
             }
         })
         .collect();
